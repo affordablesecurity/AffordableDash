@@ -7,10 +7,18 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     env: str = "dev"
-    secret_key: str
-    session_cookie_name: str = "ascrm_session"
+
+    # App + auth
+    secret_key: str  # used for JWT signing
+    session_cookie_name: str = "ascrm_session"  # kept but no longer primary
+    auth_cookie_name: str = "ascrm_token"       # JWT cookie for web UI
     base_url: str = "http://localhost:8000"
 
+    # JWT
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 * 24 * 7  # 7 days for now
+
+    # DB
     database_url: str = "sqlite:///./dev.sqlite3"
 
     # Email (placeholders)
