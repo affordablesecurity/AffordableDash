@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import time
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
 
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from fastapi import HTTPException, status
+from jose import jwt, JWTError
 from passlib.context import CryptContext
 
 from app.core.config import settings
@@ -20,21 +21,26 @@ def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
 
 
-def _serializer() -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(settings.secret_key, salt="ascrm-session")
+def create_access_token(subject: str, extra: Optional[dict[str, Any]] = None) -> str:
+    now = datetime.now(timezone.utc)
+    exp = now + timedelta(minutes=settings.access_token_expire_minutes)
+
+    payload: dict[str, Any] = {
+        "sub": subject,
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+    }
+    if extra:
+        payload.update(extra)
+
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm)
 
 
-def create_session_token(payload: dict[str, Any]) -> str:
-    # payload is signed and can be time-limited when verified.
-    payload = {**payload, "iat": int(time.time())}
-    return _serializer().dumps(payload)
-
-
-def verify_session_token(token: str, max_age_seconds: int = 60 * 60 * 24 * 7) -> dict[str, Any] | None:
+def decode_token(token: str) -> dict[str, Any]:
     try:
-        data = _serializer().loads(token, max_age=max_age_seconds)
-        if isinstance(data, dict):
-            return data
-        return None
-    except (BadSignature, SignatureExpired):
-        return None
+        return jwt.decode(token, settings.secret_key, algorithms=[settings.jwt_algorithm])
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
