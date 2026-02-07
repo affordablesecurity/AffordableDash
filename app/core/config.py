@@ -9,7 +9,8 @@ class Settings(BaseSettings):
     env: str = "dev"
 
     # App + auth
-    secret_key: str  # used for JWT signing
+    # IMPORTANT: default prevents hard-crash in dev; set a strong secret_key in Render env vars.
+    secret_key: str = "dev-only-change-me"
     session_cookie_name: str = "ascrm_session"  # kept but no longer primary
     auth_cookie_name: str = "ascrm_token"       # JWT cookie for web UI
     base_url: str = "http://localhost:8000"
