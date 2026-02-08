@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.core.dependencies import get_session_user, require_user
 from app.core.config import settings
+from app.core.dependencies import get_session_user, require_user
 
 templates = Jinja2Templates(directory="app/web/templates")
 
@@ -27,9 +27,5 @@ def dashboard(request: Request, user=Depends(require_user)):
 @web_router.get("/logout")
 def logout_get():
     resp = RedirectResponse(url="/", status_code=302)
-
-    # Clear both names to prevent mismatch issues during refactors
-    resp.delete_cookie(settings.session_cookie_name, path=settings.cookie_path)
-    resp.delete_cookie(settings.auth_cookie_name, path=settings.cookie_path)
-
+    resp.delete_cookie(settings.auth_cookie_name, path="/")
     return resp
