@@ -83,7 +83,12 @@ def get_current_user_id(request: Request, db: Session = Depends(get_db)) -> int:
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
 
-def require_location_access(location_id: int, db: Session, user_id: int) -> UserLocation:
+def require_location_access(
+    location_id: int,
+    db: Session,
+    user_id: int,
+    request: Request | None = None,  # <-- accepts request so older calls won't crash
+) -> UserLocation:
     """
     Enforces that user_id has a membership row in user_locations for this location_id,
     OR user is superadmin.
@@ -93,13 +98,13 @@ def require_location_access(location_id: int, db: Session, user_id: int) -> User
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
+    # Your model uses is_superadmin
     if getattr(user, "is_superadmin", False):
-        # superadmin bypass (no membership required)
-        return UserLocation(user_id=user_id, location_id=location_id, role="superadmin")
+        return UserLocation(user_id=user_id, location_id=int(location_id), role="superadmin")
 
     membership = (
         db.query(UserLocation)
-        .filter(UserLocation.user_id == user_id, UserLocation.location_id == int(location_id))
+        .filter(UserLocation.user_id == int(user_id), UserLocation.location_id == int(location_id))
         .first()
     )
 
