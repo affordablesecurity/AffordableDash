@@ -1,0 +1,162 @@
+/* Housecall-Pro-ish dashboard layout */
+.hcp-title {
+  font-size: 40px;
+  font-weight: 700;
+  margin: 18px 0 14px;
+}
+
+.hcp-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.hcp-card {
+  border: 1px solid #e7e7e7;
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  min-height: 92px;
+}
+
+.hcp-card .top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.hcp-card h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.hcp-card .big {
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.hcp-card .sub {
+  margin-top: 6px;
+  opacity: 0.75;
+  font-size: 13px;
+}
+
+.hcp-card a {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.hcp-section {
+  margin-top: 14px;
+  border: 1px solid #e7e7e7;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.hcp-section .hdr {
+  padding: 12px 14px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hcp-section .hdr .left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+}
+
+.hcp-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.hcp-kpi {
+  padding: 14px;
+  border-right: 1px solid #eee;
+}
+
+.hcp-kpi:last-child { border-right: none; }
+
+.hcp-kpi .label {
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+
+.hcp-kpi .value {
+  margin-top: 8px;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.hcp-employee-grid {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 0;
+  min-height: 380px;
+}
+
+.hcp-employee-list {
+  border-right: 1px solid #eee;
+  padding: 12px 14px;
+}
+
+.emp {
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.emp:last-child { border-bottom: none; }
+
+.emp .name {
+  font-weight: 800;
+}
+
+.emp .sub {
+  opacity: 0.7;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.emp .item {
+  margin-top: 10px;
+  font-size: 13px;
+  display: flex;
+  gap: 8px;
+  opacity: 0.9;
+}
+
+.emp .time {
+  min-width: 120px;
+  opacity: 0.85;
+}
+
+#map {
+  width: 100%;
+  height: 100%;
+  min-height: 380px;
+}
+
+.hcp-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.hcp-toolbar select {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  background: #fff;
+}
