@@ -1,43 +1,39 @@
 from __future__ import annotations
 
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _normalize_database_url(url: str) -> str:
+    """
+    Render Postgres often provides DATABASE_URL like:
+      postgres://user:pass@host:5432/db
+    SQLAlchemy expects:
+      postgresql+psycopg://user:pass@host:5432/db
+    """
+    url = url.strip()
+
+    # Render-style legacy scheme
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+psycopg://", 1)
+
+    # If user provides postgresql://, still force psycopg driver
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+    return url
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    env: str = "dev"
+    # Security / JWT
+    secret_key: str = os.getenv("SECRET_KEY", "dev-secret-change-me")
+    jwt_algorithm: str = os.getenv("JWT_ALGORITHM", "HS256")
+    access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
-    # App + auth
-    # IMPORTANT: default prevents hard-crash in dev; set a strong secret_key in Render env vars.
-    secret_key: str = "dev-only-change-me"
-    session_cookie_name: str = "ascrm_session"  # kept but no longer primary
-    auth_cookie_name: str = "ascrm_token"       # JWT cookie for web UI
-    base_url: str = "http://localhost:8000"
-
-    # JWT
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60 * 24 * 7  # 7 days for now
-
-    # DB
-    database_url: str = "sqlite:///./dev.sqlite3"
-
-    # Email (placeholders)
-    email_from: str = "no-reply@example.com"
-    smtp_host: str | None = None
-    smtp_port: int = 587
-    smtp_user: str | None = None
-    smtp_pass: str | None = None
-
-    # SMS (placeholders)
-    sms_provider: str = "twilio"
-    twilio_account_sid: str | None = None
-    twilio_auth_token: str | None = None
-    twilio_from_number: str | None = None
-
-    # Stripe (placeholders)
-    stripe_secret_key: str | None = None
-    stripe_webhook_secret: str | None = None
+    # Database
+    database_url: str = _normalize_database_url(os.getenv("DATABASE_URL", "sqlite:///./dev.db"))
 
 
 settings = Settings()
