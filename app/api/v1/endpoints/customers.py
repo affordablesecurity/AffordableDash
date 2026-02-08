@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user_id, require_location_access
@@ -9,13 +9,23 @@ from app.models.customer import Customer
 from app.models.location import Location
 from app.schemas.customers import CustomerCreate, CustomerOut
 
-
 router = APIRouter()
 
 
 @router.post("/", response_model=CustomerOut)
-def create_customer(payload: CustomerCreate, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
-    membership = require_location_access(payload.location_id, db, user_id)
+def create_customer(
+    payload: CustomerCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    # ✅ IMPORTANT: call require_location_access with correct arguments
+    require_location_access(
+        location_id=payload.location_id,
+        request=request,
+        db=db,
+        user_id=user_id,
+    )
 
     loc = db.query(Location).filter(Location.id == payload.location_id).first()
     if not loc:
@@ -25,7 +35,7 @@ def create_customer(payload: CustomerCreate, db: Session = Depends(get_db), user
         organization_id=loc.organization_id,
         location_id=payload.location_id,
         first_name=payload.first_name.strip(),
-        last_name=payload.last_name.strip() if payload.last_name else "",
+        last_name=(payload.last_name or "").strip(),
         phone=payload.phone,
         email=str(payload.email) if payload.email else None,
         address1=payload.address1,
@@ -35,6 +45,7 @@ def create_customer(payload: CustomerCreate, db: Session = Depends(get_db), user
         zip=payload.zip,
         notes=payload.notes,
     )
+
     db.add(customer)
     db.commit()
     db.refresh(customer)
@@ -42,8 +53,19 @@ def create_customer(payload: CustomerCreate, db: Session = Depends(get_db), user
 
 
 @router.get("/", response_model=list[CustomerOut])
-def list_customers(location_id: int, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
-    require_location_access(location_id, db, user_id)
+def list_customers(
+    location_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    # ✅ IMPORTANT: call require_location_access with correct arguments
+    require_location_access(
+        location_id=location_id,
+        request=request,
+        db=db,
+        user_id=user_id,
+    )
 
     rows = (
         db.query(Customer)
