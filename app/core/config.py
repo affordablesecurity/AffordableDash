@@ -44,8 +44,18 @@ class Settings(BaseSettings):
     jwt_algorithm: str = os.getenv("JWT_ALGORITHM", "HS256")
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
-    # cookie name used by auth endpoints
+    # Primary cookie used by API auth endpoints (login/signup)
     auth_cookie_name: str = os.getenv("AUTH_COOKIE_NAME", "affordablecrm_auth")
+
+    # Web UI “session” cookie name.
+    # For now we intentionally use the SAME cookie as auth_cookie_name so
+    # the UI can read auth the same way as the API.
+    session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", auth_cookie_name)
+
+    # Cookie behavior
+    cookie_path: str = os.getenv("COOKIE_PATH", "/")
+    cookie_samesite: str = os.getenv("COOKIE_SAMESITE", "lax")  # lax is best default for same-site apps
+    cookie_secure: bool = os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes") or (env != "dev")
 
     database_url: str = normalize_database_url(os.getenv("DATABASE_URL", "sqlite:///./dev.db"))
 
