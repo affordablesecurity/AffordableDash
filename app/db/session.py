@@ -6,13 +6,15 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
 
+# Create engine
 engine = create_engine(
     settings.database_url,
     future=True,
     pool_pre_ping=True,
 )
 
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, future=True)
+# Session factory
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def get_db():
