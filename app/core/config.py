@@ -35,12 +35,25 @@ def normalize_database_url(url: str) -> str:
 
 
 class Settings(BaseSettings):
+    """
+    Centralized config loaded from environment variables (and optional .env file).
+
+    NOTE:
+    - extra="ignore" allows us to add env vars without breaking Settings.
+    - database_url is normalized to psycopg v3 driver for SQLAlchemy.
+    """
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Security / JWT
     secret_key: str = os.getenv("SECRET_KEY", "dev-secret-change-me")
     jwt_algorithm: str = os.getenv("JWT_ALGORITHM", "HS256")
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
+    # Cookie name for auth (used by auth endpoints)
+    # If you change this, update any frontend cookie reads accordingly.
+    auth_cookie_name: str = os.getenv("AUTH_COOKIE_NAME", "access_token")
+
+    # Database
     database_url: str = normalize_database_url(os.getenv("DATABASE_URL", "sqlite:///./dev.db"))
 
 
