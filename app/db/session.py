@@ -7,28 +7,27 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
 
-def _normalize_database_url(url: str | None) -> str:
+def normalize_database_url(url: str | None) -> str:
     if not url:
-        raise RuntimeError(
-            "DATABASE_URL is not set. Add it in Render Environment as DATABASE_URL."
-        )
+        raise RuntimeError("DATABASE_URL is not set")
 
-    # Remove hidden whitespace/newlines that often get pasted into env vars
+    # Strip hidden whitespace/newlines from Render
     url = url.strip()
 
-    # Render / other platforms sometimes use postgres://
+    # Normalize postgres scheme
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
 
-    # Force SQLAlchemy to use psycopg v3 driver
+    # Force psycopg v3 driver
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
 
-    # If someone already set postgresql+psycopg://, keep it as-is
     return url
 
 
-DATABASE_URL = _normalize_database_url(getattr(settings, "database_url", None) or os.getenv("DATABASE_URL"))
+DATABASE_URL = normalize_database_url(
+    getattr(settings, "database_url", None) or os.getenv("DATABASE_URL")
+)
 
 engine = create_engine(
     DATABASE_URL,
@@ -36,7 +35,11 @@ engine = create_engine(
     pool_pre_ping=True,
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
 
 
 def get_db():
