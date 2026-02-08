@@ -5,13 +5,82 @@ from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from app.core.security import decode_token, verify_session_token
-from app.db.models import User
+from app.core.config import settings
+from app.core.security import decode_token
 from app.db.session import get_db
+
+# Try to import these if your DB models exist in this project layout.
+# If they don't, the code still works without location authorization checks.
+try:
+    from app.models.location import UserLocation  # type: ignore
+except Exception:  # pragma: no cover
+    UserLocation = None  # type: ignore
+
+try:
+    from app.db.models import User  # type: ignore
+except Exception:  # pragma: no cover
+    # Fallback path (some projects keep User under app.models.user)
+    from app.models.user import User  # type: ignore
+
+
+def _get_auth_cookie(request: Request) -> Optional[str]:
+    """
+    Returns the auth cookie value.
+
+    Primary:
+      - settings.auth_cookie_name (JWT cookie set by /api/v1/auth/login)
+
+    Backward-compat:
+      - settings.session_cookie_name (if you used it earlier)
+      - hard-coded legacy "ascrm_session"
+    """
+    # Primary (what your auth endpoint sets)
+    if getattr(settings, "auth_cookie_name", None):
+        v = request.cookies.get(settings.auth_cookie_name)
+        if v:
+            return v
+
+    # Backward compatibility (your web/logout currently references this)
+    if getattr(settings, "session_cookie_name", None):
+        v = request.cookies.get(settings.session_cookie_name)
+        if v:
+            return v
+
+    # Legacy hard-coded name (your current file)
+    return request.cookies.get("ascrm_session")
+
+
+def _get_bearer_token(request: Request) -> Optional[str]:
+    auth = request.headers.get("Authorization") or ""
+    if not auth:
+        return None
+    parts = auth.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    return None
+
+
+def _get_user_id_from_jwt(token: str) -> Optional[int]:
+    """
+    Decode JWT and extract subject.
+    """
+    try:
+        payload = decode_token(token)
+    except Exception:
+        return None
+
+    sub = payload.get("sub")
+    if sub is None:
+        return None
+
+    try:
+        return int(sub)
+    except Exception:
+        return None
 
 
 # ----------------------------
-# Web UI auth (cookie session)
+# Web UI auth (JWT cookie)
 # ----------------------------
 
 def get_session_user(
@@ -20,23 +89,18 @@ def get_session_user(
 ) -> Optional[User]:
     """
     Web UI dependency.
-    Reads the signed cookie, verifies it, returns User or None.
+    Reads JWT from cookie and returns User or None.
     """
-    token = request.cookies.get("ascrm_session")
+    token = _get_auth_cookie(request)
     if not token:
         return None
 
-    try:
-        payload = verify_session_token(token)
-    except Exception:
-        return None
-
-    user_id = payload.get("sub")
+    user_id = _get_user_id_from_jwt(token)
     if not user_id:
         return None
 
     try:
-        return db.get(User, int(user_id))
+        return db.get(User, user_id)
     except Exception:
         return None
 
@@ -55,18 +119,8 @@ def require_user(user: Optional[User] = Depends(get_session_user)) -> User:
 
 
 # ----------------------------
-# API auth (Bearer JWT OR cookie session)
+# API auth (Bearer JWT OR cookie JWT)
 # ----------------------------
-
-def _get_bearer_token(request: Request) -> Optional[str]:
-    auth = request.headers.get("Authorization") or ""
-    if not auth:
-        return None
-    parts = auth.split()
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1]
-    return None
-
 
 def get_current_user_id(
     request: Request,
@@ -75,32 +129,22 @@ def get_current_user_id(
     """
     API dependency used by endpoints.
     Supports:
-      1) Cookie session (ascrm_session) -> subject 'sub'
-      2) Authorization: Bearer <JWT>  -> subject 'sub'
-
-    Returns user_id (int) or raises 401.
+      1) Cookie JWT (affordablecrm_auth) -> subject 'sub'
+      2) Authorization: Bearer <JWT>     -> subject 'sub'
     """
-    # 1) Try cookie session first (nice for same-origin web UI hitting API)
-    token = request.cookies.get("ascrm_session")
-    if token:
-        try:
-            payload = verify_session_token(token)
-            sub = payload.get("sub")
-            if sub is not None:
-                return int(sub)
-        except Exception:
-            pass
+    # 1) Cookie JWT first (best for same-origin web UI)
+    cookie_token = _get_auth_cookie(request)
+    if cookie_token:
+        user_id = _get_user_id_from_jwt(cookie_token)
+        if user_id:
+            return user_id
 
-    # 2) Try Bearer JWT
+    # 2) Bearer JWT
     bearer = _get_bearer_token(request)
     if bearer:
-        try:
-            payload = decode_token(bearer)
-            sub = payload.get("sub")
-            if sub is not None:
-                return int(sub)
-        except Exception:
-            pass
+        user_id = _get_user_id_from_jwt(bearer)
+        if user_id:
+            return user_id
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -115,28 +159,29 @@ def require_location_access(
     user_id: int = Depends(get_current_user_id),
 ) -> bool:
     """
-    Generic access gate for multi-location data.
-    This is intentionally defensive so it won't crash while your DB schema evolves.
+    Multi-location gate.
 
-    Current rules:
-      - If user.is_superuser or user.is_admin (if present) -> allow
-      - Else if user.location_id exists and matches -> allow
+    Rules:
+      - If user.is_superuser or user.is_admin -> allow (if fields exist)
+      - Else if a UserLocation join table exists -> allow if membership exists
       - Else deny (403)
-
-    You can tighten/expand this later with a proper join table (user_locations).
     """
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
-    # Superuser / admin flags (only if your model has them)
     if getattr(user, "is_superuser", False) or getattr(user, "is_admin", False):
         return True
 
-    # Single-location user model support
-    user_location_id = getattr(user, "location_id", None)
-    if user_location_id is not None and int(user_location_id) == int(location_id):
-        return True
+    # If your join table exists, check it safely
+    if UserLocation is not None:
+        membership = (
+            db.query(UserLocation)
+            .filter(UserLocation.user_id == user_id, UserLocation.location_id == int(location_id))
+            .first()
+        )
+        if membership:
+            return True
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
