@@ -6,6 +6,7 @@ from typing import Any
 from jose import JWTError, jwt
 
 from app.core.config import settings
+from passlib.context import CryptContext
 
 
 def create_access_token(subject: str | int, expires_minutes: int | None = None, **extra_claims: Any) -> str:
@@ -38,3 +39,14 @@ def decode_token(token: str) -> dict[str, Any]:
         return jwt.decode(token, settings.secret_key, algorithms=[algorithm])
     except JWTError as e:
         raise ValueError("Invalid token") from e
+
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
