@@ -1,7 +1,9 @@
 # app/core/dependencies.py
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
@@ -13,7 +15,7 @@ from app.db.session import get_db
 
 
 # -----------------------------
-# Errors (API)
+# Errors
 # -----------------------------
 def _unauthorized(detail: str = "Not authenticated") -> HTTPException:
     return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
@@ -24,49 +26,19 @@ def _forbidden(detail: str = "Forbidden") -> HTTPException:
 
 
 # -----------------------------
-# Errors (WEB)
-# -----------------------------
-def _redirect_to_login(request: Request, detail: str = "Not authenticated") -> RedirectResponse:
-    """
-    Web UI response when a user is not authenticated.
-    Redirects to /login and includes ?next=<path> so you can send them back after login.
-    """
-    # Prevent redirect loops if you're already on /login
-    path = getattr(request.url, "path", "/")
-    if path.startswith("/login"):
-        return RedirectResponse(url="/login", status_code=302)
-
-    # Preserve original destination
-    qs = getattr(request.url, "query", "")
-    next_path = path + (f"?{qs}" if qs else "")
-    return RedirectResponse(url=f"/login?next={next_path}", status_code=302)
-
-
-# -----------------------------
 # Token helpers
 # -----------------------------
 def get_token_from_cookie(request: Request) -> Optional[str]:
-    """
-    Read JWT from your auth cookie.
-    """
     cookie_name = getattr(settings, "auth_cookie_name", "access_token")
     return request.cookies.get(cookie_name)
 
 
-def _get_secret_and_alg() -> tuple[str, str]:
+def decode_token_get_user_id(token: str) -> int:
     secret = getattr(settings, "secret_key", None) or getattr(settings, "SECRET_KEY", None)
     alg = getattr(settings, "jwt_algorithm", None) or getattr(settings, "JWT_ALGORITHM", "HS256")
+
     if not secret:
         raise _unauthorized("Server auth not configured (missing secret_key).")
-    return secret, alg
-
-
-def decode_token_get_user_id(token: str) -> int:
-    """
-    Decode JWT and return user_id.
-    Supports either 'user_id' or 'sub' claims.
-    """
-    secret, alg = _get_secret_and_alg()
 
     try:
         payload = jwt.decode(token, secret, algorithms=[alg])
@@ -91,31 +63,41 @@ def decode_token_get_user_id(token: str) -> int:
         raise _unauthorized("Invalid user id in token")
 
 
-# -----------------------------
-# Current user id (API)
-# -----------------------------
 def get_current_user_id(request: Request) -> int:
-    """
-    API dependency: returns user_id from auth cookie token.
-    Raises JSON 401 if missing/invalid.
-    """
     token = get_token_from_cookie(request)
     if not token:
         raise _unauthorized("Not authenticated")
     return decode_token_get_user_id(token)
 
 
+def create_access_token(user_id: int, minutes: int = 60 * 24 * 7) -> str:
+    """
+    Create JWT. Default 7 days.
+    """
+    secret = getattr(settings, "secret_key", None) or getattr(settings, "SECRET_KEY", None)
+    alg = getattr(settings, "jwt_algorithm", None) or getattr(settings, "JWT_ALGORITHM", "HS256")
+    if not secret:
+        raise RuntimeError("Missing settings.secret_key / SECRET_KEY")
+
+    now = datetime.now(timezone.utc)
+    exp = now + timedelta(minutes=minutes)
+
+    payload = {
+        "sub": str(user_id),
+        "user_id": int(user_id),
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+    }
+    return jwt.encode(payload, secret, algorithm=alg)
+
+
 # -----------------------------
-# User dependency (API)
+# API dependency: user + location checks (JSON errors)
 # -----------------------------
 def require_user(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    """
-    API-style auth dependency:
-    Returns authenticated User ORM object or raises JSON 401.
-    """
     from app.models.user import User
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -124,44 +106,7 @@ def require_user(
     return user
 
 
-# -----------------------------
-# User dependency (WEB)
-# -----------------------------
-def require_web_user(
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    """
-    Web-style auth dependency:
-    - If not authenticated, redirects to /login instead of returning JSON.
-    - If authenticated, returns the User ORM object.
-    """
-    token = get_token_from_cookie(request)
-    if not token:
-        return _redirect_to_login(request)
-
-    # Decode token; if invalid, redirect (not JSON)
-    try:
-        user_id = decode_token_get_user_id(token)
-    except HTTPException:
-        return _redirect_to_login(request)
-
-    from app.models.user import User
-
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        return _redirect_to_login(request)
-
-    return user
-
-
-# -----------------------------
-# Locations helpers (shared)
-# -----------------------------
 def list_user_locations(db: Session, user_id: int):
-    """
-    Returns Location objects the user can access (join table).
-    """
     from app.models.location import Location, UserLocation
 
     q = (
@@ -169,27 +114,18 @@ def list_user_locations(db: Session, user_id: int):
         .join(UserLocation, UserLocation.location_id == Location.id)
         .filter(UserLocation.user_id == user_id)
     )
-
     if hasattr(Location, "name"):
         q = q.order_by(Location.name.asc())
     else:
         q = q.order_by(Location.id.asc())
-
     return q.all()
 
 
-# -----------------------------
-# Location access (API)
-# -----------------------------
 def require_location_access(
     location_id: int,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ) -> int:
-    """
-    API dependency: ensure the user can access a location_id.
-    Returns location_id or raises JSON 403.
-    """
     from app.models.location import UserLocation
 
     membership = (
@@ -203,22 +139,13 @@ def require_location_access(
     return int(location_id)
 
 
-# Backward/alternate naming safety (some files may import this)
-require_location_access_id = require_location_access
-
-
-# -----------------------------
-# Active location (WEB)
-# -----------------------------
 def require_active_location_id(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(require_user),
 ) -> int:
     """
-    Web UI dependency: returns active location_id from cookie.
-    (API-style: if user invalid, it raises JSON 401 because require_user does.)
-    Kept for backward compatibility.
+    API-style version (raises 401/403). Use require_web_active_location_id for web pages.
     """
     cookie_name = getattr(settings, "active_location_cookie_name", "active_location_id")
     raw = request.cookies.get(cookie_name)
@@ -252,19 +179,42 @@ def require_active_location_id(
     return int(first.location_id)
 
 
+# -----------------------------
+# WEB dependencies (redirect instead of JSON)
+# -----------------------------
+def require_web_user(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Web-safe: returns User OR RedirectResponse to /login.
+    """
+    try:
+        user_id = get_current_user_id(request)
+    except HTTPException:
+        next_path = request.url.path
+        if request.url.query:
+            next_path = f"{next_path}?{request.url.query}"
+        return RedirectResponse(url=f"/login?next={quote(next_path)}", status_code=302)
+
+    from app.models.user import User
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return RedirectResponse(url="/login?next=/", status_code=302)
+
+    return user
+
+
 def require_web_active_location_id(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(require_web_user),
-) -> int:
+):
     """
-    Web UI dependency (redirect-safe):
-    - If not authenticated, redirects to /login
-    - If authenticated, returns active location id (cookie or first assigned)
+    Web-safe: returns int location_id OR RedirectResponse
     """
-    # If require_web_user returned a RedirectResponse, bubble it up
     if isinstance(user, RedirectResponse):
-        return user  # type: ignore[return-value]
+        return user
 
     cookie_name = getattr(settings, "active_location_cookie_name", "active_location_id")
     raw = request.cookies.get(cookie_name)
@@ -293,7 +243,6 @@ def require_web_active_location_id(
         .first()
     )
     if not first:
-        # No locations; send them to dashboard or login depending on your flow
-        return RedirectResponse(url="/dashboard", status_code=302)  # type: ignore[return-value]
+        return RedirectResponse(url="/login?next=/", status_code=302)
 
     return int(first.location_id)
