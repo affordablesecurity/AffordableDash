@@ -1,7 +1,7 @@
 """add customers.is_archived
 
 Revision ID: 20260209_add_customers_is_archived
-Revises: PUT_PREVIOUS_REVISION_HERE
+Revises: 0001_init
 Create Date: 2026-02-09
 """
 
