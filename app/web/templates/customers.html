@@ -1,100 +1,83 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width,initial-scale=1"/>
-    <title>Customers • Affordable CRM</title>
-    <link rel="stylesheet" href="/static/css/app.css"/>
-  </head>
-  <body>
-    <header class="topbar">
-      <div class="brand">Affordable CRM</div>
+{% extends "base.html" %}
+{% block content %}
 
-      <nav class="nav">
-        <a href="/dashboard">Dashboard</a>
-        <a class="active" href="/customers">Customers</a>
-      </nav>
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Customers</h1>
+    <div class="text-muted small">Showing up to 200 customers for the active location.</div>
+  </div>
 
-      <div class="right">
-        <form method="get" action="/set-location" style="display:inline;">
-          <select name="location_id" onchange="this.form.submit()">
-            {% for loc in locations %}
-              <option value="{{ loc.id }}" {% if loc.id == active_location_id %}selected{% endif %}>
-                {{ loc.name }}
-              </option>
-            {% endfor %}
-          </select>
-        </form>
+  <form class="d-flex gap-2" method="get" action="/customers">
+    <input class="form-control" type="text" name="q" value="{{ q }}" placeholder="Search name, phone, email" />
+    <button class="btn btn-primary" type="submit">Search</button>
+  </form>
+</div>
 
-        <span class="user">{{ user.email }}</span>
-        <a class="btn" href="/logout">Logout</a>
+{% if error %}
+  <div class="alert alert-danger">
+    <strong>Something broke:</strong><br/>
+    <code>{{ error }}</code>
+  </div>
+{% endif %}
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form class="row g-2" method="post" action="/customers">
+      <div class="col-md-3">
+        <input class="form-control" name="first_name" placeholder="First name" required />
       </div>
-    </header>
-
-    <main class="container">
-      <h1>Customers</h1>
-
-      <div class="grid" style="grid-template-columns: 1fr 1fr;">
-        <div class="card">
-          <h2>Add customer</h2>
-          {% if error %}
-            <p class="error">{{ error }}</p>
-          {% endif %}
-          <form method="post" action="/customers">
-            <label>First name</label>
-            <input name="first_name" required />
-
-            <label>Last name</label>
-            <input name="last_name" />
-
-            <label>Phone</label>
-            <input name="phone" />
-
-            <label>Email</label>
-            <input name="email" />
-
-            <label>Notes</label>
-            <textarea name="notes" rows="3"></textarea>
-
-            <button class="btn" type="submit">Create customer</button>
-          </form>
-        </div>
-
-        <div class="card">
-          <h2>Search</h2>
-          <form method="get" action="/customers">
-            <input name="q" value="{{ q }}" placeholder="name, phone, email" />
-            <button class="btn" type="submit">Search</button>
-            <a class="btn" href="/customers" style="text-decoration:none;">Clear</a>
-          </form>
-
-          <h2 style="margin-top:16px;">Results</h2>
-          <div style="max-height:420px; overflow:auto;">
-            <table width="100%">
-              <thead>
-                <tr>
-                  <th align="left">Name</th>
-                  <th align="left">Phone</th>
-                  <th align="left">Email</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for c in customers %}
-                  <tr>
-                    <td>{{ c.first_name }} {{ c.last_name }}</td>
-                    <td>{{ c.phone or "" }}</td>
-                    <td>{{ c.email or "" }}</td>
-                  </tr>
-                {% endfor %}
-                {% if customers|length == 0 %}
-                  <tr><td colspan="3">No customers yet.</td></tr>
-                {% endif %}
-              </tbody>
-            </table>
-          </div>
-
-        </div>
+      <div class="col-md-3">
+        <input class="form-control" name="last_name" placeholder="Last name" />
       </div>
-    </main>
-  </body>
-</html>
+      <div class="col-md-3">
+        <input class="form-control" name="phone" placeholder="Phone" />
+      </div>
+      <div class="col-md-3">
+        <input class="form-control" name="email" placeholder="Email" />
+      </div>
+      <div class="col-12">
+        <input class="form-control" name="notes" placeholder="Notes (optional)" />
+      </div>
+      <div class="col-12 d-flex justify-content-end">
+        <button class="btn btn-success" type="submit">Add Customer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Phone</th>
+          <th>Email</th>
+          <th class="text-muted">Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in customers %}
+          <tr>
+            <td>
+              {{ (c.first_name if c.first_name else "") }}
+              {{ (c.last_name if c.last_name else "") }}
+            </td>
+            <td>{{ c.phone if c.phone is defined and c.phone else (c.phone_number if c.phone_number is defined else "") }}</td>
+            <td>{{ c.email if c.email else "" }}</td>
+            <td class="text-muted small">{{ c.notes if c.notes else "" }}</td>
+          </tr>
+        {% endfor %}
+        {% if customers|length == 0 %}
+          <tr>
+            <td colspan="4" class="text-center text-muted py-4">
+              No customers found (or your model fields didn’t match — see error above).
+            </td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
