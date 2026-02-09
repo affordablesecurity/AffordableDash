@@ -4,322 +4,52 @@
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <title>Affordable CRM</title>
-
     <link rel="stylesheet" href="/static/css/app.css"/>
-    <link rel="stylesheet" href="/static/css/dashboard.css"/>
-
-    <!-- Leaflet (OpenStreetMap map, not Google) -->
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-      crossorigin=""
-    />
   </head>
-
   <body>
     <header class="topbar">
       <div class="brand">Affordable CRM</div>
 
+      <nav class="nav">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/customers">Customers</a>
+      </nav>
+
       <div class="right">
+        <form method="get" action="/set-location" style="display:inline;">
+          <select name="location_id" onchange="this.form.submit()">
+            {% for loc in locations %}
+              <option value="{{ loc.id }}" {% if loc.id == active_location_id %}selected{% endif %}>
+                {{ loc.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </form>
+
         <span class="user">{{ user.email }}</span>
         <a class="btn" href="/logout">Logout</a>
       </div>
     </header>
 
     <main class="container">
-      <div class="hcp-toolbar" style="margin-top:14px;">
-        <div class="hcp-title" style="margin:0;">Hi, {{ user.full_name or "Brandon" }}</div>
-
-        <div style="margin-left:auto;">
-          <select id="locationSelect">
-            <option value="">Loading locations...</option>
-          </select>
+      <h1>Dashboard</h1>
+      <div class="grid">
+        <div class="card">
+          <h2>Next build</h2>
+          <ul>
+            <li>Locations + User roles UI</li>
+            <li>Customers module</li>
+            <li>Jobs + Scheduling</li>
+            <li>Invoices + Stripe</li>
+            <li>SMS/Email notifications</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h2>Status</h2>
+          <p>You are logged in as <strong>{{ user.email }}</strong>.</p>
+          <p>Active location: <strong>{{ active_location_id }}</strong></p>
         </div>
       </div>
-
-      <!-- TOP CARDS -->
-      <div class="hcp-row" style="margin-top:14px;">
-        <div class="hcp-card">
-          <div class="top">
-            <h3>Estimates</h3>
-            <span style="opacity:.6;">+</span>
-          </div>
-          <div class="big" id="estimatesCount">0</div>
-          <div class="sub"><span id="estimatesLabel">Open estimate</span> • <span id="estimatesAmt">$0</span></div>
-          <a href="#" onclick="return false;">View all estimates</a>
-        </div>
-
-        <div class="hcp-card">
-          <div class="top">
-            <h3>Jobs</h3>
-            <span style="opacity:.6;">+</span>
-          </div>
-          <div class="big" id="jobsCount">0</div>
-          <div class="sub"><span id="jobsLabel">Unscheduled jobs</span> • <span id="jobsAmt">$0</span></div>
-          <a href="#" onclick="return false;">View all jobs</a>
-        </div>
-
-        <div class="hcp-card">
-          <div class="top">
-            <h3>Invoices</h3>
-            <span style="opacity:.6;">+</span>
-          </div>
-          <div class="big" id="invoicesCount">0</div>
-          <div class="sub"><span id="invoicesLabel">Open invoices</span> • <span id="invoicesAmt">$0</span></div>
-          <a href="#" onclick="return false;">View all invoices</a>
-        </div>
-
-        <div class="hcp-card">
-          <div class="top">
-            <h3>Service Plans</h3>
-            <span style="opacity:.6;"> </span>
-          </div>
-          <div class="sub" style="font-weight:800;">You're all caught up!</div>
-          <div class="sub"><span id="plansCount">0</span> unscheduled service visits</div>
-          <a href="#" onclick="return false;">Manage visits</a>
-        </div>
-      </div>
-
-      <!-- WEEK TO DATE KPIs -->
-      <div class="hcp-section">
-        <div class="hdr">
-          <div class="left">
-            <span>Week to date</span>
-          </div>
-          <div>
-            <a href="#" onclick="return false;" style="font-size:13px; text-decoration:none;">View all reports</a>
-          </div>
-        </div>
-
-        <div class="hcp-kpis">
-          <div class="hcp-kpi">
-            <div class="label">Job revenue earned</div>
-            <div class="value" id="kpiRevenue">$0</div>
-          </div>
-          <div class="hcp-kpi">
-            <div class="label">Jobs completed</div>
-            <div class="value" id="kpiCompleted">0</div>
-          </div>
-          <div class="hcp-kpi">
-            <div class="label">Average job size</div>
-            <div class="value" id="kpiAvg">$0</div>
-          </div>
-          <div class="hcp-kpi">
-            <div class="label">Total new jobs booked</div>
-            <div class="value" id="kpiBooked">$0</div>
-          </div>
-          <div class="hcp-kpi">
-            <div class="label">New jobs booked online</div>
-            <div class="value" id="kpiBookedOnline">$0</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- EMPLOYEE STATUS + MAP -->
-      <div class="hcp-section" style="margin-top:14px;">
-        <div class="hdr">
-          <div class="left">Employee Status</div>
-          <div style="opacity:.7; font-size:13px;">Today</div>
-        </div>
-
-        <div class="hcp-employee-grid">
-          <div class="hcp-employee-list" id="employeeList">
-            <div style="opacity:.75;">Loading...</div>
-          </div>
-
-          <div>
-            <div id="map"></div>
-          </div>
-        </div>
-      </div>
-
-      <div style="margin-top:10px; opacity:.7; font-size:13px;" id="dashStatus"></div>
     </main>
-
-    <script
-      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-      crossorigin=""
-    ></script>
-
-    <script>
-      async function api(path, options = {}) {
-        const res = await fetch(path, {
-          ...options,
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            ...(options.headers || {})
-          }
-        });
-
-        const ct = res.headers.get("content-type") || "";
-        const body = ct.includes("application/json") ? await res.json() : await res.text();
-
-        if (!res.ok) {
-          const msg = (body && body.detail) ? body.detail : (typeof body === "string" ? body : JSON.stringify(body));
-          throw new Error(msg || `Request failed (${res.status})`);
-        }
-        return body;
-      }
-
-      function money(n) {
-        try {
-          const num = Number(n || 0);
-          return num.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-        } catch {
-          return "$0";
-        }
-      }
-
-      let activeLocationId = null;
-      let map = null;
-      let pinsLayer = null;
-
-      function setStatus(text, isError=false) {
-        const el = document.getElementById("dashStatus");
-        el.textContent = text || "";
-        el.style.color = isError ? "crimson" : "";
-      }
-
-      function ensureMap(center) {
-        const c = center || { lat: 33.4484, lng: -112.0740 };
-
-        if (!map) {
-          map = L.map("map").setView([c.lat, c.lng], 12);
-
-          // OpenStreetMap tiles
-          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-            maxZoom: 19,
-            attribution: "&copy; OpenStreetMap contributors"
-          }).addTo(map);
-
-          pinsLayer = L.layerGroup().addTo(map);
-        } else {
-          map.setView([c.lat, c.lng], 12);
-          pinsLayer.clearLayers();
-        }
-      }
-
-      function renderEmployees(data) {
-        const list = document.getElementById("employeeList");
-        const employees = (data && data.employees) ? data.employees : [];
-
-        if (!employees.length) {
-          list.innerHTML = `<div style="opacity:.75;">No employees found for this location.</div>`;
-          return;
-        }
-
-        list.innerHTML = employees.map(e => {
-          const items = (e.items || []).map(it => `
-            <div class="item">
-              <div class="time">${it.time || ""}</div>
-              <div><strong>${it.customer || ""}</strong> • ${it.title || ""}</div>
-            </div>
-          `).join("");
-
-          return `
-            <div class="emp">
-              <div class="name">${e.name || ""}</div>
-              <div class="sub">${e.sub || ""}</div>
-              ${items}
-            </div>
-          `;
-        }).join("");
-      }
-
-      function renderSummary(s) {
-        if (s && s.error) {
-          setStatus(s.error, true);
-          return;
-        }
-
-        const c = s.cards || {};
-        document.getElementById("estimatesCount").textContent = c.estimates_open_count ?? 0;
-        document.getElementById("estimatesAmt").textContent = money(c.estimates_open_amount ?? 0);
-
-        document.getElementById("jobsCount").textContent = c.jobs_unscheduled_count ?? 0;
-        document.getElementById("jobsAmt").textContent = money(c.jobs_unscheduled_amount ?? 0);
-
-        document.getElementById("invoicesCount").textContent = c.invoices_open_count ?? 0;
-        document.getElementById("invoicesAmt").textContent = money(c.invoices_open_amount ?? 0);
-
-        document.getElementById("plansCount").textContent = c.service_plans_unscheduled_count ?? 0;
-
-        const w = s.week_to_date || {};
-        document.getElementById("kpiRevenue").textContent = money(w.job_revenue_earned ?? 0);
-        document.getElementById("kpiCompleted").textContent = w.jobs_completed ?? 0;
-        document.getElementById("kpiAvg").textContent = money(w.average_job_size ?? 0);
-        document.getElementById("kpiBooked").textContent = money(w.total_new_jobs_booked ?? 0);
-        document.getElementById("kpiBookedOnline").textContent = money(w.new_jobs_booked_online ?? 0);
-      }
-
-      async function loadLocations() {
-        const data = await api("/api/v1/locations/my", { method: "GET" });
-        const locations = data.locations || [];
-
-        const select = document.getElementById("locationSelect");
-        select.innerHTML = "";
-
-        if (!locations.length) {
-          select.innerHTML = `<option value="">No locations</option>`;
-          activeLocationId = null;
-          return;
-        }
-
-        for (const loc of locations) {
-          const opt = document.createElement("option");
-          opt.value = String(loc.location_id);
-          opt.textContent = `${loc.location_name} (ID: ${loc.location_id})`;
-          select.appendChild(opt);
-        }
-
-        activeLocationId = data.default_location_id || locations[0].location_id;
-        select.value = String(activeLocationId);
-      }
-
-      async function refreshDashboard() {
-        if (!activeLocationId) return;
-
-        setStatus("Loading dashboard...");
-
-        const summary = await api(`/api/v1/dashboard/summary?location_id=${encodeURIComponent(activeLocationId)}`, { method: "GET" });
-        renderSummary(summary);
-
-        const emp = await api(`/api/v1/dashboard/employees?location_id=${encodeURIComponent(activeLocationId)}`, { method: "GET" });
-        if (emp && emp.error) {
-          setStatus(emp.error, true);
-          return;
-        }
-
-        renderEmployees(emp);
-
-        const center = emp?.map?.center || { lat: 33.4484, lng: -112.0740 };
-        ensureMap(center);
-
-        const pins = (emp?.map?.pins) || [];
-        for (const p of pins) {
-          L.marker([p.lat, p.lng]).addTo(pinsLayer).bindPopup(p.label || "");
-        }
-
-        setStatus("");
-      }
-
-      (async function init() {
-        try {
-          await loadLocations();
-          await refreshDashboard();
-
-          document.getElementById("locationSelect").addEventListener("change", async (e) => {
-            activeLocationId = e.target.value ? Number(e.target.value) : null;
-            await refreshDashboard();
-          });
-        } catch (err) {
-          setStatus(err.message || "Failed to load dashboard", true);
-          console.error(err);
-        }
-      })();
-    </script>
   </body>
 </html>
