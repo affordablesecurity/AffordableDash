@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -11,15 +12,15 @@ def normalize_database_url(url: str | None) -> str:
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
 
-    # Strip hidden whitespace/newlines from Render
-    url = url.strip()
+    # Remove hidden whitespace/newlines/tabs that break db name parsing
+    url = url.replace("\r", "").replace("\n", "").replace("\t", "").strip()
 
     # Normalize postgres scheme
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
 
     # Force psycopg v3 driver
-    if url.startswith("postgresql://"):
+    if url.startswith("postgresql://") and not url.startswith("postgresql+psycopg://"):
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
 
     return url
