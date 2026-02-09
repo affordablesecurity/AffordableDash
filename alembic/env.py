@@ -1,51 +1,58 @@
-# alembic/env.py
 from __future__ import annotations
 
 import os
 import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 
-# ---------------------------------------------------------
-# IMPORTANT: ensure project root is on sys.path
-# This fixes: ModuleNotFoundError: No module named 'app'
-# ---------------------------------------------------------
-PROJECT_ROOT = os.path.abspath(os.getcwd())
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# --- Ensure repo root is on sys.path so "import app" always works ---
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-# Alembic Config object (reads alembic.ini)
+from app.core.config import settings  # noqa: E402
+from app.db.base import Base  # noqa: E402
+
+
+# this is the Alembic Config object, which provides access to the values within
+# the .ini file in use.
 config = context.config
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Now imports work
-from app.core.config import settings  # noqa: E402
-from app.db.base import Base  # noqa: E402
-
-# ---------------------------------------------------------
-# Make sure ALL models are imported so metadata is complete
-# (even if you don't autogenerate today, this prevents surprises)
-# ---------------------------------------------------------
-from app.models.user import User  # noqa: F401,E402
-from app.models.location import Location, UserLocation  # noqa: F401,E402
-from app.models.customer import Customer  # noqa: F401,E402
-from app.models.organization import Organization  # noqa: F401,E402
-
 target_metadata = Base.metadata
 
 
-def get_url() -> str:
-    # Prefer Render DATABASE_URL but fall back to settings.database_url
-    return os.getenv("DATABASE_URL") or settings.database_url
+def _clean_url(url: str | None) -> str:
+    if not url:
+        raise RuntimeError("DATABASE_URL is not set")
+
+    # Remove hidden CR/LF/TAB
+    url = url.replace("\r", "").replace("\n", "").replace("\t", "").strip()
+
+    # Normalize postgres scheme
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+
+    # Force psycopg v3 driver
+    if url.startswith("postgresql://") and not url.startswith("postgresql+psycopg://"):
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+    return url
+
+
+def get_database_url() -> str:
+    # Prefer Settings, fallback to env
+    return _clean_url(getattr(settings, "database_url", None) or os.getenv("DATABASE_URL"))
 
 
 def run_migrations_offline() -> None:
-    url = get_url()
+    url = get_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -60,7 +67,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section) or {}
-    configuration["sqlalchemy.url"] = get_url()
+    configuration["sqlalchemy.url"] = get_database_url()
 
     connectable = engine_from_config(
         configuration,
