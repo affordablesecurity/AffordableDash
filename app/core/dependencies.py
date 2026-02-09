@@ -1,7 +1,7 @@
 # app/core/dependencies.py
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from jose import JWTError, jwt
@@ -12,7 +12,7 @@ from app.db.session import get_db
 
 
 # -----------------------------
-# Helpers / Errors
+# Errors
 # -----------------------------
 def _unauthorized(detail: str = "Not authenticated") -> HTTPException:
     return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
@@ -23,27 +23,25 @@ def _forbidden(detail: str = "Forbidden") -> HTTPException:
 
 
 # -----------------------------
-# Auth (Cookie -> JWT -> user_id)
+# Token helpers
 # -----------------------------
 def get_token_from_cookie(request: Request) -> Optional[str]:
     """
-    Reads the auth token from the cookie configured in settings.auth_cookie_name.
+    Read JWT from your auth cookie.
     """
     cookie_name = getattr(settings, "auth_cookie_name", "access_token")
-    token = request.cookies.get(cookie_name)
-    return token
+    return request.cookies.get(cookie_name)
 
 
 def decode_token_get_user_id(token: str) -> int:
     """
-    Decodes JWT and returns user_id (supports common claim keys).
-    Adjust claim keys here if your token uses a different structure.
+    Decode JWT and return user_id.
+    Supports either 'user_id' or 'sub' claims.
     """
     secret = getattr(settings, "secret_key", None) or getattr(settings, "SECRET_KEY", None)
     alg = getattr(settings, "jwt_algorithm", None) or getattr(settings, "JWT_ALGORITHM", "HS256")
 
     if not secret:
-        # If your project uses a different setting name, set settings.secret_key in config.
         raise _unauthorized("Server auth not configured (missing secret_key).")
 
     try:
@@ -51,10 +49,8 @@ def decode_token_get_user_id(token: str) -> int:
     except JWTError:
         raise _unauthorized("Invalid or expired token")
 
-    # Try common keys:
     user_id = payload.get("user_id")
     if user_id is None:
-        # Some libs use "sub"
         sub = payload.get("sub")
         if sub is not None:
             try:
@@ -73,7 +69,7 @@ def decode_token_get_user_id(token: str) -> int:
 
 def get_current_user_id(request: Request) -> int:
     """
-    FastAPI dependency: returns authenticated user_id from cookie token.
+    API dependency: returns user_id from auth cookie token.
     """
     token = get_token_from_cookie(request)
     if not token:
@@ -82,16 +78,16 @@ def get_current_user_id(request: Request) -> int:
 
 
 # -----------------------------
-# Public dependencies used by web/router.py
+# User dependency (web + api)
 # -----------------------------
 def require_user(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
     """
-    Web UI dependency: returns the authenticated User ORM object.
+    Returns the authenticated User ORM object.
+    Used by web UI routes and can be used by API routes if desired.
     """
-    # Local import to avoid circular import issues
     from app.models.user import User
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -100,21 +96,55 @@ def require_user(
     return user
 
 
+# -----------------------------
+# Locations helpers (web + api)
+# -----------------------------
 def list_user_locations(db: Session, user_id: int):
     """
-    Returns a list of Location objects the user has access to.
-    Used by dashboard and pages that need the location switcher.
+    Returns Location objects the user can access (join table).
     """
     from app.models.location import Location, UserLocation
 
-    rows = (
+    q = (
         db.query(Location)
         .join(UserLocation, UserLocation.location_id == Location.id)
         .filter(UserLocation.user_id == user_id)
-        .order_by(Location.name.asc() if hasattr(Location, "name") else Location.id.asc())
-        .all()
     )
-    return rows
+
+    # Prefer a "name" sort if Location has it
+    if hasattr(Location, "name"):
+        q = q.order_by(Location.name.asc())
+    else:
+        q = q.order_by(Location.id.asc())
+
+    return q.all()
+
+
+def require_location_access(
+    location_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+) -> int:
+    """
+    API dependency used by endpoints to ensure the user can access a location_id.
+
+    Example API use:
+        def route(location_id: int, _=Depends(require_location_access)):
+            ...
+
+    It returns location_id if access is valid, otherwise raises 403.
+    """
+    from app.models.location import UserLocation
+
+    membership = (
+        db.query(UserLocation)
+        .filter(UserLocation.user_id == user_id, UserLocation.location_id == location_id)
+        .first()
+    )
+    if not membership:
+        raise _forbidden("No access to this location")
+
+    return int(location_id)
 
 
 def require_active_location_id(
@@ -123,15 +153,15 @@ def require_active_location_id(
     user=Depends(require_user),
 ) -> int:
     """
-    Web UI dependency: returns the active location_id from cookie,
-    validates the user can access it, otherwise picks the first allowed location.
+    Web UI dependency: returns active location_id from cookie.
+    If missing/invalid, returns the first location assigned to the user.
     """
     cookie_name = getattr(settings, "active_location_cookie_name", "active_location_id")
     raw = request.cookies.get(cookie_name)
 
     from app.models.location import UserLocation
 
-    # If cookie is present, validate membership
+    # If cookie exists, validate membership
     if raw:
         try:
             location_id = int(raw)
@@ -145,9 +175,9 @@ def require_active_location_id(
                 .first()
             )
             if membership:
-                return location_id
+                return int(location_id)
 
-    # Fallback: pick first location user has access to
+    # Fallback: first location assigned to user
     first = (
         db.query(UserLocation)
         .filter(UserLocation.user_id == user.id)
@@ -155,7 +185,6 @@ def require_active_location_id(
         .first()
     )
     if not first:
-        # User has no locations assigned yet
         raise _forbidden("No locations assigned to this user")
 
     return int(first.location_id)
