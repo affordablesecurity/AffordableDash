@@ -1,6 +1,7 @@
+# app/core/dependencies.py
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from jose import JWTError, jwt
@@ -8,119 +9,153 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.location import Location, UserLocation
 
 
-def _extract_bearer_token(request: Request) -> Optional[str]:
-    auth = request.headers.get("Authorization", "")
-    if auth.lower().startswith("bearer "):
-        return auth.split(" ", 1)[1].strip()
-    return None
+# -----------------------------
+# Helpers / Errors
+# -----------------------------
+def _unauthorized(detail: str = "Not authenticated") -> HTTPException:
+    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
 
 
-def _extract_cookie_token(request: Request) -> Optional[str]:
-    return request.cookies.get(settings.auth_cookie_name)
+def _forbidden(detail: str = "Forbidden") -> HTTPException:
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+
+# -----------------------------
+# Auth (Cookie -> JWT -> user_id)
+# -----------------------------
+def get_token_from_cookie(request: Request) -> Optional[str]:
+    """
+    Reads the auth token from the cookie configured in settings.auth_cookie_name.
+    """
+    cookie_name = getattr(settings, "auth_cookie_name", "access_token")
+    token = request.cookies.get(cookie_name)
+    return token
+
+
+def decode_token_get_user_id(token: str) -> int:
+    """
+    Decodes JWT and returns user_id (supports common claim keys).
+    Adjust claim keys here if your token uses a different structure.
+    """
+    secret = getattr(settings, "secret_key", None) or getattr(settings, "SECRET_KEY", None)
+    alg = getattr(settings, "jwt_algorithm", None) or getattr(settings, "JWT_ALGORITHM", "HS256")
+
+    if not secret:
+        # If your project uses a different setting name, set settings.secret_key in config.
+        raise _unauthorized("Server auth not configured (missing secret_key).")
+
+    try:
+        payload = jwt.decode(token, secret, algorithms=[alg])
+    except JWTError:
+        raise _unauthorized("Invalid or expired token")
+
+    # Try common keys:
+    user_id = payload.get("user_id")
+    if user_id is None:
+        # Some libs use "sub"
+        sub = payload.get("sub")
+        if sub is not None:
+            try:
+                user_id = int(sub)
+            except Exception:
+                user_id = None
+
+    if user_id is None:
+        raise _unauthorized("Token missing user id")
+
+    try:
+        return int(user_id)
+    except Exception:
+        raise _unauthorized("Invalid user id in token")
 
 
 def get_current_user_id(request: Request) -> int:
     """
-    Accepts auth via:
-      - Authorization: Bearer <token>
-      - Cookie: <AUTH_COOKIE_NAME>=<token>
-      - Query param: ?token=<token>   (useful for quick tests; can remove later)
+    FastAPI dependency: returns authenticated user_id from cookie token.
     """
-    token = (
-        _extract_bearer_token(request)
-        or _extract_cookie_token(request)
-        or request.query_params.get("token")
-    )
-
+    token = get_token_from_cookie(request)
     if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.jwt_algorithm])
-        sub = payload.get("sub")
-        if not sub:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        return int(sub)
-    except (JWTError, ValueError):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        raise _unauthorized("Not authenticated")
+    return decode_token_get_user_id(token)
 
 
-def require_location_access(location_id: int, db: Session, user_id: int) -> UserLocation:
-    """
-    Ensures the user has a row in user_locations for the location.
-    Returns the membership row if authorized.
-    """
-    membership = (
-        db.query(UserLocation)
-        .filter(UserLocation.user_id == user_id, UserLocation.location_id == location_id)
-        .first()
-    )
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this location")
-    return membership
-
-
-def list_user_locations(db: Session, user_id: int) -> list[dict]:
-    """
-    Used by the web UI to populate a location switcher.
-    Returns a lightweight list of locations the user can access.
-    """
-    rows = (
-        db.query(UserLocation, Location)
-        .join(Location, Location.id == UserLocation.location_id)
-        .filter(UserLocation.user_id == user_id)
-        .order_by(Location.name.asc())
-        .all()
-    )
-
-    return [
-        {
-            "location_id": loc.id,
-            "location_name": loc.name,
-            "timezone": loc.timezone,
-            "role": ul.role,
-            "organization_id": loc.organization_id,
-        }
-        for (ul, loc) in rows
-    ]
-
-
-def get_active_location_id(
-    request: Request,
+# -----------------------------
+# Public dependencies used by web/router.py
+# -----------------------------
+def require_user(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
-) -> int:
+):
     """
-    Phase 1A simple rule:
-      - If UI sets cookie 'active_location_id', use it
-      - else default to the first location the user has access to
+    Web UI dependency: returns the authenticated User ORM object.
     """
-    cookie_val = request.cookies.get("active_location_id")
-    if cookie_val and cookie_val.isdigit():
-        location_id = int(cookie_val)
-        require_location_access(location_id, db, user_id)
-        return location_id
+    # Local import to avoid circular import issues
+    from app.models.user import User
 
-    first = (
-        db.query(UserLocation)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise _unauthorized("User not found")
+    return user
+
+
+def list_user_locations(db: Session, user_id: int):
+    """
+    Returns a list of Location objects the user has access to.
+    Used by dashboard and pages that need the location switcher.
+    """
+    from app.models.location import Location, UserLocation
+
+    rows = (
+        db.query(Location)
+        .join(UserLocation, UserLocation.location_id == Location.id)
         .filter(UserLocation.user_id == user_id)
-        .order_by(UserLocation.location_id.asc())
-        .first()
+        .order_by(Location.name.asc() if hasattr(Location, "name") else Location.id.asc())
+        .all()
     )
-    if not first:
-        raise HTTPException(status_code=403, detail="User has no locations")
-    return int(first.location_id)
+    return rows
+
 
 def require_active_location_id(
     request: Request,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user=Depends(require_user),
 ) -> int:
     """
-    Backwards-compatible alias for web router imports.
+    Web UI dependency: returns the active location_id from cookie,
+    validates the user can access it, otherwise picks the first allowed location.
     """
-    return get_active_location_id(request=request, db=db, user_id=user_id)
+    cookie_name = getattr(settings, "active_location_cookie_name", "active_location_id")
+    raw = request.cookies.get(cookie_name)
 
+    from app.models.location import UserLocation
+
+    # If cookie is present, validate membership
+    if raw:
+        try:
+            location_id = int(raw)
+        except Exception:
+            location_id = None
+
+        if location_id is not None:
+            membership = (
+                db.query(UserLocation)
+                .filter(UserLocation.user_id == user.id, UserLocation.location_id == location_id)
+                .first()
+            )
+            if membership:
+                return location_id
+
+    # Fallback: pick first location user has access to
+    first = (
+        db.query(UserLocation)
+        .filter(UserLocation.user_id == user.id)
+        .order_by(UserLocation.location_id.asc())
+        .first()
+    )
+    if not first:
+        # User has no locations assigned yet
+        raise _forbidden("No locations assigned to this user")
+
+    return int(first.location_id)
