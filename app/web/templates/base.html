@@ -1,23 +1,69 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ title or "Affordable CRM" }}</title>
-    <link rel="stylesheet" href="/static/css/app.css"/>
+
+    <!-- Bootstrap (CDN) -->
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      crossorigin="anonymous"
+    />
+
+    <style>
+      body { background: #f6f7f9; }
+      .topbar {
+        background: #0d1b2a;
+        color: #fff;
+      }
+      .brand {
+        font-weight: 700;
+        letter-spacing: .2px;
+      }
+      .nav-link, .nav-link:visited { color: rgba(255,255,255,.85); }
+      .nav-link:hover { color: #fff; }
+      .card { border-radius: 14px; }
+      .btn-primary { background: #0074B8; border-color: #0074B8; }
+      .btn-success { background: #00B5A3; border-color: #00B5A3; }
+    </style>
   </head>
+
   <body>
-    <header class="topbar">
-      <div class="brand">Affordable CRM</div>
-      {% if user %}
-      <div class="right">
-        <span class="user">{{ user.email }}</span>
-        <a class="btn" href="/logout">Logout</a>
+    <div class="topbar py-3">
+      <div class="container d-flex align-items-center justify-content-between">
+        <div class="brand">Affordable CRM</div>
+
+        <div class="d-flex align-items-center gap-3">
+          <a class="nav-link text-decoration-none" href="/dashboard">Dashboard</a>
+          <a class="nav-link text-decoration-none" href="/customers">Customers</a>
+
+          {% if locations %}
+            <form class="d-flex align-items-center" method="get" action="/set-location">
+              <select class="form-select form-select-sm" name="location_id" onchange="this.form.submit()">
+                {% for loc in locations %}
+                  <option value="{{ loc.id }}" {% if active_location_id == loc.id %}selected{% endif %}>
+                    {{ loc.name if loc.name else ("Location " ~ loc.id) }}
+                  </option>
+                {% endfor %}
+              </select>
+            </form>
+          {% endif %}
+
+          <div class="small" style="opacity:.9">{{ user.email if user else "" }}</div>
+          <a class="btn btn-sm btn-success" href="/logout">Logout</a>
+        </div>
       </div>
-      {% endif %}
-    </header>
-    <main class="container">
+    </div>
+
+    <main class="container py-4">
       {% block content %}{% endblock %}
     </main>
+
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+      crossorigin="anonymous"
+    ></script>
   </body>
 </html>
