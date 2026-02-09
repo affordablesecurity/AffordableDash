@@ -2,71 +2,28 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user_id
+from app.core.dependencies import get_current_user_id, require_location_access
 from app.db.session import get_db
-from app.models.customer import Customer
-from app.models.location import Location, UserLocation
-from app.models.user import User
-from app.schemas.customers import CustomerCreate, CustomerOut, CustomerUpdate
+from app.models.customer import Customer, CustomerAddress
+from app.models.location import Location
+from app.schemas.customers import (
+    CustomerCreate,
+    CustomerOut,
+    CustomerUpdate,
+    CustomerAddressCreate,
+    CustomerAddressOut,
+    CustomerAddressUpdate,
+)
 
 router = APIRouter()
 
 
-# ----------------------------
-# Helpers
-# ----------------------------
-
-def _has_archived_at_column() -> bool:
-    # SQLAlchemy models expose mapped attrs on the class
-    return hasattr(Customer, "archived_at")
-
-
-def _base_customer_query(db: Session):
-    q = db.query(Customer)
-    if _has_archived_at_column():
-        # Exclude archived by default
-        q = q.filter(getattr(Customer, "archived_at").is_(None))
-    return q
-
-
-def _assert_location_access(db: Session, user_id: int, location_id: int) -> None:
-    """
-    Multi-location access gate.
-
-    Rules:
-      - If user.is_superadmin == True -> allow
-      - Else user must have a row in user_locations for that location
-    """
-    user = db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-    if getattr(user, "is_superadmin", False):
-        return
-
-    membership = (
-        db.query(UserLocation)
-        .filter(UserLocation.user_id == user_id, UserLocation.location_id == location_id)
-        .first()
-    )
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this location")
-
-
-def _get_customer_or_404(db: Session, customer_id: int) -> Customer:
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    return customer
-
-
-# ----------------------------
-# Endpoints
-# ----------------------------
+# -------------------------
+# Customers
+# -------------------------
 
 @router.post("/", response_model=CustomerOut)
 def create_customer(
@@ -74,7 +31,7 @@ def create_customer(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    _assert_location_access(db, user_id, payload.location_id)
+    require_location_access(location_id=payload.location_id, db=db, user_id=user_id)
 
     loc = db.query(Location).filter(Location.id == payload.location_id).first()
     if not loc:
@@ -102,54 +59,18 @@ def create_customer(
 
 @router.get("/", response_model=list[CustomerOut])
 def list_customers(
-    location_id: int = Query(...),
-    include_archived: bool = Query(False),
+    location_id: int,
+    include_archived: bool = False,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    _assert_location_access(db, user_id, location_id)
+    require_location_access(location_id=location_id, db=db, user_id=user_id)
 
     q = db.query(Customer).filter(Customer.location_id == location_id)
-
-    if _has_archived_at_column() and not include_archived:
-        q = q.filter(getattr(Customer, "archived_at").is_(None))
+    if not include_archived:
+        q = q.filter(Customer.archived_at.is_(None))
 
     rows = q.order_by(Customer.last_name.asc(), Customer.first_name.asc()).all()
-    return rows
-
-
-@router.get("/search", response_model=list[CustomerOut])
-def search_customers(
-    location_id: int = Query(...),
-    q: str = Query(..., min_length=1),
-    include_archived: bool = Query(False),
-    limit: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    """
-    Search by name, phone, or email within a location.
-    """
-    _assert_location_access(db, user_id, location_id)
-
-    query = db.query(Customer).filter(Customer.location_id == location_id)
-
-    if _has_archived_at_column() and not include_archived:
-        query = query.filter(getattr(Customer, "archived_at").is_(None))
-
-    term = f"%{q.strip()}%"
-
-    # Use ilike when available; for sqlite it still works in most setups.
-    query = query.filter(
-        or_(
-            Customer.first_name.ilike(term),
-            Customer.last_name.ilike(term),
-            Customer.phone.ilike(term) if hasattr(Customer, "phone") else False,
-            Customer.email.ilike(term) if hasattr(Customer, "email") else False,
-        )
-    )
-
-    rows = query.order_by(Customer.last_name.asc(), Customer.first_name.asc()).limit(limit).all()
     return rows
 
 
@@ -159,10 +80,11 @@ def get_customer(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    customer = _get_customer_or_404(db, customer_id)
+    customer = db.get(Customer, customer_id)
+    if not customer or customer.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Customer not found")
 
-    # Auth based on the customer's location
-    _assert_location_access(db, user_id, int(customer.location_id))
+    require_location_access(location_id=customer.location_id, db=db, user_id=user_id)
     return customer
 
 
@@ -173,26 +95,51 @@ def update_customer(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    customer = _get_customer_or_404(db, customer_id)
-    _assert_location_access(db, user_id, int(customer.location_id))
+    customer = db.get(Customer, customer_id)
+    if not customer or customer.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    require_location_access(location_id=customer.location_id, db=db, user_id=user_id)
 
     data = payload.model_dump(exclude_unset=True)
 
-    # Normalize some fields if provided
-    if "first_name" in data and data["first_name"] is not None:
-        data["first_name"] = data["first_name"].strip()
-
-    if "last_name" in data and data["last_name"] is not None:
-        data["last_name"] = data["last_name"].strip()
-
-    # Apply updates
-    for k, v in data.items():
-        setattr(customer, k, v)
+    for field, value in data.items():
+        if field in ("first_name", "last_name") and value is not None:
+            value = value.strip()
+        if field == "email" and value is not None:
+            value = str(value)
+        setattr(customer, field, value)
 
     db.add(customer)
     db.commit()
     db.refresh(customer)
     return customer
+
+
+@router.get("/search", response_model=list[CustomerOut])
+def search_customers(
+    location_id: int,
+    q: str,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    require_location_access(location_id=location_id, db=db, user_id=user_id)
+
+    term = f"%{q.strip()}%"
+    rows = (
+        db.query(Customer)
+        .filter(Customer.location_id == location_id)
+        .filter(Customer.archived_at.is_(None))
+        .filter(
+            (Customer.first_name.ilike(term))
+            | (Customer.last_name.ilike(term))
+            | (Customer.phone.ilike(term))
+            | (Customer.email.ilike(term))
+        )
+        .order_by(Customer.last_name.asc(), Customer.first_name.asc())
+        .all()
+    )
+    return rows
 
 
 @router.post("/{customer_id}/archive", response_model=CustomerOut)
@@ -201,24 +148,182 @@ def archive_customer(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    """
-    Soft archive if Customer has archived_at.
-    Otherwise fall back to hard delete (temporary).
-    """
-    customer = _get_customer_or_404(db, customer_id)
-    _assert_location_access(db, user_id, int(customer.location_id))
+    customer = db.get(Customer, customer_id)
+    if not customer or customer.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Customer not found")
 
-    if _has_archived_at_column():
-        setattr(customer, "archived_at", dt.datetime.utcnow())
-        db.add(customer)
-        db.commit()
-        db.refresh(customer)
-        return customer
+    require_location_access(location_id=customer.location_id, db=db, user_id=user_id)
 
-    # Fallback: hard delete if no archived_at column exists yet
-    db.delete(customer)
+    customer.archived_at = dt.datetime.utcnow()
+    db.add(customer)
     db.commit()
-
-    # Return a "synthetic" response for the UI — indicates what was archived
-    # (If you prefer 204 No Content here, say so and I’ll change it.)
+    db.refresh(customer)
     return customer
+
+
+# -------------------------
+# Addresses
+# -------------------------
+
+@router.post("/{customer_id}/addresses", response_model=CustomerAddressOut)
+def create_customer_address(
+    customer_id: int,
+    payload: CustomerAddressCreate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    # Confirm customer exists & not archived
+    customer = db.get(Customer, customer_id)
+    if not customer or customer.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    # Must have access to both the customer location and the payload location (should match)
+    require_location_access(location_id=customer.location_id, db=db, user_id=user_id)
+    require_location_access(location_id=payload.location_id, db=db, user_id=user_id)
+
+    if int(payload.location_id) != int(customer.location_id):
+        raise HTTPException(status_code=400, detail="Address location_id must match customer's location_id")
+
+    loc = db.query(Location).filter(Location.id == payload.location_id).first()
+    if not loc:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    # If marking primary, unset previous primaries
+    if payload.is_primary:
+        (
+            db.query(CustomerAddress)
+            .filter(CustomerAddress.customer_id == customer_id)
+            .filter(CustomerAddress.archived_at.is_(None))
+            .update({"is_primary": 0})
+        )
+
+    addr = CustomerAddress(
+        customer_id=customer_id,
+        organization_id=loc.organization_id,
+        location_id=payload.location_id,
+        label=payload.label,
+        address1=payload.address1.strip(),
+        address2=payload.address2,
+        city=payload.city,
+        state=payload.state,
+        zip=payload.zip,
+        is_primary=1 if payload.is_primary else 0,
+        notes=payload.notes,
+    )
+    db.add(addr)
+    db.commit()
+    db.refresh(addr)
+    return addr
+
+
+@router.get("/{customer_id}/addresses", response_model=list[CustomerAddressOut])
+def list_customer_addresses(
+    customer_id: int,
+    include_archived: bool = False,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    customer = db.get(Customer, customer_id)
+    if not customer or customer.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    require_location_access(location_id=customer.location_id, db=db, user_id=user_id)
+
+    q = db.query(CustomerAddress).filter(CustomerAddress.customer_id == customer_id)
+    if not include_archived:
+        q = q.filter(CustomerAddress.archived_at.is_(None))
+
+    rows = q.order_by(CustomerAddress.is_primary.desc(), CustomerAddress.id.desc()).all()
+    return rows
+
+
+@router.patch("/addresses/{address_id}", response_model=CustomerAddressOut)
+def update_customer_address(
+    address_id: int,
+    payload: CustomerAddressUpdate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    addr = db.get(CustomerAddress, address_id)
+    if not addr or addr.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Address not found")
+
+    # Access control
+    require_location_access(location_id=addr.location_id, db=db, user_id=user_id)
+
+    data = payload.model_dump(exclude_unset=True)
+
+    # If setting primary true, unset others
+    if data.get("is_primary") is True:
+        (
+            db.query(CustomerAddress)
+            .filter(CustomerAddress.customer_id == addr.customer_id)
+            .filter(CustomerAddress.archived_at.is_(None))
+            .update({"is_primary": 0})
+        )
+        addr.is_primary = 1
+
+    # If explicitly setting primary false
+    if data.get("is_primary") is False:
+        addr.is_primary = 0
+
+    for field, value in data.items():
+        if field == "is_primary":
+            continue
+        if field == "address1" and value is not None:
+            value = value.strip()
+        setattr(addr, field, value)
+
+    db.add(addr)
+    db.commit()
+    db.refresh(addr)
+    return addr
+
+
+@router.post("/addresses/{address_id}/make-primary", response_model=CustomerAddressOut)
+def make_primary_address(
+    address_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    addr = db.get(CustomerAddress, address_id)
+    if not addr or addr.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Address not found")
+
+    require_location_access(location_id=addr.location_id, db=db, user_id=user_id)
+
+    (
+        db.query(CustomerAddress)
+        .filter(CustomerAddress.customer_id == addr.customer_id)
+        .filter(CustomerAddress.archived_at.is_(None))
+        .update({"is_primary": 0})
+    )
+    addr.is_primary = 1
+
+    db.add(addr)
+    db.commit()
+    db.refresh(addr)
+    return addr
+
+
+@router.post("/addresses/{address_id}/archive", response_model=CustomerAddressOut)
+def archive_customer_address(
+    address_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    addr = db.get(CustomerAddress, address_id)
+    if not addr or addr.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Address not found")
+
+    require_location_access(location_id=addr.location_id, db=db, user_id=user_id)
+
+    addr.archived_at = dt.datetime.utcnow()
+
+    # If it was primary, leave customer with no primary until user sets another
+    addr.is_primary = 0
+
+    db.add(addr)
+    db.commit()
+    db.refresh(addr)
+    return addr
