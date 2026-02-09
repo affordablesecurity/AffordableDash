@@ -113,3 +113,14 @@ def get_active_location_id(
     if not first:
         raise HTTPException(status_code=403, detail="User has no locations")
     return int(first.location_id)
+
+def require_active_location_id(
+    request: Request,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+) -> int:
+    """
+    Backwards-compatible alias for web router imports.
+    """
+    return get_active_location_id(request=request, db=db, user_id=user_id)
+
