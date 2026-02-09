@@ -8,31 +8,43 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import decode_token
 from app.db.session import get_db
-from app.models.location import UserLocation
+from app.models.location import Location, UserLocation
 from app.models.user import User
 
 
-def _get_cookie_token(request: Request) -> Optional[str]:
-    return request.cookies.get(settings.auth_cookie_name)
-
+# ----------------------------
+# Cookie / Bearer helpers
+# ----------------------------
 
 def _get_bearer_token(request: Request) -> Optional[str]:
     auth = request.headers.get("Authorization") or ""
-    if not auth:
-        return None
     parts = auth.split()
     if len(parts) == 2 and parts[0].lower() == "bearer":
         return parts[1]
     return None
 
 
+def _get_cookie_token(request: Request) -> Optional[str]:
+    # Web + API both use the same cookie name:
+    return request.cookies.get(settings.auth_cookie_name)
+
+
 # ----------------------------
-# Web UI auth (cookie JWT)
+# Web UI auth (cookie session)
 # ----------------------------
-def get_session_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+
+def get_session_user(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    Web UI dependency.
+    Reads JWT from cookie, decodes, returns User or None.
+    """
     token = _get_cookie_token(request)
     if not token:
         return None
+
     try:
         payload = decode_token(token)
     except Exception:
@@ -43,9 +55,11 @@ def get_session_user(request: Request, db: Session = Depends(get_db)) -> Optiona
         return None
 
     try:
-        return db.get(User, int(sub))
+        user_id = int(sub)
     except Exception:
         return None
+
+    return db.get(User, user_id)
 
 
 def require_user(user: Optional[User] = Depends(get_session_user)) -> User:
@@ -55,21 +69,92 @@ def require_user(user: Optional[User] = Depends(get_session_user)) -> User:
 
 
 # ----------------------------
+# Active location (cookie)
+# ----------------------------
+
+def get_active_location_id(request: Request) -> Optional[int]:
+    raw = request.cookies.get(settings.active_location_cookie_name)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
+def require_active_location_id(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> int:
+    """
+    Ensures there is an active location set AND the user has access to it.
+    Falls back to the user's first membership if cookie missing.
+    """
+    loc_id = get_active_location_id(request)
+
+    # If cookie missing, pick user's first membership
+    if not loc_id:
+        membership = (
+            db.query(UserLocation)
+            .filter(UserLocation.user_id == user.id)
+            .order_by(UserLocation.location_id.asc())
+            .first()
+        )
+        if not membership:
+            raise HTTPException(status_code=403, detail="No location membership for this user")
+        return int(membership.location_id)
+
+    # Validate membership
+    membership = (
+        db.query(UserLocation)
+        .filter(UserLocation.user_id == user.id, UserLocation.location_id == loc_id)
+        .first()
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not authorized for this location")
+
+    return int(loc_id)
+
+
+def list_user_locations(db: Session, user_id: int) -> list[Location]:
+    """
+    Returns Location rows the user can access.
+    """
+    return (
+        db.query(Location)
+        .join(UserLocation, UserLocation.location_id == Location.id)
+        .filter(UserLocation.user_id == user_id)
+        .order_by(Location.id.asc())
+        .all()
+    )
+
+
+# ----------------------------
 # API auth (Bearer JWT OR cookie JWT)
 # ----------------------------
-def get_current_user_id(request: Request, db: Session = Depends(get_db)) -> int:
-    # 1) Cookie
-    cookie_token = _get_cookie_token(request)
-    if cookie_token:
+
+def get_current_user_id(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> int:
+    """
+    API dependency:
+      1) Cookie JWT (same as web)
+      2) Authorization: Bearer <JWT>
+    """
+    # Cookie first
+    token = _get_cookie_token(request)
+    if token:
         try:
-            payload = decode_token(cookie_token)
+            payload = decode_token(token)
             sub = payload.get("sub")
             if sub is not None:
                 return int(sub)
         except Exception:
             pass
 
-    # 2) Bearer
+    # Bearer second
     bearer = _get_bearer_token(request)
     if bearer:
         try:
@@ -81,34 +166,3 @@ def get_current_user_id(request: Request, db: Session = Depends(get_db)) -> int:
             pass
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-
-def require_location_access(
-    location_id: int,
-    db: Session,
-    user_id: int,
-    request: Request | None = None,  # <-- accepts request so older calls won't crash
-) -> UserLocation:
-    """
-    Enforces that user_id has a membership row in user_locations for this location_id,
-    OR user is superadmin.
-    Returns the UserLocation membership (includes role) on success.
-    """
-    user = db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-    # Your model uses is_superadmin
-    if getattr(user, "is_superadmin", False):
-        return UserLocation(user_id=user_id, location_id=int(location_id), role="superadmin")
-
-    membership = (
-        db.query(UserLocation)
-        .filter(UserLocation.user_id == int(user_id), UserLocation.location_id == int(location_id))
-        .first()
-    )
-
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this location")
-
-    return membership
