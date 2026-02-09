@@ -1,55 +1,36 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width,initial-scale=1"/>
-    <title>Affordable CRM</title>
-    <link rel="stylesheet" href="/static/css/app.css"/>
-  </head>
-  <body>
-    <header class="topbar">
-      <div class="brand">Affordable CRM</div>
+{% extends "base.html" %}
+{% block content %}
 
-      <nav class="nav">
-        <a href="/dashboard">Dashboard</a>
-        <a href="/customers">Customers</a>
-      </nav>
+<div class="row g-3">
+  <div class="col-12">
+    <h1 class="h3 mb-0">Dashboard</h1>
+    <p class="text-muted mb-3">Welcome back.</p>
+  </div>
 
-      <div class="right">
-        <form method="get" action="/set-location" style="display:inline;">
-          <select name="location_id" onchange="this.form.submit()">
-            {% for loc in locations %}
-              <option value="{{ loc.id }}" {% if loc.id == active_location_id %}selected{% endif %}>
-                {{ loc.name }}
-              </option>
-            {% endfor %}
-          </select>
-        </form>
-
-        <span class="user">{{ user.email }}</span>
-        <a class="btn" href="/logout">Logout</a>
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h2 class="h5">Next build</h2>
+        <ul class="mb-0">
+          <li>Locations + User roles UI</li>
+          <li>Customers module</li>
+          <li>Jobs + Scheduling</li>
+          <li>Invoices + Stripe</li>
+          <li>SMS/Email notifications</li>
+        </ul>
       </div>
-    </header>
+    </div>
+  </div>
 
-    <main class="container">
-      <h1>Dashboard</h1>
-      <div class="grid">
-        <div class="card">
-          <h2>Next build</h2>
-          <ul>
-            <li>Locations + User roles UI</li>
-            <li>Customers module</li>
-            <li>Jobs + Scheduling</li>
-            <li>Invoices + Stripe</li>
-            <li>SMS/Email notifications</li>
-          </ul>
-        </div>
-        <div class="card">
-          <h2>Status</h2>
-          <p>You are logged in as <strong>{{ user.email }}</strong>.</p>
-          <p>Active location: <strong>{{ active_location_id }}</strong></p>
-        </div>
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h2 class="h5">Status</h2>
+        <p class="mb-1">You are logged in as <strong>{{ user.email }}</strong>.</p>
+        <p class="mb-0">Active location: <strong>{{ active_location_id }}</strong></p>
       </div>
-    </main>
-  </body>
-</html>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
