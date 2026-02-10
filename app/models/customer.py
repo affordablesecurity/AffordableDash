@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -12,6 +13,9 @@ class Customer(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
+    # Human-friendly ID like Housecall Pro
+    customer_uid: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+
     # Tenant scoping
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     location_id: Mapped[int] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), nullable=False)
@@ -19,10 +23,12 @@ class Customer(Base):
     # Identity
     first_name: Mapped[str] = mapped_column(String(80), nullable=False)
     last_name: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+
+    # Legacy single contact fields (Phase 1A) - keep for now, but we’ll prefer customer_contacts
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Address (simple for Phase 1A)
+    # Legacy single address fields (Phase 1A) - keep for now, but we’ll prefer customer_addresses
     address1: Mapped[str | None] = mapped_column(String(255), nullable=True)
     address2: Mapped[str | None] = mapped_column(String(255), nullable=True)
     city: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -36,3 +42,7 @@ class Customer(Base):
 
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=lambda: dt.datetime.utcnow())
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=lambda: dt.datetime.utcnow())
+
+    # Relationships
+    contacts = relationship("CustomerContact", back_populates="customer", cascade="all, delete-orphan")
+    addresses = relationship("CustomerAddress", back_populates="customer", cascade="all, delete-orphan")
