@@ -27,11 +27,20 @@ class Settings:
     # Environment
     env: str = os.getenv("ENV", "prod")
 
-    # Auth
+    # Auth (env-backed)
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     auth_cookie_name: str = os.getenv("AUTH_COOKIE_NAME", "access_token")
     active_location_cookie_name: str = os.getenv("ACTIVE_LOCATION_COOKIE_NAME", "active_location_id")
+
+    # ✅ Backwards-compatible aliases (what your code is trying to read)
+    @property
+    def secret_key(self) -> str:
+        return self.SECRET_KEY
+
+    @property
+    def algorithm(self) -> str:
+        return self.JWT_ALGORITHM
 
     # Database
     database_url: str | None = _clean_database_url(os.getenv("DATABASE_URL"))
