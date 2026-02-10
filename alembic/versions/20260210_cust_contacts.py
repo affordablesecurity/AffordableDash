@@ -2,7 +2,7 @@
 add customer_uid + contacts + addresses
 
 Revision ID: 20260210_cust_contacts
-Revises: 20260209_add_customers_is_archived
+Revises: 20260209_add_cust_archived
 Create Date: 2026-02-10
 """
 
