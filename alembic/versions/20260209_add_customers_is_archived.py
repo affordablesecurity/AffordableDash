@@ -13,7 +13,7 @@ from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
-revision = "20260209_add_customers_is_archived"
+revision = "20260209_add_cust_archived"
 down_revision = "0001_init"
 branch_labels = None
 depends_on = None
