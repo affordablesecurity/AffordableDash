@@ -3067,7 +3067,7 @@ export function App() {
                   <button onClick={() => setSettingsSection("company")}>Company</button>
                   <button onClick={() => setActiveView("api")}>API Access</button>
                   <span>Feature Configurations</span>
-                  <button className={settingsSection === "jobTemplates" ? "active" : ""} onClick={() => setSettingsSection("jobTemplates")}>Job Templates</button>
+                  <button onClick={() => setSettingsSection("jobTemplates")}>Job Templates</button>
                   <button className={settingsSection === "jobTypes" ? "active" : ""} onClick={() => setSettingsSection("jobTypes")}>Job Types</button>
                   <button onClick={() => setActiveView("pricebook")}>Price Book</button>
                   <button className={settingsSection === "servicePlans" ? "active" : ""} onClick={() => setSettingsSection("servicePlans")}>Service Plans</button>
