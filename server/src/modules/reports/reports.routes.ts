@@ -7,6 +7,8 @@ export const reportsRouter = Router();
 
 type ReportRow = { label: string; value: string; detail?: string };
 type ReportItem = { id: string; label: string; value: string; detail: string; rows: ReportRow[] };
+type ChartBar = { label: string; value: number; previousValue?: number };
+type DashboardChart = { id: string; title: string; metricLabel: string; metricValue: string; format: "money" | "number"; bars: ChartBar[] };
 
 function cents(value: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value / 100);
@@ -16,14 +18,61 @@ function percent(value: number) {
   return new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 }).format(value);
 }
 
-function dateKey(date: Date, mode: "daily" | "weekly" | "monthly") {
-  if (mode === "monthly") return date.toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
-  if (mode === "weekly") {
+function dateKey(date: Date, mode: "day" | "week" | "month" | "quarter" | "year" | "daily" | "weekly" | "monthly") {
+  if (mode === "daily") return dateKey(date, "day");
+  if (mode === "weekly") return dateKey(date, "week");
+  if (mode === "monthly") return dateKey(date, "month");
+  if (mode === "year") return String(date.getUTCFullYear());
+  if (mode === "quarter") return `Q${Math.floor(date.getUTCMonth() / 3) + 1} ${date.getUTCFullYear()}`;
+  if (mode === "month") return date.toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+  if (mode === "week") {
     const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
     start.setUTCDate(start.getUTCDate() - start.getUTCDay());
     return `Week of ${start.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`;
   }
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
+function startOfUtcDay(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setUTCMonth(next.getUTCMonth() + months);
+  return next;
+}
+
+function addYears(date: Date, years: number) {
+  const next = new Date(date);
+  next.setUTCFullYear(next.getUTCFullYear() + years);
+  return next;
+}
+
+function rangeBounds(range: string) {
+  const now = new Date();
+  const today = startOfUtcDay(now);
+  const tomorrow = addDays(today, 1);
+  if (range === "today") return { start: today, end: tomorrow };
+  if (range === "weekToDate") return { start: addDays(today, -today.getUTCDay()), end: tomorrow };
+  if (range === "quarterToDate") return { start: new Date(Date.UTC(today.getUTCFullYear(), Math.floor(today.getUTCMonth() / 3) * 3, 1)), end: tomorrow };
+  if (range === "yearToDate") return { start: new Date(Date.UTC(today.getUTCFullYear(), 0, 1)), end: tomorrow };
+  if (range === "lastWeek") {
+    const thisWeek = addDays(today, -today.getUTCDay());
+    return { start: addDays(thisWeek, -7), end: thisWeek };
+  }
+  if (range === "lastMonth") {
+    const thisMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    return { start: addMonths(thisMonth, -1), end: thisMonth };
+  }
+  if (range === "lastYear") return { start: new Date(Date.UTC(today.getUTCFullYear() - 1, 0, 1)), end: new Date(Date.UTC(today.getUTCFullYear(), 0, 1)) };
+  return { start: new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)), end: tomorrow };
 }
 
 function addRow(group: Map<string, number>, key: string, value: number) {
@@ -42,8 +91,24 @@ function moneyRows(group: Map<string, number>): ReportRow[] {
     .map(([label, value]) => ({ label, value: cents(value) }));
 }
 
+function chartRows(group: Map<string, number>, previousGroup?: Map<string, number>, limit = 12): ChartBar[] {
+  return [...group.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([label, value]) => ({ label, value, previousValue: previousGroup?.get(label) }));
+}
+
+function sumMap(group: Map<string, number>) {
+  return [...group.values()].reduce((sum, value) => sum + value, 0);
+}
+
 reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
+  const dateRange = typeof req.query.dateRange === "string" ? req.query.dateRange : "monthToDate";
+  const showBy = typeof req.query.showBy === "string" && ["day", "week", "month", "quarter", "year"].includes(req.query.showBy) ? req.query.showBy as "day" | "week" | "month" | "quarter" | "year" : "month";
+  const { start, end } = rangeBounds(dateRange);
+  const previousStart = addYears(start, -1);
+  const previousEnd = addYears(end, -1);
   const [jobs, invoices, customers] = await Promise.all([
     prisma.job.findMany({
       where: { locationId },
@@ -59,17 +124,21 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
     }),
     prisma.customer.findMany({ where: { locationId }, include: { addresses: true }, take: 500 })
   ]);
+  const periodJobs = jobs.filter((job) => job.createdAt >= start && job.createdAt < end);
+  const previousJobs = jobs.filter((job) => job.createdAt >= previousStart && job.createdAt < previousEnd);
+  const periodInvoices = invoices.filter((invoice) => invoice.createdAt >= start && invoice.createdAt < end);
+  const previousInvoices = invoices.filter((invoice) => invoice.createdAt >= previousStart && invoice.createdAt < previousEnd);
 
   const jobRevenue = new Map<string, number>();
-  invoices.forEach((invoice) => {
+  periodInvoices.forEach((invoice) => {
     if (invoice.jobId) addRow(jobRevenue, invoice.jobId, invoice.total);
   });
 
-  const totalRevenue = invoices.reduce((sum, invoice) => sum + invoice.total, 0);
-  const paidInvoices = invoices.filter((invoice) => invoice.status === "PAID" || invoice.payments.some((payment) => payment.status === "SUCCEEDED"));
+  const totalRevenue = periodInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
+  const paidInvoices = periodInvoices.filter((invoice) => invoice.status === "PAID" || invoice.payments.some((payment) => payment.status === "SUCCEEDED"));
   const paidRevenue = paidInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
-  const completedJobs = jobs.filter((job) => job.status === "COMPLETED");
-  const averageJob = jobs.length ? Math.round(totalRevenue / jobs.length) : 0;
+  const completedJobs = periodJobs.filter((job) => job.status === "COMPLETED");
+  const averageJob = periodJobs.length ? Math.round(totalRevenue / periodJobs.length) : 0;
 
   const revenueByDay = new Map<string, number>();
   const revenueByWeek = new Map<string, number>();
@@ -84,17 +153,25 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
   const profitByType = new Map<string, number>();
   const revenueBySource = new Map<string, number>();
   const revenueByType = new Map<string, number>();
+  const revenueByTag = new Map<string, number>();
+  const jobTypeCounts = new Map<string, number>();
   const tagCounts = new Map<string, number>();
   const techCounts = new Map<string, number>();
   const techSales = new Map<string, number>();
   const timeByTech = new Map<string, number>();
   const materials = new Map<string, number>();
   const serviceLines = new Map<string, number>();
+  const revenueByPeriod = new Map<string, number>();
+  const previousRevenueByPeriod = new Map<string, number>();
+  const averageByPeriod = new Map<string, number>();
+  const previousSourceCounts = new Map<string, number>();
+  const previousTechSales = new Map<string, number>();
 
-  invoices.forEach((invoice) => {
+  periodInvoices.forEach((invoice) => {
     addRow(revenueByDay, dateKey(invoice.createdAt, "daily"), invoice.total);
     addRow(revenueByWeek, dateKey(invoice.createdAt, "weekly"), invoice.total);
     addRow(revenueByMonth, dateKey(invoice.createdAt, "monthly"), invoice.total);
+    addRow(revenueByPeriod, dateKey(invoice.createdAt, showBy), invoice.total);
     if (invoice.status === "PAID" || invoice.payments.some((payment) => payment.status === "SUCCEEDED")) {
       addRow(paidByDay, dateKey(invoice.createdAt, "daily"), invoice.total);
       addRow(paidByWeek, dateKey(invoice.createdAt, "weekly"), invoice.total);
@@ -102,8 +179,9 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
     }
     invoice.items.forEach((item) => addRow(serviceLines, item.name, Math.round(Number(item.quantity) * item.unitPrice)));
   });
+  previousInvoices.forEach((invoice) => addRow(previousRevenueByPeriod, dateKey(addYears(invoice.createdAt, 1), showBy), invoice.total));
 
-  jobs.forEach((job) => {
+  periodJobs.forEach((job) => {
     const revenue = jobRevenue.get(job.id) ?? 0;
     const cost = job.lineItems.reduce((sum, item) => sum + Math.round(Number(item.quantity) * item.unitCost), 0);
     addRow(countByDay, dateKey(job.createdAt, "daily"), 1);
@@ -113,7 +191,11 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
     addRow(profitByType, job.jobType, revenue - cost);
     addRow(revenueBySource, job.leadSource || "Unknown", revenue);
     addRow(revenueByType, job.jobType, revenue);
-    job.tags.forEach((tag) => addRow(tagCounts, tag, 1));
+    addRow(jobTypeCounts, job.jobType, 1);
+    job.tags.forEach((tag) => {
+      addRow(tagCounts, tag, 1);
+      addRow(revenueByTag, tag, revenue);
+    });
     addRow(techCounts, job.technician?.name || "Unassigned", 1);
     addRow(techSales, job.technician?.name || "Unassigned", revenue);
     if (job.scheduledStart && job.scheduledEnd) {
@@ -122,14 +204,22 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
     }
     job.lineItems.filter((item) => item.category === "material").forEach((item) => addRow(materials, item.name, Math.round(Number(item.quantity) * item.unitPrice)));
   });
+  previousJobs.forEach((job) => {
+    addRow(previousSourceCounts, job.customer.source || job.leadSource || "Unknown", 1);
+    addRow(previousTechSales, job.technician?.name || "Unassigned", previousInvoices.filter((invoice) => invoice.jobId === job.id).reduce((sum, invoice) => sum + invoice.total, 0));
+  });
+  revenueByPeriod.forEach((value, label) => {
+    const jobsInPeriod = periodJobs.filter((job) => dateKey(job.createdAt, showBy) === label).length || 1;
+    averageByPeriod.set(label, Math.round(value / jobsInPeriod));
+  });
 
   const sections: Array<{ title: string; items: ReportItem[] }> = [
     {
       title: "Date",
       items: [
         { id: "job-revenue-earned", label: "Job revenue earned", value: cents(totalRevenue), detail: "Revenue from non-void invoices.", rows: moneyRows(revenueByDay) },
-        { id: "average-job-size", label: "Average job size", value: cents(averageJob), detail: "Invoice revenue divided by job count.", rows: [{ label: "Average", value: cents(averageJob) }, { label: "Jobs", value: String(jobs.length) }] },
-        { id: "job-count", label: "Job count", value: String(jobs.length), detail: "Total jobs created.", rows: countRows(countByDay) },
+        { id: "average-job-size", label: "Average job size", value: cents(averageJob), detail: "Invoice revenue divided by job count.", rows: [{ label: "Average", value: cents(averageJob) }, { label: "Jobs", value: String(periodJobs.length) }] },
+        { id: "job-count", label: "Job count", value: String(periodJobs.length), detail: "Total jobs created.", rows: countRows(countByDay) },
         { id: "daily", label: "Daily", value: cents(totalRevenue), detail: "Revenue grouped by day.", rows: moneyRows(revenueByDay) },
         { id: "weekly", label: "Weekly", value: cents(totalRevenue), detail: "Revenue grouped by week.", rows: moneyRows(revenueByWeek) },
         { id: "monthly", label: "Monthly", value: cents(totalRevenue), detail: "Revenue grouped by month.", rows: moneyRows(revenueByMonth) }
@@ -167,7 +257,7 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
         { id: "profit-by-date", label: "Profit by date", value: cents(totalRevenue), detail: "Revenue less entered line-item costs.", rows: moneyRows(revenueByDay) },
         { id: "profit-by-business-unit", label: "Profit by business unit", value: cents(totalRevenue), detail: "Profit grouped by business unit.", rows: [{ label: "Locksmith", value: cents(totalRevenue) }] },
         { id: "profit-by-job-type", label: "Profit by job type", value: cents([...profitByType.values()].reduce((sum, value) => sum + value, 0)), detail: "Profit grouped by job type.", rows: moneyRows(profitByType) },
-        { id: "expected-costs-by-date", label: "Expected costs by date", value: cents([...jobs].reduce((sum, job) => sum + job.lineItems.reduce((itemSum, item) => itemSum + Math.round(Number(item.quantity) * item.unitCost), 0), 0)), detail: "Expected costs from job line items.", rows: jobs.map((job) => ({ label: `#${job.jobNumber} ${job.title}`, value: cents(job.lineItems.reduce((sum, item) => sum + Math.round(Number(item.quantity) * item.unitCost), 0)) })).slice(0, 20) }
+        { id: "expected-costs-by-date", label: "Expected costs by date", value: cents(periodJobs.reduce((sum, job) => sum + job.lineItems.reduce((itemSum, item) => itemSum + Math.round(Number(item.quantity) * item.unitCost), 0), 0)), detail: "Expected costs from job line items.", rows: periodJobs.map((job) => ({ label: `#${job.jobNumber} ${job.title}`, value: cents(job.lineItems.reduce((sum, item) => sum + Math.round(Number(item.quantity) * item.unitCost), 0)) })).slice(0, 20) }
       ]
     },
     {
@@ -200,12 +290,26 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
 
   res.json({
     overview: {
-      jobs: jobs.length,
+      jobs: periodJobs.length,
       completedJobs: completedJobs.length,
-      invoices: invoices.length,
+      invoices: periodInvoices.length,
       revenue: cents(totalRevenue),
       paidRevenue: cents(paidRevenue),
-      paidRate: invoices.length ? percent(paidInvoices.length / invoices.length) : percent(0)
+      paidRate: periodInvoices.length ? percent(paidInvoices.length / periodInvoices.length) : percent(0)
+    },
+    dashboards: {
+      businessOwner: [
+        { id: "job-revenue", title: "Job revenue", metricLabel: "Job revenue total", metricValue: cents(totalRevenue), format: "money", bars: chartRows(revenueByPeriod, previousRevenueByPeriod) },
+        { id: "job-tags", title: "Job tags", metricLabel: "Job revenue total", metricValue: cents(revenueByTag.size ? sumMap(revenueByTag) : sumMap(revenueByType)), format: "money", bars: chartRows(revenueByTag.size ? revenueByTag : revenueByType) },
+        { id: "average-job-size", title: "Average job size", metricLabel: "Avg job size total", metricValue: cents(averageJob), format: "money", bars: chartRows(averageByPeriod) },
+        { id: "tech-leaderboard", title: "Tech leaderboard", metricLabel: "Job revenue total", metricValue: cents(sumMap(techSales)), format: "money", bars: chartRows(techSales, previousTechSales) },
+        { id: "commissions", title: "Commissions", metricLabel: "Commission cost total", metricValue: cents(Math.round(sumMap(techSales) * 0.1)), format: "money", bars: chartRows(new Map([...techSales.entries()].map(([key, value]) => [key, Math.round(value * 0.1)]))) }
+      ],
+      leads: [
+        { id: "leads-by-source", title: "Leads by source", metricLabel: "Lead count total", metricValue: String(sumMap(customerLeadSources)), format: "number", bars: chartRows(customerLeadSources, previousSourceCounts) },
+        { id: "revenue-by-lead-source", title: "Revenue by lead source", metricLabel: "Job revenue total", metricValue: cents(sumMap(revenueBySource)), format: "money", bars: chartRows(revenueBySource) },
+        { id: "booking-by-job-type", title: "Bookings by job type", metricLabel: "Job count total", metricValue: String(periodJobs.length), format: "number", bars: chartRows(jobTypeCounts) }
+      ]
     },
     sections
   });

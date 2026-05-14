@@ -38,6 +38,7 @@ import {
   Wrench
 } from "lucide-react";
 import { Fragment, FormEvent, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { api, clearToken, getToken, login, setToken, signup } from "../api/client";
 import { StatCard } from "../components/StatCard";
 
@@ -205,6 +206,14 @@ type CrmOptions = {
 type ReportRow = { label: string; value: string; detail?: string };
 type ReportItem = { id: string; label: string; value: string; detail: string; rows: ReportRow[] };
 type ReportSection = { title: string; items: ReportItem[] };
+type ReportChart = {
+  id: string;
+  title: string;
+  metricLabel: string;
+  metricValue: string;
+  format: "money" | "number";
+  bars: Array<{ label: string; value: number; previousValue?: number }>;
+};
 type ReportsPayload = {
   overview: {
     jobs: number;
@@ -214,6 +223,10 @@ type ReportsPayload = {
     paidRevenue: string;
     paidRate: string;
   };
+  dashboards: {
+    businessOwner: ReportChart[];
+    leads: ReportChart[];
+  };
   sections: ReportSection[];
 };
 
@@ -221,6 +234,23 @@ const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 const percent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const dayLabels = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const calendarHours = Array.from({ length: 24 }, (_item, hour) => hour);
+const reportDateRanges = [
+  { value: "today", label: "Today" },
+  { value: "weekToDate", label: "Week to date" },
+  { value: "monthToDate", label: "Month to date" },
+  { value: "quarterToDate", label: "Quarter to date" },
+  { value: "yearToDate", label: "Year to date" },
+  { value: "lastWeek", label: "Last week" },
+  { value: "lastMonth", label: "Last month" },
+  { value: "lastYear", label: "Last year" }
+];
+const reportGroupings = [
+  { value: "day", label: "Day" },
+  { value: "week", label: "Week" },
+  { value: "month", label: "Month" },
+  { value: "quarter", label: "Quarter" },
+  { value: "year", label: "Year" }
+];
 const jobTemplates: JobTemplate[] = [
   {
     id: "residential-repair-lock",
@@ -340,6 +370,14 @@ function lineDraft(category: "service" | "material", name = "", unitPrice = ""):
   };
 }
 
+function formatChartValue(value: number, format: "money" | "number") {
+  return format === "money" ? money.format(value / 100) : new Intl.NumberFormat("en-US").format(value);
+}
+
+function shortLabel(value: string) {
+  return value.length > 18 ? `${value.slice(0, 16)}...` : value;
+}
+
 const optionKeyByKind: Record<CrmOptionKind, keyof CrmOptions> = {
   leadSource: "leadSources",
   tag: "tags",
@@ -400,6 +438,9 @@ export function App() {
   const [settingsDraft, setSettingsDraft] = useState("");
   const [reports, setReports] = useState<ReportsPayload | null>(null);
   const [selectedReportId, setSelectedReportId] = useState("job-revenue-earned");
+  const [reportDashboard, setReportDashboard] = useState<"businessOwner" | "leads" | "jobs">("businessOwner");
+  const [reportDateRange, setReportDateRange] = useState("monthToDate");
+  const [reportShowBy, setReportShowBy] = useState("year");
   const [priceBookItemForm, setPriceBookItemForm] = useState({
     name: "",
     modelNumber: "",
@@ -536,17 +577,20 @@ export function App() {
   const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
   const reportItems = reports?.sections.flatMap((section) => section.items) ?? [];
   const selectedReport = reportItems.find((item) => item.id === selectedReportId) ?? reportItems[0];
+  const activeCharts = reportDashboard === "leads"
+    ? reports?.dashboards.leads ?? []
+    : reports?.dashboards.businessOwner ?? [];
+  const reportTitle = reportDashboard === "leads" ? "Leads" : reportDashboard === "jobs" ? "Jobs" : "Business Owner";
 
   async function loadDashboard() {
-    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, reportsResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult] = await Promise.all([
       api<Summary>("/api/settings/summary"),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
       api<{ invoices: Invoice[] }>("/api/invoices"),
       api<{ technicians: Technician[] }>("/api/technicians"),
       api<CrmOptions>("/api/settings/options"),
-      api<{ categories: PriceBookCategory[]; items: PriceBookItem[] }>("/api/pricebook"),
-      api<ReportsPayload>("/api/reports/jobs")
+      api<{ categories: PriceBookCategory[]; items: PriceBookItem[] }>("/api/pricebook")
     ]);
 
     setSummary(summaryResult);
@@ -557,7 +601,6 @@ export function App() {
     setCrmOptions((current) => ({ ...current, ...optionsResult }));
     setPriceBookCategories(priceBookResult.categories);
     setPriceBookItems(priceBookResult.items);
-    setReports(reportsResult);
 
     const [locationResult, apiKeyResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
@@ -568,10 +611,21 @@ export function App() {
     setApiKeys(apiKeyResult.apiKeys);
   }
 
+  async function loadReports() {
+    const query = new URLSearchParams({ dateRange: reportDateRange, showBy: reportShowBy });
+    const result = await api<ReportsPayload>(`/api/reports/jobs?${query.toString()}`);
+    setReports(result);
+  }
+
   useEffect(() => {
     if (!token) return;
     loadDashboard().catch((err: Error) => setError(err.message));
   }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    loadReports().catch((err: Error) => setError(err.message));
+  }, [token, reportDateRange, reportShowBy]);
 
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
@@ -1601,11 +1655,11 @@ export function App() {
               <strong>Dashboards</strong>
               <button>Tech Performance</button>
               <button>Administrative</button>
-              <button>Business Owner</button>
+              <button className={reportDashboard === "businessOwner" ? "active" : ""} onClick={() => setReportDashboard("businessOwner")}>Business Owner</button>
               <strong>All Reports</strong>
-              <button className="active">Jobs</button>
+              <button className={reportDashboard === "jobs" ? "active" : ""} onClick={() => setReportDashboard("jobs")}>Jobs</button>
               <button>Estimates</button>
-              <button>Leads</button>
+              <button className={reportDashboard === "leads" ? "active" : ""} onClick={() => setReportDashboard("leads")}>Leads</button>
               <button>Service plans</button>
               <button>Invoices</button>
               <button>Payments</button>
@@ -1615,73 +1669,137 @@ export function App() {
             <div className="reports-main">
               <div className="reports-titlebar">
                 <div>
-                  <span>Reporting / Jobs</span>
-                  <h1>Jobs</h1>
+                  <span>Reporting / {reportTitle}</span>
+                  <h1>{reportTitle}</h1>
                 </div>
                 <div className="action-buttons">
-                  <button className="text-button" type="button">Advanced reporting</button>
+                  <button className="text-button" type="button">Presentation mode</button>
                   <button className="outline-button" type="button"><Plus size={17} /> Create report</button>
                   <button className="outline-button accent" type="button">Ask Analyst AI</button>
+                  <button className="outline-button" type="button">Actions <ChevronDown size={16} /></button>
                 </div>
               </div>
 
-              {reports && (
-                <div className="report-overview">
-                  <span><strong>{reports.overview.revenue}</strong> Revenue</span>
-                  <span><strong>{reports.overview.paidRevenue}</strong> Paid</span>
-                  <span><strong>{reports.overview.jobs}</strong> Jobs</span>
-                  <span><strong>{reports.overview.completedJobs}</strong> Completed</span>
-                  <span><strong>{reports.overview.paidRate}</strong> Paid rate</span>
-                </div>
-              )}
+              <div className="report-filters">
+                <label>
+                  <span>Global date range</span>
+                  <select value={reportDateRange} onChange={(event) => setReportDateRange(event.target.value)}>
+                    {reportDateRanges.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>Show by</span>
+                  <select value={reportShowBy} onChange={(event) => setReportShowBy(event.target.value)}>
+                    {reportGroupings.map((grouping) => <option key={grouping.value} value={grouping.value}>{grouping.label}</option>)}
+                  </select>
+                </label>
+              </div>
 
-              <div className="reports-layout">
-                <div className="report-card-grid">
-                  {(reports?.sections ?? []).map((section) => (
-                    <section className="report-group" key={section.title}>
-                      <h2>{section.title}</h2>
-                      {section.items.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className={selectedReport?.id === item.id ? "active" : ""}
-                          onClick={() => setSelectedReportId(item.id)}
-                        >
-                          <span>{item.label}</span>
-                          <strong>{item.value}</strong>
-                        </button>
-                      ))}
-                    </section>
-                  ))}
-                </div>
-
-                <section className="report-detail">
-                  {selectedReport ? (
-                    <>
-                      <div className="report-detail-head">
-                        <div>
-                          <span>Selected report</span>
-                          <h2>{selectedReport.label}</h2>
-                          <p>{selectedReport.detail}</p>
-                        </div>
-                        <strong>{selectedReport.value}</strong>
-                      </div>
-                      <div className="report-row-list">
-                        {selectedReport.rows.map((row) => (
-                          <div className="report-row" key={`${selectedReport.id}-${row.label}`}>
-                            <span>{row.label}</span>
-                            <strong>{row.value}</strong>
-                            {row.detail && <em>{row.detail}</em>}
+              {reportDashboard !== "jobs" ? (
+                <div className="dashboard-chart-stack">
+                  {activeCharts.map((chart, index) => {
+                    const maxValue = Math.max(1, ...chart.bars.map((bar) => Math.max(bar.value, bar.previousValue ?? 0)));
+                    return (
+                      <section className={`chart-panel ${index === 0 ? "featured" : ""}`} key={chart.id}>
+                        <div className="chart-panel-head">
+                          <div>
+                            <h2>{chart.title}</h2>
+                            <span>{chart.metricLabel}</span>
+                            <strong>{chart.metricValue}</strong>
                           </div>
-                        ))}
-                        {selectedReport.rows.length === 0 && <p className="empty">No data for this report yet.</p>}
-                      </div>
-                    </>
-                  ) : (
-                    <p className="empty">Reports will appear after your CRM has jobs and invoices.</p>
+                          <div className="chart-actions"><span>Move</span><span>More</span></div>
+                        </div>
+                        <div className="bar-chart" style={{ "--bar-count": Math.max(chart.bars.length, 1) } as CSSProperties}>
+                          <div className="bar-axis">
+                            <span>{formatChartValue(maxValue, chart.format)}</span>
+                            <span>{formatChartValue(Math.round(maxValue / 2), chart.format)}</span>
+                            <span>{formatChartValue(0, chart.format)}</span>
+                          </div>
+                          <div className="bars">
+                            {chart.bars.map((bar) => (
+                              <div className="bar-group" key={`${chart.id}-${bar.label}`}>
+                                <div className="bar-pair">
+                                  {typeof bar.previousValue === "number" && (
+                                    <span className="bar previous" style={{ height: `${Math.max(2, (bar.previousValue / maxValue) * 100)}%` }} title={`Previous year ${formatChartValue(bar.previousValue, chart.format)}`} />
+                                  )}
+                                  <span className="bar current" style={{ height: `${Math.max(2, (bar.value / maxValue) * 100)}%` }} title={`${bar.label} ${formatChartValue(bar.value, chart.format)}`} />
+                                </div>
+                                <em title={bar.label}>{shortLabel(bar.label)}</em>
+                              </div>
+                            ))}
+                            {chart.bars.length === 0 && <p className="empty">No chart data for this range yet.</p>}
+                          </div>
+                        </div>
+                        <div className="chart-legend">
+                          <span><i className="current" /> This period</span>
+                          <span><i className="previous" /> Same period last year</span>
+                          <a>View/edit report</a>
+                        </div>
+                      </section>
+                    );
+                  })}
+                  {!activeCharts.length && <p className="empty">No reporting charts are available yet.</p>}
+                </div>
+              ) : (
+                <>
+                  {reports && (
+                    <div className="report-overview">
+                      <span><strong>{reports.overview.revenue}</strong> Revenue</span>
+                      <span><strong>{reports.overview.paidRevenue}</strong> Paid</span>
+                      <span><strong>{reports.overview.jobs}</strong> Jobs</span>
+                      <span><strong>{reports.overview.completedJobs}</strong> Completed</span>
+                      <span><strong>{reports.overview.paidRate}</strong> Paid rate</span>
+                    </div>
                   )}
-                </section>
-              </div>
+                  <div className="reports-layout">
+                    <div className="report-card-grid">
+                      {(reports?.sections ?? []).map((section) => (
+                        <section className="report-group" key={section.title}>
+                          <h2>{section.title}</h2>
+                          {section.items.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className={selectedReport?.id === item.id ? "active" : ""}
+                              onClick={() => setSelectedReportId(item.id)}
+                            >
+                              <span>{item.label}</span>
+                              <strong>{item.value}</strong>
+                            </button>
+                          ))}
+                        </section>
+                      ))}
+                    </div>
+
+                    <section className="report-detail">
+                      {selectedReport ? (
+                        <>
+                          <div className="report-detail-head">
+                            <div>
+                              <span>Selected report</span>
+                              <h2>{selectedReport.label}</h2>
+                              <p>{selectedReport.detail}</p>
+                            </div>
+                            <strong>{selectedReport.value}</strong>
+                          </div>
+                          <div className="report-row-list">
+                            {selectedReport.rows.map((row) => (
+                              <div className="report-row" key={`${selectedReport.id}-${row.label}`}>
+                                <span>{row.label}</span>
+                                <strong>{row.value}</strong>
+                                {row.detail && <em>{row.detail}</em>}
+                              </div>
+                            ))}
+                            {selectedReport.rows.length === 0 && <p className="empty">No data for this report yet.</p>}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="empty">Reports will appear after your CRM has jobs and invoices.</p>
+                      )}
+                    </section>
+                  </div>
+                </>
+              )}
             </div>
           </section>
         )}
