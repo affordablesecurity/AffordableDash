@@ -602,6 +602,7 @@ export function App() {
   const [slotPrompt, setSlotPrompt] = useState<SlotPrompt>(null);
   const [selectedScheduleJob, setSelectedScheduleJob] = useState<Job | null>(null);
   const [jobPageMode, setJobPageMode] = useState<"list" | "create">("list");
+  const [selectedJobId, setSelectedJobId] = useState("");
   const [jobSearch, setJobSearch] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState("all");
   const [employeeSearch, setEmployeeSearch] = useState("");
@@ -764,6 +765,7 @@ export function App() {
   const [error, setError] = useState("");
 
   const scheduledJobs = useMemo(() => jobs.filter((job) => job.status !== "COMPLETED" && job.status !== "CANCELED"), [jobs]);
+  const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? null;
   const weekStart = useMemo(() => startOfWeek(scheduleDate), [scheduleDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
   const monthDays = useMemo(() => {
@@ -1756,6 +1758,13 @@ export function App() {
     if (mode === "day" || mode === "employees") setScheduleDate(new Date());
   }
 
+  function openJobDetail(job: Job) {
+    setSelectedJobId(job.id);
+    setSelectedScheduleJob(null);
+    setJobPageMode("list");
+    setActiveView("jobs");
+  }
+
   if (!token) {
     return (
       <main className="login-screen">
@@ -2072,11 +2081,7 @@ export function App() {
                     {selectedScheduleJob.scheduledEnd ? ` - ${new Date(selectedScheduleJob.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}
                   </p>
                 </div>
-                <button className="link-button" type="button" onClick={() => {
-                  setSelectedScheduleJob(null);
-                  setActiveView("jobs");
-                  setJobPageMode("list");
-                }}>View job</button>
+                <button className="link-button" type="button" onClick={() => openJobDetail(selectedScheduleJob)}>View job</button>
               </div>
               <div className="schedule-job-details">
                 <span><CalendarDays size={18} /> {selectedScheduleJob.title || selectedScheduleJob.jobType}</span>
@@ -2322,42 +2327,102 @@ export function App() {
           jobPageMode === "list" ? (
             <section className="jobs-page">
               <div className="section-actions">
-                <div className="breadcrumb"><Wrench size={17} /> Jobs</div>
+                <div className="breadcrumb"><Wrench size={17} /> {selectedJob ? `Jobs / #${selectedJob.jobNumber}` : "Jobs"}</div>
                 <div className="action-buttons">
+                  {selectedJob && <button className="outline-button" type="button" onClick={() => setSelectedJobId("")}>All Jobs</button>}
                   <button className="outline-button"><Upload size={17} /> Import Jobs</button>
-                  <button className="primary" onClick={() => setJobPageMode("create")}><Plus size={18} /> Create Job</button>
+                  <button className="primary" onClick={() => { setSelectedJobId(""); setJobPageMode("create"); }}><Plus size={18} /> Create Job</button>
                 </div>
               </div>
 
-              <div className="job-summary-panel">
-                <button onClick={() => setJobStatusFilter("open")} className={jobStatusFilter === "open" ? "selected" : ""}>
-                  <FolderOpen size={21} />
-                  <strong>{jobCounts.open}</strong>
-                  <span>Open</span>
-                </button>
-                <button onClick={() => setJobStatusFilter("DISPATCHED")} className={jobStatusFilter === "DISPATCHED" ? "selected" : ""}>
-                  <Navigation size={21} />
-                  <strong>{jobCounts.dispatched}</strong>
-                  <span>On My Way</span>
-                </button>
-                <button onClick={() => setJobStatusFilter("IN_PROGRESS")} className={jobStatusFilter === "IN_PROGRESS" ? "selected" : ""}>
-                  <Clock3 size={21} />
-                  <strong>{jobCounts.inProgress}</strong>
-                  <span>In Progress</span>
-                </button>
-                <button onClick={() => setJobStatusFilter("COMPLETED")} className={jobStatusFilter === "COMPLETED" ? "selected" : ""}>
-                  <CheckCheck size={21} />
-                  <strong>{jobCounts.completed}</strong>
-                  <span>Completed</span>
-                </button>
-                <button onClick={() => setJobStatusFilter("CANCELED")} className={jobStatusFilter === "CANCELED" ? "selected" : ""}>
-                  <Trash2 size={21} />
-                  <strong>{jobCounts.canceled}</strong>
-                  <span>Canceled</span>
-                </button>
-              </div>
+              {selectedJob ? (
+                <div className="job-detail-view">
+                  <section className="panel job-detail-hero">
+                    <div>
+                      <span className={`status-pill job-status-${selectedJob.status.toLowerCase()}`}>{selectedJob.status === "DISPATCHED" ? "On My Way" : statusLabel(selectedJob.status)}</span>
+                      <h1>Job #{selectedJob.jobNumber}</h1>
+                      <p>{selectedJob.title || selectedJob.jobType}</p>
+                    </div>
+                    <strong>{money.format(jobInvoiceTotal(selectedJob) / 100)}</strong>
+                  </section>
 
-              <div className="jobs-table-panel">
+                  <section className="panel job-detail-grid">
+                    <div>
+                      <h2>Customer</h2>
+                      <p><Users size={18} /> {customerName(selectedJob.customer)}</p>
+                      <p><Phone size={18} /> {selectedJob.customer.phone}</p>
+                      {selectedJob.customer.email && <p><Mail size={18} /> {selectedJob.customer.email}</p>}
+                      <button className="link-button" type="button" onClick={() => openCustomerProfile(selectedJob.customer)}>Customer profile</button>
+                    </div>
+                    <div>
+                      <h2>Schedule</h2>
+                      <p><CalendarDays size={18} /> {selectedJob.scheduledStart ? new Date(selectedJob.scheduledStart).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Unscheduled"}</p>
+                      {selectedJob.scheduledEnd && <p><Clock3 size={18} /> Ends {new Date(selectedJob.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p>}
+                      <p><UserPlus size={18} /> {selectedJob.technician?.name ?? "Unassigned"}</p>
+                    </div>
+                    <div>
+                      <h2>Location</h2>
+                      <p><MapPin size={18} /> {addressLine(selectedJob.address ?? selectedJob.customer.addresses?.[0])}</p>
+                    </div>
+                    <div>
+                      <h2>Job Details</h2>
+                      <p><Wrench size={18} /> {selectedJob.jobType}</p>
+                      {selectedJob.leadSource && <p><Navigation size={18} /> {selectedJob.leadSource}</p>}
+                      {!!selectedJob.tags?.length && <div className="job-detail-tags">{selectedJob.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+                    </div>
+                  </section>
+
+                  <section className="panel">
+                    <div className="panel-header"><h2>Line Items</h2><ReceiptText size={18} /></div>
+                    <div className="profile-table">
+                      {(selectedJob.lineItems ?? []).map((item) => (
+                        <article key={item.id}>
+                          <strong>{item.name}</strong>
+                          <span>{item.category} / Qty {item.quantity} / {money.format(item.unitPrice / 100)}</span>
+                        </article>
+                      ))}
+                      {!(selectedJob.lineItems?.length) && <p className="empty">No line items on this job yet.</p>}
+                    </div>
+                  </section>
+
+                  {selectedJob.internalNotes && (
+                    <section className="panel">
+                      <div className="panel-header"><h2>Private Notes</h2><StickyNote size={18} /></div>
+                      <p className="job-detail-note">{selectedJob.internalNotes}</p>
+                    </section>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="job-summary-panel">
+                    <button onClick={() => setJobStatusFilter("open")} className={jobStatusFilter === "open" ? "selected" : ""}>
+                      <FolderOpen size={21} />
+                      <strong>{jobCounts.open}</strong>
+                      <span>Open</span>
+                    </button>
+                    <button onClick={() => setJobStatusFilter("DISPATCHED")} className={jobStatusFilter === "DISPATCHED" ? "selected" : ""}>
+                      <Navigation size={21} />
+                      <strong>{jobCounts.dispatched}</strong>
+                      <span>On My Way</span>
+                    </button>
+                    <button onClick={() => setJobStatusFilter("IN_PROGRESS")} className={jobStatusFilter === "IN_PROGRESS" ? "selected" : ""}>
+                      <Clock3 size={21} />
+                      <strong>{jobCounts.inProgress}</strong>
+                      <span>In Progress</span>
+                    </button>
+                    <button onClick={() => setJobStatusFilter("COMPLETED")} className={jobStatusFilter === "COMPLETED" ? "selected" : ""}>
+                      <CheckCheck size={21} />
+                      <strong>{jobCounts.completed}</strong>
+                      <span>Completed</span>
+                    </button>
+                    <button onClick={() => setJobStatusFilter("CANCELED")} className={jobStatusFilter === "CANCELED" ? "selected" : ""}>
+                      <Trash2 size={21} />
+                      <strong>{jobCounts.canceled}</strong>
+                      <span>Canceled</span>
+                    </button>
+                  </div>
+
+                  <div className="jobs-table-panel">
                 <div className="jobs-tools">
                   <div className="search-box table-search">
                     <Search size={18} />
@@ -2390,7 +2455,7 @@ export function App() {
                 <div className="jobs-table">
                   <div className="jobs-table-row jobs-table-head">
                     <span><input type="checkbox" aria-label="Select all jobs" /></span>
-                    <span>ID</span>
+                    <span>Job #</span>
                     <span>Client</span>
                     <span>Scheduled</span>
                     <span>Address</span>
@@ -2402,8 +2467,13 @@ export function App() {
                   {filteredJobs.map((job) => {
                     const paymentStatus = jobPaymentStatus(job);
                     return (
-                      <div className="jobs-table-row" key={job.id}>
-                        <span><input type="checkbox" aria-label={`Select job ${job.jobNumber}`} /></span>
+                      <div className="jobs-table-row clickable-row" key={job.id} role="button" tabIndex={0} onClick={() => openJobDetail(job)} onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openJobDetail(job);
+                        }
+                      }}>
+                        <span><input type="checkbox" aria-label={`Select job ${job.jobNumber}`} onClick={(event) => event.stopPropagation()} /></span>
                         <strong>{job.jobNumber}</strong>
                         <span>{job.customer.firstName} {job.customer.lastName}</span>
                         <span>{job.scheduledStart ? new Date(job.scheduledStart).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Unscheduled"}</span>
@@ -2411,13 +2481,15 @@ export function App() {
                         <span className={`status-pill job-status-${job.status.toLowerCase()}`}>{job.status === "DISPATCHED" ? "On My Way" : statusLabel(job.status)}</span>
                         <span className={`payment-pill ${paymentStatus.toLowerCase()}`}>{statusLabel(paymentStatus.toUpperCase())}</span>
                         <strong>{money.format(jobInvoiceTotal(job) / 100)}</strong>
-                        <button className="text-button" aria-label={`Delete job ${job.jobNumber}`}><Trash2 size={16} /></button>
+                        <button className="text-button" aria-label={`Delete job ${job.jobNumber}`} onClick={(event) => event.stopPropagation()}><Trash2 size={16} /></button>
                       </div>
                     );
                   })}
                   {filteredJobs.length === 0 && <p className="empty table-empty">No jobs match this search.</p>}
                 </div>
-              </div>
+                  </div>
+                </>
+              )}
             </section>
           ) : (
             <section className="jobs-page job-create-page">

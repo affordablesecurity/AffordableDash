@@ -1121,6 +1121,14 @@ textarea {
   background: #fafbfe;
 }
 
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover {
+  background: #f0efff;
+}
+
 .jobs-table-head {
   min-height: 66px;
   background: #fafbfe;
@@ -1166,6 +1174,74 @@ textarea {
 
 .table-empty {
   padding: 22px 14px;
+}
+
+.job-detail-view {
+  display: grid;
+  gap: 18px;
+}
+
+.job-detail-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.job-detail-hero h1 {
+  margin: 10px 0 4px;
+  font-size: 36px;
+  line-height: 1.1;
+}
+
+.job-detail-hero p {
+  margin: 0;
+  color: #5f6574;
+  font-weight: 800;
+}
+
+.job-detail-hero > strong {
+  font-size: 28px;
+}
+
+.job-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.job-detail-grid h2 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+
+.job-detail-grid p {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: #272d3d;
+}
+
+.job-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.job-detail-tags span {
+  border-radius: 999px;
+  background: #f0efff;
+  color: #3733ff;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.job-detail-note {
+  margin: 0;
+  white-space: pre-wrap;
+  color: #4f5a72;
 }
 
 .service-plans-page,
@@ -3525,6 +3601,10 @@ textarea {
     gap: 14px;
   }
 
+  .job-detail-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .job-summary-panel button {
     border-right: 0;
     border-bottom: 1px solid #eef1f6;
@@ -3593,6 +3673,11 @@ textarea {
     width: 100%;
   }
 
+  .job-detail-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .section-actions,
   .action-buttons {
     align-items: stretch;
@@ -3600,6 +3685,7 @@ textarea {
   }
 
   .jobs-tools,
+  .job-detail-grid,
   .new-client-grid,
   .schedule-form-grid,
   .schedule-row,
