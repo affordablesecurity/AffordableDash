@@ -9,6 +9,7 @@ import {
   ChevronRight,
   CircleDollarSign,
   Clock3,
+  Copy,
   CreditCard,
   FileText,
   FolderOpen,
@@ -602,6 +603,13 @@ export function App() {
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [apiKeyName, setApiKeyName] = useState("Partner API");
   const [newApiToken, setNewApiToken] = useState("");
+  const [apiKeySecrets, setApiKeySecrets] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem("affordable_crm_api_key_secrets") ?? "{}") as Record<string, string>;
+    } catch {
+      return {};
+    }
+  });
   const [currentRole, setCurrentRole] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -873,6 +881,15 @@ export function App() {
     });
     setApiKeys((current) => [result.apiKey, ...current]);
     setNewApiToken(result.token);
+    setApiKeySecrets((current) => {
+      const next = { ...current, [result.apiKey.id]: result.token };
+      window.localStorage.setItem("affordable_crm_api_key_secrets", JSON.stringify(next));
+      return next;
+    });
+  }
+
+  async function copyText(value: string) {
+    await navigator.clipboard.writeText(value);
   }
 
   function openEmployeeModal(type: "employee" | "subcontractor" | "owner") {
@@ -988,6 +1005,18 @@ export function App() {
     setError("");
     await api(`/api/location-api-keys/${id}/revoke`, { method: "POST" });
     setApiKeys((current) => current.map((item) => item.id === id ? { ...item, active: false, revokedAt: new Date().toISOString() } : item));
+  }
+
+  async function deleteApiKey(id: string) {
+    setError("");
+    await api(`/api/location-api-keys/${id}`, { method: "DELETE" });
+    setApiKeys((current) => current.filter((item) => item.id !== id));
+    setApiKeySecrets((current) => {
+      const next = { ...current };
+      delete next[id];
+      window.localStorage.setItem("affordable_crm_api_key_secrets", JSON.stringify(next));
+      return next;
+    });
   }
 
   async function createCustomer(event: FormEvent) {
@@ -2969,14 +2998,24 @@ export function App() {
               <div className="token-box">
                 <strong>One-time token</strong>
                 <code>{newApiToken}</code>
+                <button className="outline-button" type="button" onClick={() => copyText(newApiToken)}><Copy size={16} /> Copy token</button>
               </div>
             )}
-            <div className="compact-list">
+            <div className="compact-list api-key-list">
               {apiKeys.slice(0, 6).map((item) => (
                 <article key={item.id}>
-                  <strong>{item.name}</strong>
-                  <span>{item.tokenPrefix} / {item.active ? "active" : "revoked"}</span>
-                  {item.active && <button className="text-button" type="button" onClick={() => revokeApiKey(item.id)}>Revoke</button>}
+                  <div>
+                    <strong>{item.name}</strong>
+                    <span>{item.tokenPrefix} / {item.active ? "active" : "revoked"}</span>
+                    {!apiKeySecrets[item.id] && <small>Full token is only available for keys generated in this browser.</small>}
+                  </div>
+                  <div className="api-key-actions">
+                    <button className="outline-button" type="button" onClick={() => copyText(apiKeySecrets[item.id] ?? item.tokenPrefix)}>
+                      <Copy size={16} /> Copy {apiKeySecrets[item.id] ? "Token" : "Prefix"}
+                    </button>
+                    {item.active && <button className="text-button" type="button" onClick={() => revokeApiKey(item.id)}>Revoke</button>}
+                    <button className="text-button danger" type="button" onClick={() => deleteApiKey(item.id)}>Delete</button>
+                  </div>
                 </article>
               ))}
               {apiKeys.length === 0 && <p className="empty">No API keys for this location.</p>}

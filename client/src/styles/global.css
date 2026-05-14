@@ -2678,6 +2678,32 @@ textarea {
   color: #3733ff;
 }
 
+.token-box .outline-button {
+  width: fit-content;
+}
+
+.api-key-list article {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.api-key-list small {
+  color: #7e8aac;
+}
+
+.api-key-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+
+.text-button.danger {
+  color: #ef4444;
+}
+
 .empty,
 .error {
   color: #9b342f;

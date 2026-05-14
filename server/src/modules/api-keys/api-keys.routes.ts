@@ -98,3 +98,19 @@ apiKeysRouter.post("/:id/revoke", asyncHandler(async (req, res) => {
 
   res.json({ apiKey: revoked });
 }));
+
+apiKeysRouter.delete("/:id", asyncHandler(async (req, res) => {
+  if (!requireApiKeyAdmin(req.user!.role)) {
+    return res.status(403).json({ error: "Only owners and admins can manage API access" });
+  }
+
+  const apiKeyId = String(req.params.id);
+  const apiKey = await prisma.locationApiKey.findFirst({
+    where: { id: apiKeyId, locationId: activeLocationId(req) }
+  });
+
+  if (!apiKey) return res.status(404).json({ error: "API key not found" });
+
+  await prisma.locationApiKey.delete({ where: { id: apiKey.id } });
+  res.status(204).send();
+}));
