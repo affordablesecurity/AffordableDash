@@ -223,9 +223,10 @@ settingsRouter.post("/job-templates", asyncHandler(async (req, res) => {
 settingsRouter.patch("/job-templates/:id", asyncHandler(async (req, res) => {
   const input = jobTemplateSchema.parse(req.body);
   const locationId = activeLocationId(req);
+  const templateId = String(req.params.id);
   await saveTemplateOptions(locationId, input);
   await prisma.jobTemplate.updateMany({
-    where: { id: req.params.id, locationId },
+    where: { id: templateId, locationId },
     data: {
       name: input.name,
       title: input.title,
@@ -236,12 +237,13 @@ settingsRouter.patch("/job-templates/:id", asyncHandler(async (req, res) => {
       lineItems: input.lineItems
     }
   });
-  const template = await prisma.jobTemplate.findFirstOrThrow({ where: { id: req.params.id, locationId } });
+  const template = await prisma.jobTemplate.findFirstOrThrow({ where: { id: templateId, locationId } });
   res.json({ template });
 }));
 
 settingsRouter.delete("/job-templates/:id", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
-  await prisma.jobTemplate.deleteMany({ where: { id: req.params.id, locationId } });
+  const templateId = String(req.params.id);
+  await prisma.jobTemplate.deleteMany({ where: { id: templateId, locationId } });
   res.status(204).send();
 }));
