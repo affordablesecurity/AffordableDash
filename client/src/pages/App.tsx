@@ -188,10 +188,19 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "customers" | "jobs" | "invoices" | "pricebook" | "api";
+type View = "dispatch" | "schedule" | "customers" | "jobs" | "invoices" | "pricebook" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
-type CrmOptions = { leadSources: string[]; tags: string[]; jobTypes: string[] };
+type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
+type SettingsSection = "overview" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans";
+type CrmOptions = {
+  leadSources: string[];
+  tags: string[];
+  jobTypes: string[];
+  jobFields: string[];
+  checklists: string[];
+  servicePlans: string[];
+};
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -316,6 +325,30 @@ function lineDraft(category: "service" | "material", name = "", unitPrice = ""):
   };
 }
 
+const optionKeyByKind: Record<CrmOptionKind, keyof CrmOptions> = {
+  leadSource: "leadSources",
+  tag: "tags",
+  jobType: "jobTypes",
+  jobField: "jobFields",
+  checklist: "checklists",
+  servicePlan: "servicePlans"
+};
+
+const settingsSections: Array<{
+  id: Exclude<SettingsSection, "overview">;
+  kind: CrmOptionKind;
+  title: string;
+  description: string;
+  placeholder: string;
+}> = [
+  { id: "tags", kind: "tag", title: "Tags", description: "Labels you can attach to jobs and customers for filtering and automation.", placeholder: "commercial, emergency, rekey" },
+  { id: "leadSources", kind: "leadSource", title: "Lead Sources", description: "Where jobs and customers came from so reports can show booking performance.", placeholder: "Google Ads, Referral, Phone Call" },
+  { id: "jobTypes", kind: "jobType", title: "Job Types", description: "Standard locksmith job categories used on jobs, schedules, invoices, and reports.", placeholder: "Residential lock repair" },
+  { id: "jobFields", kind: "jobField", title: "Job Fields", description: "Custom internal prompts your team can track on jobs.", placeholder: "Gate code, Lock brand, Key count" },
+  { id: "checklists", kind: "checklist", title: "Checklists", description: "Reusable task lists for technicians and office workflows.", placeholder: "Arrival checklist" },
+  { id: "servicePlans", kind: "servicePlan", title: "Service Plans", description: "Plans for recurring maintenance, priority customers, and contract work.", placeholder: "Commercial priority" }
+];
+
 export function App() {
   const [token, updateToken] = useState(getToken());
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -348,6 +381,8 @@ export function App() {
   const [priceBookSearch, setPriceBookSearch] = useState("");
   const [priceBookTab, setPriceBookTab] = useState<"items" | "categories">("items");
   const [priceBookModal, setPriceBookModal] = useState<"item" | "category" | null>(null);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("overview");
+  const [settingsDraft, setSettingsDraft] = useState("");
   const [priceBookItemForm, setPriceBookItemForm] = useState({
     name: "",
     modelNumber: "",
@@ -372,7 +407,10 @@ export function App() {
   const [crmOptions, setCrmOptions] = useState<CrmOptions>({
     leadSources: ["Unknown", "Online Booking", "Google Ads", "Facebook Ads", "Yelp Ads", "Referral", "Phone Call"],
     tags: [],
-    jobTypes: ["Car Lockout Service", "House Lockout Service", "Rekey", "Lock Install", "Car Key", "Ignition", "Safe", "Access Control"]
+    jobTypes: ["Car Lockout Service", "House Lockout Service", "Rekey", "Lock Install", "Car Key", "Ignition", "Safe", "Access Control"],
+    jobFields: ["Gate code", "Lock brand", "Key count", "Door condition", "Vehicle year/make/model"],
+    checklists: ["Arrival checklist", "Vehicle lockout checklist", "Rekey checklist", "Invoice review"],
+    servicePlans: ["Residential maintenance", "Commercial priority", "Property manager"]
   });
   const [customerForm, setCustomerForm] = useState<CustomerForm>({
     firstName: "",
@@ -477,6 +515,8 @@ export function App() {
       item.itemType
     ].some((value) => value.toLowerCase().includes(query)));
   }, [priceBookItems, priceBookSearch]);
+  const selectedSettings = settingsSections.find((section) => section.id === settingsSection);
+  const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
 
   async function loadDashboard() {
     const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult] = await Promise.all([
@@ -494,7 +534,7 @@ export function App() {
     setJobs(jobsResult.jobs);
     setInvoices(invoicesResult.invoices);
     setTechnicians(techniciansResult.technicians);
-    setCrmOptions(optionsResult);
+    setCrmOptions((current) => ({ ...current, ...optionsResult }));
     setPriceBookCategories(priceBookResult.categories);
     setPriceBookItems(priceBookResult.items);
 
@@ -588,7 +628,7 @@ export function App() {
     await loadDashboard();
   }
 
-  async function saveJobOption(kind: "leadSource" | "tag" | "jobType", name: string) {
+  async function saveJobOption(kind: CrmOptionKind, name: string) {
     const cleanName = name.trim();
     if (!cleanName) return;
     await api("/api/settings/options", {
@@ -596,8 +636,28 @@ export function App() {
       body: JSON.stringify({ kind, name: cleanName })
     });
     setCrmOptions((current) => {
-      const key: keyof CrmOptions = kind === "leadSource" ? "leadSources" : kind === "jobType" ? "jobTypes" : "tags";
+      const key = optionKeyByKind[kind];
       return { ...current, [key]: [...new Set([...current[key], cleanName])].sort() };
+    });
+  }
+
+  async function createSettingsOption(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedSettings) return;
+    setError("");
+    await saveJobOption(selectedSettings.kind, settingsDraft);
+    setSettingsDraft("");
+  }
+
+  async function removeSettingsOption(kind: CrmOptionKind, name: string) {
+    setError("");
+    await api("/api/settings/options", {
+      method: "DELETE",
+      body: JSON.stringify({ kind, name })
+    });
+    setCrmOptions((current) => {
+      const key = optionKeyByKind[kind];
+      return { ...current, [key]: current[key].filter((item) => item !== name) };
     });
   }
 
@@ -934,7 +994,7 @@ export function App() {
 
           <span className="nav-section">More</span>
           <button><ListChecks size={18} /> Reports</button>
-          <button><Settings size={18} /> Settings</button>
+          <button className={activeView === "settings" ? "active" : ""} onClick={() => setActiveView("settings")}><Settings size={18} /> Settings</button>
           <button className={activeView === "api" ? "active" : ""} onClick={() => setActiveView("api")}><KeyRound size={18} /> API Access</button>
           <button><Headphones size={18} /> Support</button>
           <button><BookOpen size={18} /> Training</button>
@@ -1510,6 +1570,124 @@ export function App() {
               </form>
             </section>
           )
+        )}
+
+        {activeView === "settings" && (
+          <section className="settings-page">
+            <div className="section-actions">
+              <div className="breadcrumb"><Settings size={17} /> Settings</div>
+              {settingsSection !== "overview" && (
+                <button className="outline-button" type="button" onClick={() => setSettingsSection("overview")}><ChevronLeft size={17} /> Settings Home</button>
+              )}
+            </div>
+
+            {settingsSection === "overview" ? (
+              <>
+                <div className="settings-grid">
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("overview")}>
+                    <span className="settings-icon purple"><Settings size={22} /></span>
+                    <strong>Company Settings</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("overview")}>
+                    <span className="settings-icon blue"><Users size={22} /></span>
+                    <strong>Profile Settings</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setActiveView("pricebook")}>
+                    <span className="settings-icon red"><Tag size={22} /></span>
+                    <strong>Pricebook</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("jobTypes")}>
+                    <span className="settings-icon yellow"><Wrench size={22} /></span>
+                    <strong>Job Settings</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("leadSources")}>
+                    <span className="settings-icon green"><TrendingUp size={22} /></span>
+                    <strong>Lead Sources</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("tags")}>
+                    <span className="settings-icon pink"><Tag size={22} /></span>
+                    <strong>Tags</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("jobFields")}>
+                    <span className="settings-icon blue"><FileText size={22} /></span>
+                    <strong>Job Fields</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("checklists")}>
+                    <span className="settings-icon green"><ListChecks size={22} /></span>
+                    <strong>Checklists</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("servicePlans")}>
+                    <span className="settings-icon yellow"><CheckCheck size={22} /></span>
+                    <strong>Service Plans</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setActiveView("api")}>
+                    <span className="settings-icon purple"><KeyRound size={22} /></span>
+                    <strong>API Access</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("overview")}>
+                    <span className="settings-icon pink"><MessageSquareText size={22} /></span>
+                    <strong>SMS Notifications</strong>
+                  </button>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("overview")}>
+                    <span className="settings-icon red"><CreditCard size={22} /></span>
+                    <strong>Invoice Settings</strong>
+                  </button>
+                </div>
+
+                <div className="settings-integrations">
+                  <h2>Integrations</h2>
+                  <div className="settings-grid compact">
+                    <button type="button" className="settings-card"><span className="settings-icon green"><CalendarDays size={22} /></span><strong>Google</strong></button>
+                    <button type="button" className="settings-card"><span className="settings-icon blue"><CreditCard size={22} /></span><strong>Quickbooks</strong></button>
+                    <button type="button" className="settings-card"><span className="settings-icon purple"><BadgeDollarSign size={22} /></span><strong>Stripe</strong></button>
+                  </div>
+                </div>
+              </>
+            ) : selectedSettings && (
+              <div className="settings-layout">
+                <aside className="settings-menu">
+                  <span>Global Settings</span>
+                  <button onClick={() => setSettingsSection("overview")}>Company</button>
+                  <button onClick={() => setActiveView("api")}>API Access</button>
+                  <span>Feature Configurations</span>
+                  <button className={settingsSection === "jobTypes" ? "active" : ""} onClick={() => setSettingsSection("jobTypes")}>Job Types</button>
+                  <button onClick={() => setActiveView("pricebook")}>Price Book</button>
+                  <button className={settingsSection === "servicePlans" ? "active" : ""} onClick={() => setSettingsSection("servicePlans")}>Service Plans</button>
+                  <span>Tags & Tools</span>
+                  <button className={settingsSection === "checklists" ? "active" : ""} onClick={() => setSettingsSection("checklists")}>Checklists</button>
+                  <button className={settingsSection === "jobFields" ? "active" : ""} onClick={() => setSettingsSection("jobFields")}>Job Fields</button>
+                  <button className={settingsSection === "leadSources" ? "active" : ""} onClick={() => setSettingsSection("leadSources")}>Lead Sources</button>
+                  <button className={settingsSection === "tags" ? "active" : ""} onClick={() => setSettingsSection("tags")}>Tags</button>
+                </aside>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <p className="settings-kicker">API backed configuration</p>
+                      <h2>{selectedSettings.title}</h2>
+                      <p>{selectedSettings.description}</p>
+                    </div>
+                    <span>{selectedSettingsValues.length} saved</span>
+                  </div>
+
+                  <form className="settings-input-row" onSubmit={createSettingsOption}>
+                    <input value={settingsDraft} onChange={(event) => setSettingsDraft(event.target.value)} placeholder={selectedSettings.placeholder} />
+                    <button className="primary" type="submit"><Plus size={17} /> Add</button>
+                  </form>
+
+                  <div className="settings-option-list">
+                    {selectedSettingsValues.map((value) => (
+                      <div className="settings-option-row" key={value}>
+                        <span>{value}</span>
+                        <button className="text-button" type="button" onClick={() => removeSettingsOption(selectedSettings.kind, value)}><Trash2 size={16} /></button>
+                      </div>
+                    ))}
+                    {selectedSettingsValues.length === 0 && <p className="empty">Nothing has been saved here yet.</p>}
+                  </div>
+                </section>
+              </div>
+            )}
+          </section>
         )}
 
         {activeView === "pricebook" && (

@@ -75,8 +75,10 @@ settingsRouter.get("/summary", asyncHandler(async (req, res) => {
   });
 }));
 
+const optionKinds = ["leadSource", "tag", "jobType", "jobField", "checklist", "servicePlan"] as const;
+
 const optionSchema = z.object({
-  kind: z.enum(["leadSource", "tag", "jobType"]),
+  kind: z.enum(optionKinds),
   name: z.string().trim().min(1)
 });
 
@@ -92,13 +94,19 @@ settingsRouter.get("/options", asyncHandler(async (req, res) => {
   const grouped = {
     leadSources: new Set<string>(["Unknown", "Online Booking", "Google Ads", "Facebook Ads", "Yelp Ads", "Referral", "Phone Call"]),
     tags: new Set<string>(),
-    jobTypes: new Set<string>(["Car Lockout Service", "House Lockout Service", "Rekey", "Lock Install", "Car Key", "Ignition", "Safe", "Access Control"])
+    jobTypes: new Set<string>(["Car Lockout Service", "House Lockout Service", "Rekey", "Lock Install", "Car Key", "Ignition", "Safe", "Access Control"]),
+    jobFields: new Set<string>(["Gate code", "Lock brand", "Key count", "Door condition", "Vehicle year/make/model"]),
+    checklists: new Set<string>(["Arrival checklist", "Vehicle lockout checklist", "Rekey checklist", "Invoice review"]),
+    servicePlans: new Set<string>(["Residential maintenance", "Commercial priority", "Property manager"])
   };
 
   options.forEach((option) => {
     if (option.kind === "leadSource") grouped.leadSources.add(option.name);
     if (option.kind === "tag") grouped.tags.add(option.name);
     if (option.kind === "jobType") grouped.jobTypes.add(option.name);
+    if (option.kind === "jobField") grouped.jobFields.add(option.name);
+    if (option.kind === "checklist") grouped.checklists.add(option.name);
+    if (option.kind === "servicePlan") grouped.servicePlans.add(option.name);
   });
   jobTypes.forEach((row) => grouped.jobTypes.add(row.jobType));
   leadSources.forEach((row) => {
@@ -109,7 +117,10 @@ settingsRouter.get("/options", asyncHandler(async (req, res) => {
   res.json({
     leadSources: [...grouped.leadSources].sort(),
     tags: [...grouped.tags].sort(),
-    jobTypes: [...grouped.jobTypes].sort()
+    jobTypes: [...grouped.jobTypes].sort(),
+    jobFields: [...grouped.jobFields].sort(),
+    checklists: [...grouped.checklists].sort(),
+    servicePlans: [...grouped.servicePlans].sort()
   });
 }));
 
@@ -122,4 +133,13 @@ settingsRouter.post("/options", asyncHandler(async (req, res) => {
     update: {}
   });
   res.status(201).json({ option });
+}));
+
+settingsRouter.delete("/options", asyncHandler(async (req, res) => {
+  const input = optionSchema.parse(req.body);
+  const locationId = activeLocationId(req);
+  await prisma.crmOption.deleteMany({
+    where: { locationId, kind: input.kind, name: input.name }
+  });
+  res.status(204).send();
 }));
