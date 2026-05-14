@@ -458,14 +458,14 @@ function addressLine(address?: Address) {
 
 function jobInvoiceTotal(job: Job) {
   const invoiceTotal = (job.invoices ?? []).reduce((sum, invoice) => sum + invoice.total, 0);
-  return invoiceTotal || jobLineSubtotal(job);
+  return invoiceTotal || calculateJobLineSubtotal(job);
 }
 
-function jobLineSubtotal(job: Job) {
+function calculateJobLineSubtotal(job: Job) {
   return (job.lineItems ?? []).reduce((sum, item) => sum + Number(item.quantity || "0") * item.unitPrice, 0);
 }
 
-function jobLineTax(job: Job) {
+function calculateJobLineTax(job: Job) {
   const taxableSubtotal = (job.lineItems ?? []).reduce((sum, item) => {
     const isTaxable = item.category === "material" && item.taxable !== false;
     return isTaxable ? sum + Number(item.quantity || "0") * item.unitPrice : sum;
@@ -1778,7 +1778,7 @@ export function App() {
         customerId: job.customer.id,
         jobId: job.id,
         status: "DRAFT",
-        tax: jobLineTax(job),
+        tax: calculateJobLineTax(job),
         items: lineItems.map((item) => ({
           name: item.name,
           quantity: Number(item.quantity || "1"),
@@ -2512,9 +2512,9 @@ export function App() {
                         <div className="invoice-lines">
                           <span>Invoice number</span><strong>{selectedJobInvoice ? `#${selectedJobInvoice.invoiceNumber}` : "Not created yet"}</strong>
                           <span>Status</span><strong>{selectedJobInvoice ? statusLabel(selectedJobInvoice.status) : "Draft needed"}</strong>
-                          <span>Subtotal</span><strong>{money.format(jobLineSubtotal(selectedJob) / 100)}</strong>
-                          <span>Tax</span><strong>{money.format(jobLineTax(selectedJob) / 100)}</strong>
-                          <span>Total</span><strong>{money.format((selectedJobInvoice?.total ?? jobLineSubtotal(selectedJob) + jobLineTax(selectedJob)) / 100)}</strong>
+                          <span>Subtotal</span><strong>{money.format(calculateJobLineSubtotal(selectedJob) / 100)}</strong>
+                          <span>Tax</span><strong>{money.format(calculateJobLineTax(selectedJob) / 100)}</strong>
+                          <span>Total</span><strong>{money.format((selectedJobInvoice?.total ?? calculateJobLineSubtotal(selectedJob) + calculateJobLineTax(selectedJob)) / 100)}</strong>
                         </div>
                         <p className="muted">Invoices are linked to the job, so payments and reporting stay tied back to the work order.</p>
                       </section>
