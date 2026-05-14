@@ -3126,8 +3126,14 @@ textarea {
   border: 1px solid #d9deeb;
   border-radius: 10px;
   background: #ffffff;
-  color: #8290b3;
+  color: #006bcf;
   padding: 10px 14px;
+  font-weight: 900;
+}
+
+.today-button {
+  border-color: #0b78d0;
+  color: #0b78d0;
 }
 
 .schedule-range {
@@ -3164,8 +3170,16 @@ textarea {
 
 .calendar-grid {
   display: grid;
-  grid-template-columns: 66px repeat(7, minmax(132px, 1fr));
+  grid-template-columns: 66px repeat(var(--calendar-days), minmax(132px, 1fr));
   overflow-x: auto;
+}
+
+.calendar-grid-day {
+  grid-template-columns: 66px minmax(560px, 1fr);
+}
+
+.calendar-grid-employees {
+  grid-template-columns: 66px repeat(var(--calendar-days), minmax(190px, 1fr));
 }
 
 .calendar-corner,
@@ -3197,6 +3211,16 @@ textarea {
   display: block;
   margin-top: 2px;
   font-size: 22px;
+}
+
+.calendar-day-head.today strong {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #1477c9;
+  color: #ffffff;
 }
 
 .calendar-time {
@@ -3245,12 +3269,124 @@ textarea {
   padding: 7px;
   font-size: 12px;
   line-height: 1.2;
+  cursor: pointer;
 }
 
 .calendar-job em,
 .calendar-job small {
   font-style: normal;
   color: #272d3d;
+}
+
+.month-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(150px, 1fr));
+  min-height: 720px;
+  overflow-x: auto;
+}
+
+.month-day {
+  min-height: 120px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  border: 0;
+  border-right: 1px solid #e0e4ed;
+  border-bottom: 1px solid #eef1f6;
+  background: #ffffff;
+  padding: 10px;
+  text-align: left;
+}
+
+.month-day.muted {
+  background: #fbfcfe;
+  color: #9aa4ba;
+}
+
+.month-day span {
+  font-weight: 900;
+}
+
+.month-day em {
+  border-radius: 6px;
+  background: #d8d7ea;
+  color: #101421;
+  padding: 5px 7px;
+  font-size: 12px;
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.month-day small {
+  color: #006bcf;
+  font-weight: 900;
+}
+
+.schedule-job-modal {
+  width: min(520px, 100%);
+  display: grid;
+  gap: 16px;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(16, 20, 33, 0.22);
+  padding: 22px;
+}
+
+.schedule-job-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.schedule-job-title h2 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 21px;
+}
+
+.schedule-job-title p {
+  margin: 4px 0 0;
+  color: #4f5a72;
+}
+
+.schedule-job-details {
+  display: grid;
+  gap: 12px;
+}
+
+.schedule-job-details span {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #272d3d;
+}
+
+.schedule-job-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.schedule-job-tags span {
+  border-radius: 999px;
+  background: #1477c9;
+  color: #ffffff;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.schedule-job-note {
+  margin: 0;
+  border-radius: 10px;
+  background: #f7f8fb;
+  color: #4f5a72;
+  padding: 12px;
+  white-space: pre-wrap;
 }
 
 .modal-backdrop {

@@ -404,9 +404,28 @@ function addDays(date: Date, days: number) {
   return next;
 }
 
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function startOfMonth(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  next.setDate(1);
+  return next;
+}
+
 function formatWeekRange(start: Date) {
   const end = addDays(start, 6);
   return `${start.toLocaleDateString([], { month: "short", day: "numeric" })} - ${end.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+}
+
+function formatScheduleRange(mode: CalendarMode, date: Date, weekStart: Date) {
+  if (mode === "month") return date.toLocaleDateString([], { month: "long", year: "numeric" });
+  if (mode === "day" || mode === "employees") return date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric", year: "numeric" });
+  return formatWeekRange(weekStart);
 }
 
 function formatHour(hour: number) {
@@ -579,8 +598,9 @@ export function App() {
   const [activeView, setActiveView] = useState<View>("dispatch");
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("week");
-  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const [scheduleDate, setScheduleDate] = useState(() => new Date());
   const [slotPrompt, setSlotPrompt] = useState<SlotPrompt>(null);
+  const [selectedScheduleJob, setSelectedScheduleJob] = useState<Job | null>(null);
   const [jobPageMode, setJobPageMode] = useState<"list" | "create">("list");
   const [jobSearch, setJobSearch] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState("all");
@@ -744,7 +764,20 @@ export function App() {
   const [error, setError] = useState("");
 
   const scheduledJobs = useMemo(() => jobs.filter((job) => job.status !== "COMPLETED" && job.status !== "CANCELED"), [jobs]);
+  const weekStart = useMemo(() => startOfWeek(scheduleDate), [scheduleDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
+  const monthDays = useMemo(() => {
+    const first = startOfWeek(startOfMonth(scheduleDate));
+    return Array.from({ length: 42 }, (_item, index) => addDays(first, index));
+  }, [scheduleDate]);
+  const scheduleDays = calendarMode === "day" ? [scheduleDate] : calendarMode === "month" ? monthDays : weekDays;
+  const scheduleEmployeeColumns = useMemo(() => {
+    const fieldTechs = technicians.filter((tech) => tech.active && tech.fieldTech);
+    return fieldTechs.length ? fieldTechs : [{ id: "", name: "Unassigned" } as Technician];
+  }, [technicians]);
+  const scheduleColumns = calendarMode === "employees"
+    ? scheduleEmployeeColumns.map((tech) => ({ id: tech.id || "unassigned", label: tech.name, date: scheduleDate, technicianId: tech.id }))
+    : scheduleDays.map((day) => ({ id: day.toISOString(), label: dayLabels[day.getDay()], date: day, technicianId: undefined as string | undefined }));
   const selectedJobCustomer = customers.find((customer) => customer.id === jobForm.customerId);
   const selectedJobAddresses = selectedJobCustomer?.addresses ?? [];
   const clientMatches = useMemo(() => {
@@ -1711,6 +1744,18 @@ export function App() {
     setActiveView("jobs");
   }
 
+  function moveSchedule(direction: -1 | 1) {
+    setScheduleDate((current) => {
+      if (calendarMode === "month") return addMonths(current, direction);
+      return addDays(current, direction * (calendarMode === "day" ? 1 : 7));
+    });
+  }
+
+  function changeCalendarMode(mode: CalendarMode) {
+    setCalendarMode(mode);
+    if (mode === "day" || mode === "employees") setScheduleDate(new Date());
+  }
+
   if (!token) {
     return (
       <main className="login-screen">
@@ -1918,54 +1963,88 @@ export function App() {
         {activeView === "schedule" && (
           <section className="schedule-shell">
             <div className="schedule-toolbar">
-              <button className="schedule-button" onClick={() => setWeekStart(startOfWeek(new Date()))}>Today</button>
+              <button className="schedule-button today-button" onClick={() => setScheduleDate(new Date())}>Today</button>
               <div className="schedule-range">
-                <button className="icon-button" onClick={() => setWeekStart((current) => addDays(current, -7))} aria-label="Previous week"><ChevronLeft size={18} /></button>
-                <strong>{formatWeekRange(weekStart)}</strong>
-                <button className="icon-button" onClick={() => setWeekStart((current) => addDays(current, 7))} aria-label="Next week"><ChevronRight size={18} /></button>
+                <button className="icon-button" onClick={() => moveSchedule(-1)} aria-label="Previous period"><ChevronLeft size={18} /></button>
+                <strong>{formatScheduleRange(calendarMode, scheduleDate, weekStart)}</strong>
+                <button className="icon-button" onClick={() => moveSchedule(1)} aria-label="Next period"><ChevronRight size={18} /></button>
               </div>
               <div className="calendar-tabs">
                 {(["employees", "day", "week", "month"] as CalendarMode[]).map((mode) => (
-                  <button key={mode} className={calendarMode === mode ? "active" : ""} onClick={() => setCalendarMode(mode)}>
+                  <button key={mode} className={calendarMode === mode ? "active" : ""} onClick={() => changeCalendarMode(mode)}>
                     {mode === "employees" ? "Employees" : mode[0].toUpperCase() + mode.slice(1)}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="calendar-grid">
-              <div className="calendar-corner" />
-              {weekDays.map((day) => (
-                <div className="calendar-day-head" key={day.toISOString()}>
-                  <span>{dayLabels[day.getDay()]}</span>
-                  <strong>{day.getDate()}</strong>
-                </div>
-              ))}
-              <div className="calendar-time all-day">All Day</div>
-              {weekDays.map((day) => <button className="calendar-cell all-day-cell" key={`all-${day.toISOString()}`} onClick={() => setSlotPrompt({ date: day, hour: 9 })} />)}
-              {calendarHours.map((hour) => (
-                <Fragment key={`row-${hour}`}>
-                  <div className="calendar-time" key={`label-${hour}`}>{formatHour(hour)}</div>
-                  {weekDays.map((day) => {
-                    const slotJobs = scheduledJobs.filter((job) => {
-                      if (!job.scheduledStart) return false;
-                      const start = new Date(job.scheduledStart);
-                      return sameCalendarDay(start, day) && start.getHours() === hour;
-                    });
-                    return (
-                      <button className="calendar-cell" key={`${day.toISOString()}-${hour}`} onClick={() => setSlotPrompt({ date: day, hour })}>
-                        {slotJobs.map((job) => (
-                          <span className="calendar-job" key={job.id}>
-                            <strong>{job.customer.firstName} {job.customer.lastName}</strong>
-                            <em>{job.title}</em>
-                            <small>#{job.jobNumber}</small>
-                          </span>
-                        ))}
-                      </button>
-                    );
-                  })}
-                </Fragment>
-              ))}
-            </div>
+            {calendarMode === "month" ? (
+              <div className="month-calendar-grid">
+                {monthDays.map((day) => {
+                  const dayJobs = scheduledJobs.filter((job) => job.scheduledStart && sameCalendarDay(new Date(job.scheduledStart), day));
+                  return (
+                    <button className={day.getMonth() === scheduleDate.getMonth() ? "month-day" : "month-day muted"} key={day.toISOString()} onClick={() => { setScheduleDate(day); setCalendarMode("day"); }}>
+                      <span>{dayLabels[day.getDay()]} {day.getDate()}</span>
+                      {dayJobs.slice(0, 4).map((job) => (
+                        <em key={job.id} onClick={(event) => { event.stopPropagation(); setSelectedScheduleJob(job); }}>{job.customer.firstName} {job.customer.lastName}</em>
+                      ))}
+                      {dayJobs.length > 4 && <small>+{dayJobs.length - 4} more</small>}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className={`calendar-grid calendar-grid-${calendarMode}`} style={{ "--calendar-days": scheduleColumns.length } as CSSProperties}>
+                <div className="calendar-corner" />
+                {scheduleColumns.map((column) => (
+                  <div className={sameCalendarDay(column.date, new Date()) ? "calendar-day-head today" : "calendar-day-head"} key={column.id}>
+                    <span>{calendarMode === "employees" ? "Employee" : column.label}</span>
+                    <strong>{calendarMode === "employees" ? column.label : column.date.getDate()}</strong>
+                  </div>
+                ))}
+                <div className="calendar-time all-day">All Day</div>
+                {scheduleColumns.map((column) => <button className="calendar-cell all-day-cell" key={`all-${column.id}`} onClick={() => setSlotPrompt({ date: column.date, hour: 9 })} />)}
+                {calendarHours.map((hour) => (
+                  <Fragment key={`row-${hour}`}>
+                    <div className="calendar-time" key={`label-${hour}`}>{formatHour(hour)}</div>
+                    {scheduleColumns.map((column) => {
+                      const slotJobs = scheduledJobs.filter((job) => {
+                        if (!job.scheduledStart) return false;
+                        const start = new Date(job.scheduledStart);
+                        const techMatches = calendarMode !== "employees" || (column.technicianId ? job.technician?.id === column.technicianId : !job.technician?.id);
+                        return techMatches && sameCalendarDay(start, column.date) && start.getHours() === hour;
+                      });
+                      return (
+                        <button className="calendar-cell" key={`${column.id}-${hour}`} onClick={() => setSlotPrompt({ date: column.date, hour })}>
+                          {slotJobs.map((job) => (
+                            <span
+                              className="calendar-job"
+                              key={job.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedScheduleJob(job);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  setSelectedScheduleJob(job);
+                                }
+                              }}
+                            >
+                              <strong>{job.customer.firstName} {job.customer.lastName}</strong>
+                              <em>{job.scheduledStart ? `${new Date(job.scheduledStart).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${job.scheduledEnd ? `-${new Date(job.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}` : job.title}</em>
+                              <small>#{job.jobNumber}</small>
+                            </span>
+                          ))}
+                        </button>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </div>
+            )}
           </section>
         )}
 
@@ -1978,6 +2057,41 @@ export function App() {
                 <button onClick={() => openJobFromSlot(slotPrompt)}><Wrench size={18} /> Job</button>
                 <button onClick={() => setSlotPrompt(null)}><CalendarDays size={18} /> Event</button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {selectedScheduleJob && (
+          <div className="modal-backdrop" onClick={() => setSelectedScheduleJob(null)}>
+            <div className="schedule-job-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="schedule-job-title">
+                <div>
+                  <h2><Wrench size={22} /> Job #{selectedScheduleJob.jobNumber}</h2>
+                  <p>
+                    {selectedScheduleJob.scheduledStart ? new Date(selectedScheduleJob.scheduledStart).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Unscheduled"}
+                    {selectedScheduleJob.scheduledEnd ? ` - ${new Date(selectedScheduleJob.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}
+                  </p>
+                </div>
+                <button className="link-button" type="button" onClick={() => {
+                  setSelectedScheduleJob(null);
+                  setActiveView("jobs");
+                  setJobPageMode("list");
+                }}>View job</button>
+              </div>
+              <div className="schedule-job-details">
+                <span><CalendarDays size={18} /> {selectedScheduleJob.title || selectedScheduleJob.jobType}</span>
+                <span><CircleDollarSign size={18} /> {money.format(jobInvoiceTotal(selectedScheduleJob) / 100)}</span>
+                <span><Users size={18} /> {customerName(selectedScheduleJob.customer)}</span>
+                <span><MapPin size={18} /> {addressLine(selectedScheduleJob.address ?? selectedScheduleJob.customer.addresses?.[0])}</span>
+                <span><Phone size={18} /> {selectedScheduleJob.customer.phone}</span>
+                <span><UserPlus size={18} /> {selectedScheduleJob.technician?.name ?? "Unassigned"}</span>
+              </div>
+              {!!selectedScheduleJob.tags?.length && (
+                <div className="schedule-job-tags">
+                  {selectedScheduleJob.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                </div>
+              )}
+              {selectedScheduleJob.internalNotes && <p className="schedule-job-note">{selectedScheduleJob.internalNotes}</p>}
             </div>
           </div>
         )}
