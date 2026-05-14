@@ -235,7 +235,7 @@ type Job = {
   customer: Customer;
   address?: Address;
   technician?: Technician;
-  lineItems?: Array<{ id: string; category: string; name: string; quantity: string; unitPrice: number }>;
+  lineItems?: Array<{ id: string; category: string; name: string; quantity: string; unitPrice: number; taxable?: boolean }>;
   invoices?: Invoice[];
 };
 
@@ -457,7 +457,20 @@ function addressLine(address?: Address) {
 }
 
 function jobInvoiceTotal(job: Job) {
-  return (job.invoices ?? []).reduce((sum, invoice) => sum + invoice.total, 0);
+  const invoiceTotal = (job.invoices ?? []).reduce((sum, invoice) => sum + invoice.total, 0);
+  return invoiceTotal || jobLineSubtotal(job);
+}
+
+function jobLineSubtotal(job: Job) {
+  return (job.lineItems ?? []).reduce((sum, item) => sum + Number(item.quantity || "0") * item.unitPrice, 0);
+}
+
+function jobLineTax(job: Job) {
+  const taxableSubtotal = (job.lineItems ?? []).reduce((sum, item) => {
+    const isTaxable = item.category === "material" && item.taxable !== false;
+    return isTaxable ? sum + Number(item.quantity || "0") * item.unitPrice : sum;
+  }, 0);
+  return Math.round(taxableSubtotal * 0.094);
 }
 
 function jobPaymentStatus(job: Job) {
@@ -766,6 +779,7 @@ export function App() {
 
   const scheduledJobs = useMemo(() => jobs.filter((job) => job.status !== "COMPLETED" && job.status !== "CANCELED"), [jobs]);
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? null;
+  const selectedJobInvoice = selectedJob?.invoices?.[0] ?? null;
   const weekStart = useMemo(() => startOfWeek(scheduleDate), [scheduleDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
   const monthDays = useMemo(() => {
@@ -1731,6 +1745,60 @@ export function App() {
     await loadDashboard();
   }
 
+  function mergeJob(job: Job) {
+    setJobs((current) => current.map((item) => item.id === job.id ? { ...item, ...job } : item));
+  }
+
+  async function updateJobStatus(job: Job, status: string) {
+    setError("");
+    const result = await api<{ job: Job }>(`/api/jobs/${job.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status })
+    });
+    mergeJob(result.job);
+    setSelectedJobId(job.id);
+    await loadDashboard();
+  }
+
+  async function createInvoiceFromJob(job: Job) {
+    const existingInvoice = job.invoices?.[0];
+    if (existingInvoice) return existingInvoice;
+    const fallbackLineItem: NonNullable<Job["lineItems"]>[number] = {
+      id: "fallback",
+      category: "service",
+      name: job.title || job.jobType || "Job service",
+      quantity: "1",
+      unitPrice: 0,
+      taxable: false
+    };
+    const lineItems: NonNullable<Job["lineItems"]> = job.lineItems?.length ? job.lineItems : [fallbackLineItem];
+    const result = await api<{ invoice: Invoice }>("/api/invoices", {
+      method: "POST",
+      body: JSON.stringify({
+        customerId: job.customer.id,
+        jobId: job.id,
+        status: "DRAFT",
+        tax: jobLineTax(job),
+        items: lineItems.map((item) => ({
+          name: item.name,
+          quantity: Number(item.quantity || "1"),
+          unitPrice: item.unitPrice,
+          taxable: item.category === "material" && item.taxable !== false
+        }))
+      })
+    });
+    setInvoices((current) => [result.invoice, ...current.filter((invoice) => invoice.id !== result.invoice.id)]);
+    setJobs((current) => current.map((item) => item.id === job.id ? { ...item, invoices: [result.invoice, ...(item.invoices ?? [])] } : item));
+    setSelectedJobId(job.id);
+    await loadDashboard();
+    return result.invoice;
+  }
+
+  async function openJobPayment(job: Job) {
+    await createInvoiceFromJob(job);
+    setActiveView("invoices");
+  }
+
   function openJobFromSlot(slot: { date: Date; hour: number }) {
     const start = new Date(slot.date);
     start.setHours(slot.hour, 0, 0, 0);
@@ -2337,60 +2405,151 @@ export function App() {
 
               {selectedJob ? (
                 <div className="job-detail-view">
-                  <section className="panel job-detail-hero">
+                  <section className="job-detail-titlebar">
                     <div>
+                      <span className="breadcrumb">Customers / {customerName(selectedJob.customer)} / Jobs / Job #{selectedJob.jobNumber}</span>
+                      <h1>Job #{selectedJob.jobNumber} • Job for {customerName(selectedJob.customer)}</h1>
                       <span className={`status-pill job-status-${selectedJob.status.toLowerCase()}`}>{selectedJob.status === "DISPATCHED" ? "On My Way" : statusLabel(selectedJob.status)}</span>
-                      <h1>Job #{selectedJob.jobNumber}</h1>
-                      <p>{selectedJob.title || selectedJob.jobType}</p>
                     </div>
-                    <strong>{money.format(jobInvoiceTotal(selectedJob) / 100)}</strong>
-                  </section>
-
-                  <section className="panel job-detail-grid">
-                    <div>
-                      <h2>Customer</h2>
-                      <p><Users size={18} /> {customerName(selectedJob.customer)}</p>
-                      <p><Phone size={18} /> {selectedJob.customer.phone}</p>
-                      {selectedJob.customer.email && <p><Mail size={18} /> {selectedJob.customer.email}</p>}
-                      <button className="link-button" type="button" onClick={() => openCustomerProfile(selectedJob.customer)}>Customer profile</button>
-                    </div>
-                    <div>
-                      <h2>Schedule</h2>
-                      <p><CalendarDays size={18} /> {selectedJob.scheduledStart ? new Date(selectedJob.scheduledStart).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Unscheduled"}</p>
-                      {selectedJob.scheduledEnd && <p><Clock3 size={18} /> Ends {new Date(selectedJob.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p>}
-                      <p><UserPlus size={18} /> {selectedJob.technician?.name ?? "Unassigned"}</p>
-                    </div>
-                    <div>
-                      <h2>Location</h2>
-                      <p><MapPin size={18} /> {addressLine(selectedJob.address ?? selectedJob.customer.addresses?.[0])}</p>
-                    </div>
-                    <div>
-                      <h2>Job Details</h2>
-                      <p><Wrench size={18} /> {selectedJob.jobType}</p>
-                      {selectedJob.leadSource && <p><Navigation size={18} /> {selectedJob.leadSource}</p>}
-                      {!!selectedJob.tags?.length && <div className="job-detail-tags">{selectedJob.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+                    <div className="job-detail-actions">
+                      <button className="outline-button" type="button" onClick={() => setActiveView("schedule")}><CalendarDays size={17} /> Add Appointment</button>
+                      <button className="outline-button" type="button" onClick={() => updateJobStatus(selectedJob, "DISPATCHED")}><Navigation size={17} /> On My Way</button>
+                      <button className="outline-button" type="button" onClick={() => updateJobStatus(selectedJob, "IN_PROGRESS")}><Clock3 size={17} /> Start</button>
+                      <button className="outline-button" type="button" onClick={() => updateJobStatus(selectedJob, "COMPLETED")}><CheckCheck size={17} /> Finish</button>
+                      <button className="primary" type="button" onClick={() => createInvoiceFromJob(selectedJob)}><ReceiptText size={17} /> Invoice</button>
+                      <button className="primary" type="button" onClick={() => openJobPayment(selectedJob)}><WalletCards size={17} /> Pay</button>
                     </div>
                   </section>
 
-                  <section className="panel">
-                    <div className="panel-header"><h2>Line Items</h2><ReceiptText size={18} /></div>
-                    <div className="profile-table">
-                      {(selectedJob.lineItems ?? []).map((item) => (
-                        <article key={item.id}>
-                          <strong>{item.name}</strong>
-                          <span>{item.category} / Qty {item.quantity} / {money.format(item.unitPrice / 100)}</span>
-                        </article>
-                      ))}
-                      {!(selectedJob.lineItems?.length) && <p className="empty">No line items on this job yet.</p>}
-                    </div>
-                  </section>
+                  <div className="job-detail-layout">
+                    <aside className="job-detail-side">
+                      <section className="panel job-detail-customer">
+                        <div className="panel-header">
+                          <h2><Users size={18} /> Customer</h2>
+                          <button className="outline-button" type="button" onClick={() => openCustomerProfile(selectedJob.customer)}>View details</button>
+                        </div>
+                        <div className="street-preview"><strong>Street view</strong><span>{selectedJob.address?.city || selectedJob.customer.addresses?.[0]?.city || "Service area"}</span></div>
+                        <h3>{customerName(selectedJob.customer)}</h3>
+                        <p><MapPin size={16} /> {addressLine(selectedJob.address ?? selectedJob.customer.addresses?.[0])}</p>
+                        <p><Phone size={16} /> {selectedJob.customer.phone}</p>
+                        {selectedJob.customer.email && <p><Mail size={16} /> {selectedJob.customer.email}</p>}
+                        <span className="notification-chip">Notifications on</span>
+                        <div className="payment-card-mini">
+                          <CreditCard size={17} />
+                          <span>No payment method</span>
+                          <strong>Add card</strong>
+                          <strong>Request card</strong>
+                        </div>
+                        <button className="customer-profile-link" type="button" onClick={() => openCustomerProfile(selectedJob.customer)}>Customer profile</button>
+                      </section>
 
-                  {selectedJob.internalNotes && (
-                    <section className="panel">
-                      <div className="panel-header"><h2>Private Notes</h2><StickyNote size={18} /></div>
-                      <p className="job-detail-note">{selectedJob.internalNotes}</p>
-                    </section>
-                  )}
+                      <section className="panel job-detail-meta">
+                        <div className="panel-header"><h2><Tag size={18} /> Job tags</h2></div>
+                        {!!selectedJob.tags?.length ? (
+                          <div className="job-detail-tags">{selectedJob.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+                        ) : <p className="empty">No tags added.</p>}
+                      </section>
+
+                      <section className="panel job-detail-meta">
+                        <div className="panel-header"><h2><Navigation size={18} /> Lead source</h2></div>
+                        <p>{selectedJob.leadSource || "Unknown"}</p>
+                      </section>
+                    </aside>
+
+                    <main className="job-detail-main">
+                      <section className="panel job-workflow-panel">
+                        <button type="button" onClick={() => setActiveView("schedule")}>
+                          <CalendarDays size={22} />
+                          <strong>Add Appointment</strong>
+                          <span>{selectedJob.scheduledStart ? new Date(selectedJob.scheduledStart).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "Unscheduled"}</span>
+                        </button>
+                        <button type="button" onClick={() => updateJobStatus(selectedJob, "DISPATCHED")}><Navigation size={22} /><strong>OMW</strong><span>Dispatch tech</span></button>
+                        <button type="button" onClick={() => updateJobStatus(selectedJob, "IN_PROGRESS")}><Clock3 size={22} /><strong>Start</strong><span>Begin work</span></button>
+                        <button type="button" onClick={() => updateJobStatus(selectedJob, "COMPLETED")}><CheckCheck size={22} /><strong>Finish</strong><span>Complete job</span></button>
+                        <button type="button" onClick={() => createInvoiceFromJob(selectedJob)}><ReceiptText size={22} /><strong>Invoice</strong><span>{selectedJobInvoice ? `#${selectedJobInvoice.invoiceNumber}` : "Create draft"}</span></button>
+                        <button type="button" onClick={() => openJobPayment(selectedJob)}><WalletCards size={22} /><strong>Pay</strong><span>Take payment</span></button>
+                      </section>
+
+                      <section className="panel">
+                        <div className="panel-header"><h2>Summary of Work</h2><button className="text-button" type="button">Add to invoice</button></div>
+                        <p className="job-detail-note">{selectedJob.description || "No visible job summary yet."}</p>
+                      </section>
+
+                      <section className="panel">
+                        <div className="panel-header"><h2>Appointments <span className="count-chip">{selectedJob.scheduledStart ? 1 : 0}</span></h2><button className="outline-button" type="button" onClick={() => setActiveView("schedule")}><Plus size={17} /> Appointment</button></div>
+                        <div className="appointment-table">
+                          <span>#</span><span>Date</span><span>Time</span><span>Arrival window</span><span>Employees</span>
+                          {selectedJob.scheduledStart ? (
+                            <>
+                              <strong>1</strong>
+                              <strong>{new Date(selectedJob.scheduledStart).toLocaleDateString([], { weekday: "short", month: "2-digit", day: "2-digit", year: "numeric" })}</strong>
+                              <strong>{new Date(selectedJob.scheduledStart).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}{selectedJob.scheduledEnd ? ` - ${new Date(selectedJob.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}</strong>
+                              <strong>1h</strong>
+                              <strong>{selectedJob.technician?.name ?? "Unassigned"}</strong>
+                            </>
+                          ) : <p className="empty appointment-empty">No appointments scheduled.</p>}
+                        </div>
+                      </section>
+
+                      <section className="panel">
+                        <div className="panel-header"><h2>Field Tech Status</h2><UserPlus size={18} /></div>
+                        <div className="field-tech-status">
+                          <strong>{selectedJob.technician?.name ?? "Unassigned"}</strong>
+                          <span>{selectedJob.technician ? statusLabel(selectedJob.status) : "Needs assignment"}</span>
+                          <span>Total labor cost</span>
+                          <strong>$0.00</strong>
+                        </div>
+                      </section>
+
+                      <section className="panel invoice-summary-card">
+                        <div className="panel-header">
+                          <h2>Invoice</h2>
+                          <div className="action-buttons">
+                            <button className="outline-button" type="button" onClick={() => createInvoiceFromJob(selectedJob)}>{selectedJobInvoice ? "Refresh invoice" : "Create invoice"}</button>
+                            <button className="primary" type="button" onClick={() => openJobPayment(selectedJob)}>Pay</button>
+                          </div>
+                        </div>
+                        <div className="invoice-lines">
+                          <span>Invoice number</span><strong>{selectedJobInvoice ? `#${selectedJobInvoice.invoiceNumber}` : "Not created yet"}</strong>
+                          <span>Status</span><strong>{selectedJobInvoice ? statusLabel(selectedJobInvoice.status) : "Draft needed"}</strong>
+                          <span>Subtotal</span><strong>{money.format(jobLineSubtotal(selectedJob) / 100)}</strong>
+                          <span>Tax</span><strong>{money.format(jobLineTax(selectedJob) / 100)}</strong>
+                          <span>Total</span><strong>{money.format((selectedJobInvoice?.total ?? jobLineSubtotal(selectedJob) + jobLineTax(selectedJob)) / 100)}</strong>
+                        </div>
+                        <p className="muted">Invoices are linked to the job, so payments and reporting stay tied back to the work order.</p>
+                      </section>
+
+                      <section className="panel">
+                        <div className="panel-header"><h2>Line Items</h2><ReceiptText size={18} /></div>
+                        <div className="profile-table">
+                          {(selectedJob.lineItems ?? []).map((item) => (
+                            <article key={item.id}>
+                              <strong>{item.name}</strong>
+                              <span>{item.category} / Qty {item.quantity} / {money.format(item.unitPrice / 100)}{item.category === "material" && item.taxable !== false ? " / taxable" : ""}</span>
+                            </article>
+                          ))}
+                          {!(selectedJob.lineItems?.length) && <p className="empty">No line items on this job yet.</p>}
+                        </div>
+                      </section>
+
+                      {selectedJob.internalNotes && (
+                        <section className="panel">
+                          <div className="panel-header"><h2>Private Notes</h2><StickyNote size={18} /></div>
+                          <p className="job-detail-note">{selectedJob.internalNotes}</p>
+                        </section>
+                      )}
+
+                      <section className="panel">
+                        <div className="panel-header"><h2>Activity Feed</h2><MoreHorizontal size={18} /></div>
+                        <div className="activity-feed">
+                          <p><Wrench size={17} /> Job #{selectedJob.jobNumber} created: total = {money.format(jobInvoiceTotal(selectedJob) / 100)}</p>
+                          {selectedJob.scheduledStart && <p><CalendarDays size={17} /> Job scheduled for {new Date(selectedJob.scheduledStart).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>}
+                          {selectedJob.technician && <p><UserPlus size={17} /> Dispatched to {selectedJob.technician.name}</p>}
+                          {selectedJobInvoice && <p><ReceiptText size={17} /> Invoice #{selectedJobInvoice.invoiceNumber} linked to job.</p>}
+                        </div>
+                      </section>
+                    </main>
+                  </div>
                 </div>
               ) : (
                 <>

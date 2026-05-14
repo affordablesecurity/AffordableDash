@@ -1181,6 +1181,208 @@ textarea {
   gap: 18px;
 }
 
+.job-detail-titlebar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 18px;
+}
+
+.job-detail-titlebar .breadcrumb {
+  color: #7783a4;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.job-detail-titlebar h1 {
+  margin: 8px 0 10px;
+  font-size: 34px;
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.job-detail-actions,
+.action-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.job-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.job-detail-side,
+.job-detail-main {
+  display: grid;
+  gap: 16px;
+}
+
+.job-detail-customer h3 {
+  margin: 14px 0 10px;
+  font-size: 18px;
+}
+
+.job-detail-customer p,
+.job-detail-meta p,
+.activity-feed p {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: #2b3142;
+}
+
+.street-preview {
+  min-height: 110px;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #5e7898, #9db5cf);
+  color: white;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  font-weight: 900;
+  overflow: hidden;
+}
+
+.notification-chip,
+.count-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  background: #d9f8d9;
+  color: #147d2a;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.payment-card-mini {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 10px;
+  align-items: center;
+  margin: 14px 0;
+  border-radius: 8px;
+  background: #dff0ff;
+  padding: 12px;
+  color: #23304a;
+}
+
+.payment-card-mini span {
+  font-weight: 800;
+}
+
+.payment-card-mini strong {
+  font-size: 13px;
+}
+
+.customer-profile-link {
+  border: 0;
+  background: transparent;
+  color: #006ecb;
+  font-weight: 900;
+  padding: 0;
+  cursor: pointer;
+}
+
+.job-workflow-panel {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.job-workflow-panel button {
+  border: 0;
+  border-radius: 10px;
+  background: #f8faff;
+  color: #006ecb;
+  padding: 14px 10px;
+  min-height: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.job-workflow-panel button:hover {
+  background: #eef5ff;
+}
+
+.job-workflow-panel span {
+  color: #69748f;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.appointment-table,
+.invoice-lines {
+  display: grid;
+  gap: 0;
+}
+
+.appointment-table {
+  grid-template-columns: 0.5fr 1.4fr 1.8fr 1.2fr 1.4fr;
+  align-items: center;
+}
+
+.appointment-table > span,
+.appointment-table > strong,
+.invoice-lines > span,
+.invoice-lines > strong {
+  border-top: 1px solid #e8ebf3;
+  padding: 14px 10px;
+}
+
+.appointment-table > span,
+.invoice-lines > span {
+  color: #69748f;
+  font-weight: 900;
+}
+
+.appointment-empty {
+  grid-column: 1 / -1;
+  padding: 18px 10px;
+}
+
+.field-tech-status {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 1fr 1fr auto;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid #e8ebf3;
+  padding-top: 14px;
+}
+
+.field-tech-status span {
+  color: #69748f;
+  font-weight: 800;
+}
+
+.invoice-lines {
+  grid-template-columns: minmax(150px, 1fr) 1fr;
+}
+
+.invoice-summary-card .muted {
+  margin: 12px 0 0;
+}
+
+.activity-feed {
+  display: grid;
+  gap: 8px;
+}
+
 .job-detail-hero {
   display: flex;
   align-items: center;
@@ -3605,6 +3807,19 @@ textarea {
     grid-template-columns: 1fr 1fr;
   }
 
+  .job-detail-titlebar,
+  .job-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .job-detail-actions {
+    justify-content: flex-start;
+  }
+
+  .job-workflow-panel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .job-summary-panel button {
     border-right: 0;
     border-bottom: 1px solid #eef1f6;
@@ -3686,6 +3901,9 @@ textarea {
 
   .jobs-tools,
   .job-detail-grid,
+  .job-workflow-panel,
+  .appointment-table,
+  .field-tech-status,
   .new-client-grid,
   .schedule-form-grid,
   .schedule-row,
@@ -3702,6 +3920,15 @@ textarea {
   .color-input-row,
   .category-grid {
     grid-template-columns: 1fr;
+  }
+
+  .appointment-table > span {
+    display: none;
+  }
+
+  .appointment-table > strong {
+    border-top: 0;
+    padding: 8px 0;
   }
 
   .anytime-row,

@@ -119,7 +119,13 @@ jobsRouter.patch("/:id", asyncHandler(async (req, res) => {
       scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
       scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined
     },
-    include: { customer: true, address: true, technician: true }
+    include: {
+      customer: { include: { addresses: true } },
+      address: true,
+      technician: true,
+      lineItems: true,
+      invoices: { include: { payments: true } }
+    }
   });
   res.json({ job });
 }));
