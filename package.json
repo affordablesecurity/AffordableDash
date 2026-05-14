@@ -12,7 +12,7 @@
     "db:seed": "npm run db:seed --workspace server",
     "start": "npm run start --workspace server",
     "render:start": "npm run db:deploy --workspace server && npm run start --workspace server",
-    "render:build": "npm install && npm run generate --workspace server && npm run build",
+    "render:build": "npm install --include=dev && npm run generate --workspace server && npm run build",
     "render:release": "npm run db:deploy --workspace server"
   },
   "workspaces": [
