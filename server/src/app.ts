@@ -2,6 +2,8 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { env } from "./config/env.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { requireAuth } from "./middleware/auth.js";
@@ -20,6 +22,8 @@ import { techniciansRouter } from "./modules/technicians/technicians.routes.js";
 import { webhooksRouter } from "./modules/webhooks/webhooks.routes.js";
 
 export const app = express();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const clientDistPath = path.resolve(__dirname, "../../../client/dist");
 
 app.disable("x-powered-by");
 app.use(helmet());
@@ -43,6 +47,12 @@ app.use("/api/integrations", requireAuth, integrationsRouter);
 app.use("/api/settings", requireAuth, settingsRouter);
 app.use("/api/webhooks", webhooksRouter);
 app.use("/location-api/v1", publicApiRouter);
+
+app.use(express.static(clientDistPath));
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api") || req.path.startsWith("/location-api")) return next();
+  res.sendFile(path.join(clientDistPath, "index.html"));
+});
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Not found" });
