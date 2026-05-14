@@ -1,0 +1,430 @@
+:root {
+  color: #172033;
+  background: #f4f6f9;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.login-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #1f3a5f, #28756f 55%, #e0a13b);
+  padding: 24px;
+}
+
+.login-panel {
+  width: min(440px, 100%);
+  display: grid;
+  gap: 16px;
+  background: #ffffff;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+  padding: 28px;
+  box-shadow: 0 22px 70px rgba(23, 32, 51, 0.22);
+}
+
+.login-panel h1,
+.topbar h1 {
+  margin: 0;
+  font-size: 30px;
+}
+
+.login-panel p,
+.topbar p {
+  margin: 0;
+  color: #647083;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  color: #465367;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid #ccd5e2;
+  border-radius: 6px;
+  padding: 11px 12px;
+  background: #ffffff;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+}
+
+.sidebar {
+  background: #172033;
+  color: #ffffff;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.brand,
+.sidebar a,
+.ghost,
+.primary,
+.panel-header,
+.stat-card,
+.job-row {
+  display: flex;
+  align-items: center;
+}
+
+.brand {
+  gap: 12px;
+}
+
+.brand span {
+  display: block;
+  color: #aab5c4;
+  font-size: 13px;
+}
+
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: #e0a13b;
+  color: #172033;
+}
+
+.sidebar nav {
+  display: grid;
+  gap: 8px;
+}
+
+.sidebar a,
+.sidebar nav button,
+.ghost {
+  gap: 10px;
+  color: #d9e1ed;
+  border-radius: 6px;
+  padding: 11px 12px;
+  text-decoration: none;
+}
+
+.sidebar nav button {
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.sidebar a.active,
+.sidebar nav button.active {
+  background: #24314a;
+  color: #ffffff;
+}
+
+.ghost {
+  margin-top: auto;
+  border: 0;
+  background: transparent;
+}
+
+.workspace {
+  padding: 28px;
+  display: grid;
+  align-content: start;
+  gap: 22px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-actions select {
+  width: min(220px, 42vw);
+}
+
+.primary,
+.login-panel button {
+  gap: 9px;
+  align-self: center;
+  border: 0;
+  border-radius: 6px;
+  background: #28756f;
+  color: #ffffff;
+  padding: 11px 14px;
+  font-weight: 800;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+  background: #f4f6f9;
+}
+
+.segmented button {
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: transparent;
+  color: #465367;
+  font-weight: 800;
+}
+
+.segmented button.selected {
+  background: #ffffff;
+  color: #172033;
+  box-shadow: 0 1px 4px rgba(23, 32, 51, 0.12);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.stat-card,
+.panel {
+  background: #ffffff;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+}
+
+.stat-card {
+  justify-content: space-between;
+  padding: 18px;
+}
+
+.stat-card span,
+.compact-list span,
+.job-row p {
+  color: #647083;
+}
+
+.stat-card strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 25px;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 14px;
+}
+
+.panel {
+  min-width: 0;
+  padding: 18px;
+}
+
+.panel.wide {
+  grid-row: span 2;
+}
+
+.panel-header {
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.panel h2,
+.job-row h3 {
+  margin: 0;
+}
+
+.icon-button {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #ccd5e2;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.job-list,
+.compact-list {
+  display: grid;
+  gap: 10px;
+}
+
+.job-row {
+  min-height: 72px;
+  gap: 14px;
+  border: 1px solid #e7ebf1;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.job-time {
+  width: 92px;
+}
+
+.job-time span {
+  display: block;
+  color: #647083;
+  font-size: 13px;
+}
+
+.job-row > div:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+}
+
+.job-row p {
+  margin: 4px 0 0;
+}
+
+.status-pill {
+  border-radius: 999px;
+  background: #eef7f6;
+  color: #28756f;
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.compact-list article {
+  display: grid;
+  gap: 3px;
+  border-bottom: 1px solid #edf0f5;
+  padding: 0 0 10px;
+}
+
+.record-form {
+  display: grid;
+  gap: 10px;
+}
+
+.table-list {
+  display: grid;
+  gap: 10px;
+}
+
+.table-list article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e7ebf1;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.table-list span {
+  display: block;
+  color: #647083;
+  margin-top: 3px;
+}
+
+.api-key-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.token-box {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #d0e8e4;
+  background: #eef7f6;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.token-box code {
+  overflow-wrap: anywhere;
+  color: #1f3a5f;
+}
+
+.text-button {
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  color: #9b342f;
+  font-weight: 800;
+  padding: 0;
+}
+
+.empty,
+.error {
+  color: #9b342f;
+}
+
+.error {
+  background: #fff0ef;
+  border: 1px solid #f2c1bd;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+  }
+
+  .stats-grid,
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    flex-direction: column;
+  }
+
+  .topbar-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .topbar-actions select {
+    width: 100%;
+  }
+
+  .api-key-form {
+    grid-template-columns: 1fr;
+  }
+}

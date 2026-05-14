@@ -1,0 +1,304 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  DISPATCHER
+  TECHNICIAN
+}
+
+enum JobStatus {
+  LEAD
+  SCHEDULED
+  DISPATCHED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  VOID
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model User {
+  id           String           @id @default(cuid())
+  email        String           @unique
+  username     String           @unique
+  name         String
+  passwordHash String
+  role         UserRole         @default(DISPATCHER)
+  active       Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  memberships      UserMembership[]
+  locationApiKeys LocationApiKey[]
+}
+
+model Organization {
+  id          String           @id @default(cuid())
+  name        String
+  slug        String           @unique
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  locations   Location[]
+  memberships UserMembership[]
+  integrations IntegrationCredential[]
+}
+
+model Location {
+  id             String           @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  phone          String?
+  street1        String?
+  street2        String?
+  city           String?
+  state          String?
+  postalCode     String?
+  timezone       String           @default("America/Phoenix")
+  active         Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships    UserMembership[]
+  customers      Customer[]
+  technicians    Technician[]
+  jobs           Job[]
+  invoices       Invoice[]
+  messages       Message[]
+  apiKeys        LocationApiKey[]
+
+  @@unique([organizationId, slug])
+}
+
+model LocationApiKey {
+  id          String    @id @default(cuid())
+  locationId  String
+  name        String
+  tokenPrefix String    @unique
+  tokenHash   String    @unique
+  scopes      String[]  @default(["customers:read", "jobs:read"])
+  active      Boolean   @default(true)
+  createdById String?
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+  location    Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+}
+
+model UserMembership {
+  id             String       @id @default(cuid())
+  userId         String
+  organizationId String
+  locationId     String?
+  role           UserRole     @default(DISPATCHER)
+  createdAt      DateTime     @default(now())
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location       Location?    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId, locationId])
+}
+
+model Customer {
+  id                 String    @id @default(cuid())
+  locationId         String
+  firstName          String
+  lastName           String
+  companyName        String?
+  email              String?
+  phone              String
+  alternatePhone     String?
+  source             String?
+  housecallProId     String?   @unique
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  addresses          Address[]
+  jobs               Job[]
+  invoices           Invoice[]
+  messages           Message[]
+  location           Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+}
+
+model Address {
+  id          String   @id @default(cuid())
+  customerId  String
+  label       String   @default("Service")
+  street1     String
+  street2     String?
+  city        String
+  state       String
+  postalCode  String
+  latitude    Decimal?
+  longitude   Decimal?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  jobs        Job[]
+}
+
+model Technician {
+  id             String   @id @default(cuid())
+  locationId     String
+  name           String
+  email          String?
+  phone          String
+  color          String   @default("#2563eb")
+  active         Boolean  @default(true)
+  housecallProId String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  jobs           Job[]
+  location       Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+}
+
+model Job {
+  id             String        @id @default(cuid())
+  jobNumber      Int           @unique @default(autoincrement())
+  locationId     String
+  customerId     String
+  addressId      String?
+  technicianId   String?
+  title          String
+  jobType        String
+  status         JobStatus     @default(LEAD)
+  priority       String        @default("normal")
+  scheduledStart DateTime?
+  scheduledEnd   DateTime?
+  completedAt    DateTime?
+  description    String?
+  internalNotes  String?
+  housecallProId String?       @unique
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  customer       Customer      @relation(fields: [customerId], references: [id])
+  address        Address?      @relation(fields: [addressId], references: [id])
+  technician     Technician?   @relation(fields: [technicianId], references: [id])
+  location       Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  notes          JobNote[]
+  lineItems      JobLineItem[]
+  invoices       Invoice[]
+}
+
+model JobNote {
+  id        String   @id @default(cuid())
+  jobId     String
+  author    String
+  content   String
+  createdAt DateTime @default(now())
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model JobLineItem {
+  id          String   @id @default(cuid())
+  jobId       String
+  name        String
+  description String?
+  quantity    Decimal  @default(1)
+  unitPrice   Int      @default(0)
+  unitCost    Int      @default(0)
+  taxable     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model Invoice {
+  id                    String        @id @default(cuid())
+  invoiceNumber         Int           @unique @default(autoincrement())
+  locationId            String
+  customerId            String
+  jobId                 String?
+  status                InvoiceStatus @default(DRAFT)
+  subtotal              Int           @default(0)
+  tax                   Int           @default(0)
+  total                 Int           @default(0)
+  dueAt                 DateTime?
+  stripePaymentIntentId String?
+  housecallProId        String?       @unique
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  customer              Customer      @relation(fields: [customerId], references: [id])
+  job                   Job?          @relation(fields: [jobId], references: [id])
+  location              Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  items                 InvoiceItem[]
+  payments              Payment[]
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  name        String
+  description String?
+  quantity    Decimal  @default(1)
+  unitPrice   Int      @default(0)
+  taxable     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  invoiceId       String
+  amount          Int
+  status          PaymentStatus @default(PENDING)
+  provider        String        @default("stripe")
+  providerRef     String?
+  paidAt          DateTime?
+  createdAt       DateTime      @default(now())
+  invoice         Invoice       @relation(fields: [invoiceId], references: [id])
+}
+
+model Message {
+  id          String           @id @default(cuid())
+  locationId  String?
+  customerId  String?
+  direction   MessageDirection
+  fromNumber  String
+  toNumber    String
+  body        String
+  provider    String           @default("voipms")
+  providerRef String?
+  createdAt   DateTime         @default(now())
+  customer    Customer?        @relation(fields: [customerId], references: [id])
+  location    Location?        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+}
+
+model IntegrationCredential {
+  id             String        @id @default(cuid())
+  organizationId String?
+  provider       String
+  enabled        Boolean       @default(false)
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, provider])
+}
