@@ -262,13 +262,17 @@ select:focus {
   top: 44px;
   left: 0;
   width: 210px;
-  display: grid;
+  display: none;
   gap: 2px;
   padding: 12px;
   background: #ffffff;
   border: 1px solid #e6e9f1;
   border-radius: 10px;
   box-shadow: 0 18px 45px rgba(35, 40, 58, 0.12);
+}
+
+.quick-add-menu.open {
+  display: grid;
 }
 
 .quick-add-menu button {
@@ -611,6 +615,208 @@ select:focus {
   margin-bottom: 12px;
 }
 
+.schedule-shell {
+  background: #ffffff;
+  border: 1px solid #e6e9f1;
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.schedule-toolbar {
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid #e6e9f1;
+}
+
+.schedule-button {
+  width: fit-content;
+  border: 1px solid #d9deeb;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #8290b3;
+  padding: 10px 14px;
+}
+
+.schedule-range {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+}
+
+.calendar-tabs {
+  justify-self: end;
+  display: flex;
+  border: 1px solid #d9deeb;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.calendar-tabs button {
+  border: 0;
+  border-right: 1px solid #d9deeb;
+  background: #ffffff;
+  color: #272d3d;
+  padding: 10px 13px;
+}
+
+.calendar-tabs button:last-child {
+  border-right: 0;
+}
+
+.calendar-tabs button.active {
+  background: #3f3df2;
+  color: #ffffff;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: 66px repeat(7, minmax(132px, 1fr));
+  overflow-x: auto;
+}
+
+.calendar-corner,
+.calendar-day-head,
+.calendar-time,
+.calendar-cell {
+  border-right: 1px solid #e0e4ed;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.calendar-corner {
+  min-height: 68px;
+  background: #fbfcfe;
+}
+
+.calendar-day-head {
+  min-height: 68px;
+  padding: 12px;
+}
+
+.calendar-day-head span {
+  display: block;
+  color: #8290b3;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.calendar-day-head strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 22px;
+}
+
+.calendar-time {
+  min-height: 72px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  padding: 10px 10px 0 0;
+  background: #fbfcfe;
+  color: #8290b3;
+  font-weight: 800;
+}
+
+.calendar-time.all-day {
+  min-height: 50px;
+  align-items: center;
+}
+
+.calendar-cell {
+  min-height: 72px;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  border-top: 0;
+  border-left: 0;
+  background: #ffffff;
+  padding: 4px;
+  text-align: left;
+}
+
+.calendar-cell:hover {
+  background: #fafbff;
+}
+
+.all-day-cell {
+  min-height: 50px;
+}
+
+.calendar-job {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #2725bf;
+  border-radius: 7px;
+  background: #d8d7ea;
+  color: #101421;
+  padding: 7px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.calendar-job em,
+.calendar-job small {
+  font-style: normal;
+  color: #272d3d;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(16, 20, 33, 0.28);
+  padding: 20px;
+}
+
+.create-modal {
+  width: min(390px, 100%);
+  display: grid;
+  gap: 12px;
+  background: #ffffff;
+  border: 1px solid #e6e9f1;
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: 0 24px 70px rgba(28, 33, 47, 0.2);
+}
+
+.create-modal h2,
+.create-modal p {
+  margin: 0;
+}
+
+.create-modal p {
+  color: #7e8aac;
+}
+
+.create-options {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.create-options button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e1e5ef;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #101421;
+  padding: 12px;
+  text-align: left;
+}
+
+.create-options button:hover {
+  border-color: #3f3df2;
+  background: #f0efff;
+}
+
 .token-box {
   display: grid;
   gap: 6px;
@@ -646,6 +852,19 @@ select:focus {
 
   .quick-add-menu {
     display: none;
+  }
+
+  .schedule-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .schedule-range,
+  .calendar-tabs {
+    justify-self: stretch;
+  }
+
+  .calendar-tabs {
+    overflow-x: auto;
   }
 }
 

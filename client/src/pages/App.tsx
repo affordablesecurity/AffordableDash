@@ -5,6 +5,8 @@ import {
   CalendarDays,
   CheckCheck,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   Clock3,
   CreditCard,
@@ -30,7 +32,7 @@ import {
   WalletCards,
   Wrench
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Fragment, FormEvent, useEffect, useMemo, useState } from "react";
 import { api, clearToken, getToken, login, setToken, signup } from "../api/client";
 import { StatCard } from "../components/StatCard";
 
@@ -99,9 +101,46 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "customers" | "jobs" | "invoices" | "api";
+type View = "dispatch" | "schedule" | "customers" | "jobs" | "invoices" | "api";
+type CalendarMode = "employees" | "day" | "week" | "month";
+type SlotPrompt = { date: Date; hour: number } | null;
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const dayLabels = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+const calendarHours = Array.from({ length: 24 }, (_item, hour) => hour);
+
+function startOfWeek(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  next.setDate(next.getDate() - next.getDay());
+  return next;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function formatWeekRange(start: Date) {
+  const end = addDays(start, 6);
+  return `${start.toLocaleDateString([], { month: "short", day: "numeric" })} - ${end.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+}
+
+function formatHour(hour: number) {
+  if (hour === 0) return "12 AM";
+  if (hour === 12) return "12 PM";
+  return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
+}
+
+function toDateTimeLocal(date: Date) {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function sameCalendarDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
 
 export function App() {
   const [token, updateToken] = useState(getToken());
@@ -116,6 +155,10 @@ export function App() {
   const [locations, setLocations] = useState<LocationAccess[]>([]);
   const [activeLocationId, setActiveLocationId] = useState("");
   const [activeView, setActiveView] = useState<View>("dispatch");
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [calendarMode, setCalendarMode] = useState<CalendarMode>("week");
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const [slotPrompt, setSlotPrompt] = useState<SlotPrompt>(null);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [apiKeyName, setApiKeyName] = useState("Partner API");
   const [newApiToken, setNewApiToken] = useState("");
@@ -153,6 +196,7 @@ export function App() {
   const [error, setError] = useState("");
 
   const scheduledJobs = useMemo(() => jobs.filter((job) => job.status !== "COMPLETED" && job.status !== "CANCELED"), [jobs]);
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
 
   async function loadDashboard() {
     const [summaryResult, customersResult, jobsResult, invoicesResult] = await Promise.all([
@@ -297,6 +341,20 @@ export function App() {
     await loadDashboard();
   }
 
+  function openJobFromSlot(slot: { date: Date; hour: number }) {
+    const start = new Date(slot.date);
+    start.setHours(slot.hour, 0, 0, 0);
+    const end = new Date(start);
+    end.setHours(start.getHours() + 1);
+    setJobForm((current) => ({
+      ...current,
+      scheduledStart: toDateTimeLocal(start),
+      scheduledEnd: toDateTimeLocal(end)
+    }));
+    setSlotPrompt(null);
+    setActiveView("jobs");
+  }
+
   if (!token) {
     return (
       <main className="login-screen">
@@ -361,7 +419,7 @@ export function App() {
         <nav>
           <span className="nav-section">Main Menu</span>
           <button className={activeView === "dispatch" ? "active" : ""} onClick={() => setActiveView("dispatch")}><Home size={18} /> Dashboard</button>
-          <button onClick={() => setActiveView("jobs")}><CalendarDays size={18} /> Schedule</button>
+          <button className={activeView === "schedule" ? "active" : ""} onClick={() => setActiveView("schedule")}><CalendarDays size={18} /> Schedule</button>
           <button><Map size={18} /> Map</button>
 
           <span className="nav-section">Communication</span>
@@ -400,15 +458,15 @@ export function App() {
             <input aria-label="Search" placeholder="Type to search" />
           </div>
           <div className="add-menu-wrap">
-            <button className="primary add-button" onClick={() => setActiveView("jobs")}><Plus size={18} /> Add New</button>
-            <div className="quick-add-menu">
-              <button><MessageSquareText size={16} /> Message</button>
-              <button onClick={() => setActiveView("customers")}><Users size={16} /> Client or Lead</button>
+            <button className="primary add-button" onClick={() => setAddMenuOpen((open) => !open)}><Plus size={18} /> Add New</button>
+            <div className={`quick-add-menu ${addMenuOpen ? "open" : ""}`}>
+              <button onClick={() => setAddMenuOpen(false)}><MessageSquareText size={16} /> Message</button>
+              <button onClick={() => { setActiveView("customers"); setAddMenuOpen(false); }}><Users size={16} /> Client or Lead</button>
               <button><UserPlus size={16} /> Employee</button>
-              <button onClick={() => setActiveView("jobs")}><Wrench size={16} /> Job</button>
-              <button onClick={() => setActiveView("invoices")}><ReceiptText size={16} /> Invoice</button>
+              <button onClick={() => { setActiveView("jobs"); setAddMenuOpen(false); }}><Wrench size={16} /> Job</button>
+              <button onClick={() => { setActiveView("invoices"); setAddMenuOpen(false); }}><ReceiptText size={16} /> Invoice</button>
               <button><FileText size={16} /> Estimate</button>
-              <button><CalendarDays size={16} /> Event</button>
+              <button onClick={() => { setActiveView("schedule"); setAddMenuOpen(false); }}><CalendarDays size={16} /> Event</button>
             </div>
           </div>
           <div className="topbar-spacer" />
@@ -432,7 +490,7 @@ export function App() {
 
         {error && <div className="error">{error}</div>}
 
-        <div className="stats-grid">
+        {activeView !== "schedule" && <div className="stats-grid">
           <StatCard label="Sales" value={money.format((summary?.revenueCents ?? 0) / 100)} icon={CircleDollarSign} />
           <StatCard label="Collected Payments" value={money.format((summary?.revenueCents ?? 0) / 100)} icon={BadgeDollarSign} />
           <StatCard label="Jobs Completed" value="0" icon={CheckCheck} />
@@ -441,7 +499,7 @@ export function App() {
           <StatCard label="New Clients" value={String(summary?.customers ?? 0)} icon={Users} />
           <StatCard label="New Leads" value="0" icon={UserPlus} />
           <StatCard label="Booking Rate" value="0.00%" icon={Percent} />
-        </div>
+        </div>}
 
         {activeView === "dispatch" && <div className="content-grid">
           <section className="panel wide">
@@ -491,6 +549,73 @@ export function App() {
             </div>
           </section>
         </div>}
+
+        {activeView === "schedule" && (
+          <section className="schedule-shell">
+            <div className="schedule-toolbar">
+              <button className="schedule-button" onClick={() => setWeekStart(startOfWeek(new Date()))}>Today</button>
+              <div className="schedule-range">
+                <button className="icon-button" onClick={() => setWeekStart((current) => addDays(current, -7))} aria-label="Previous week"><ChevronLeft size={18} /></button>
+                <strong>{formatWeekRange(weekStart)}</strong>
+                <button className="icon-button" onClick={() => setWeekStart((current) => addDays(current, 7))} aria-label="Next week"><ChevronRight size={18} /></button>
+              </div>
+              <div className="calendar-tabs">
+                {(["employees", "day", "week", "month"] as CalendarMode[]).map((mode) => (
+                  <button key={mode} className={calendarMode === mode ? "active" : ""} onClick={() => setCalendarMode(mode)}>
+                    {mode === "employees" ? "Employees" : mode[0].toUpperCase() + mode.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="calendar-grid">
+              <div className="calendar-corner" />
+              {weekDays.map((day) => (
+                <div className="calendar-day-head" key={day.toISOString()}>
+                  <span>{dayLabels[day.getDay()]}</span>
+                  <strong>{day.getDate()}</strong>
+                </div>
+              ))}
+              <div className="calendar-time all-day">All Day</div>
+              {weekDays.map((day) => <button className="calendar-cell all-day-cell" key={`all-${day.toISOString()}`} onClick={() => setSlotPrompt({ date: day, hour: 9 })} />)}
+              {calendarHours.map((hour) => (
+                <Fragment key={`row-${hour}`}>
+                  <div className="calendar-time" key={`label-${hour}`}>{formatHour(hour)}</div>
+                  {weekDays.map((day) => {
+                    const slotJobs = scheduledJobs.filter((job) => {
+                      if (!job.scheduledStart) return false;
+                      const start = new Date(job.scheduledStart);
+                      return sameCalendarDay(start, day) && start.getHours() === hour;
+                    });
+                    return (
+                      <button className="calendar-cell" key={`${day.toISOString()}-${hour}`} onClick={() => setSlotPrompt({ date: day, hour })}>
+                        {slotJobs.map((job) => (
+                          <span className="calendar-job" key={job.id}>
+                            <strong>{job.customer.firstName} {job.customer.lastName}</strong>
+                            <em>{job.title}</em>
+                            <small>#{job.jobNumber}</small>
+                          </span>
+                        ))}
+                      </button>
+                    );
+                  })}
+                </Fragment>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {slotPrompt && (
+          <div className="modal-backdrop" onClick={() => setSlotPrompt(null)}>
+            <div className="create-modal" onClick={(event) => event.stopPropagation()}>
+              <h2>What would you like to create?</h2>
+              <p>{slotPrompt.date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} at {formatHour(slotPrompt.hour)}</p>
+              <div className="create-options">
+                <button onClick={() => openJobFromSlot(slotPrompt)}><Wrench size={18} /> Job</button>
+                <button onClick={() => setSlotPrompt(null)}><CalendarDays size={18} /> Event</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {activeView === "customers" && (
           <div className="content-grid">
