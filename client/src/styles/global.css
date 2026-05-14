@@ -1534,6 +1534,12 @@ textarea {
   line-height: 1.4;
 }
 
+.employee-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .employee-modal {
   width: min(680px, 96vw);
   max-height: 90vh;
@@ -1546,6 +1552,12 @@ textarea {
 
 .employee-modal h2 {
   margin: 0;
+}
+
+.modal-subhead {
+  margin: 10px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid #eef1f6;
 }
 
 .employee-form-grid {

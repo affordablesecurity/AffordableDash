@@ -528,7 +528,8 @@ export function App() {
   const [jobSearch, setJobSearch] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState("all");
   const [employeeSearch, setEmployeeSearch] = useState("");
-  const [employeeModal, setEmployeeModal] = useState<"employee" | "subcontractor" | null>(null);
+  const [employeeModal, setEmployeeModal] = useState<"employee" | "subcontractor" | "owner" | null>(null);
+  const [employeeEditingId, setEmployeeEditingId] = useState("");
   const [employeeForm, setEmployeeForm] = useState({
     name: "",
     email: "",
@@ -539,7 +540,16 @@ export function App() {
     role: "OUTSIDE_FIELD_TECH" as "OWNER" | "ADMIN" | "INSIDE_SALES" | "OUTSIDE_FIELD_TECH",
     fieldTech: true,
     color: "#2563eb",
-    active: true
+    active: true,
+    locationName: "",
+    locationSlug: "",
+    locationPhone: "",
+    locationStreet1: "",
+    locationStreet2: "",
+    locationCity: "",
+    locationState: "CA",
+    locationPostalCode: "",
+    locationTimezone: "America/Phoenix"
   });
   const [createClientInline, setCreateClientInline] = useState(false);
   const [jobClientSearch, setJobClientSearch] = useState("");
@@ -865,31 +875,104 @@ export function App() {
     setNewApiToken(result.token);
   }
 
-  function openEmployeeModal(type: "employee" | "subcontractor") {
+  function openEmployeeModal(type: "employee" | "subcontractor" | "owner") {
+    const isOwner = type === "owner";
     setEmployeeForm({
       name: "",
       email: "",
       username: "",
       password: "",
       phone: "",
-      employmentType: type,
-      role: type === "subcontractor" ? "OUTSIDE_FIELD_TECH" : "INSIDE_SALES",
+      employmentType: type === "subcontractor" ? "subcontractor" : "employee",
+      role: isOwner ? "OWNER" : type === "subcontractor" ? "OUTSIDE_FIELD_TECH" : "INSIDE_SALES",
       fieldTech: type === "subcontractor",
       color: "#2563eb",
-      active: true
+      active: true,
+      locationName: "",
+      locationSlug: "",
+      locationPhone: "",
+      locationStreet1: "",
+      locationStreet2: "",
+      locationCity: "",
+      locationState: "CA",
+      locationPostalCode: "",
+      locationTimezone: "America/Phoenix"
     });
+    setEmployeeEditingId("");
     setEmployeeModal(type);
   }
 
-  async function createEmployee(event: FormEvent) {
+  function editEmployee(employee: Technician) {
+    setEmployeeForm({
+      name: employee.name,
+      email: employee.email ?? "",
+      username: "",
+      password: "",
+      phone: employee.phone,
+      employmentType: employee.employmentType,
+      role: employee.role,
+      fieldTech: employee.fieldTech,
+      color: employee.color,
+      active: employee.active,
+      locationName: "",
+      locationSlug: "",
+      locationPhone: "",
+      locationStreet1: "",
+      locationStreet2: "",
+      locationCity: "",
+      locationState: "CA",
+      locationPostalCode: "",
+      locationTimezone: "America/Phoenix"
+    });
+    setEmployeeEditingId(employee.id);
+    setEmployeeModal(employee.employmentType);
+  }
+
+  async function saveEmployee(event: FormEvent) {
     event.preventDefault();
     setError("");
-    const result = await api<{ technician: Technician }>("/api/technicians", {
-      method: "POST",
-      body: JSON.stringify(employeeForm)
-    });
-    setTechnicians((current) => [...current, result.technician].sort((a, b) => a.name.localeCompare(b.name)));
+    const payload = {
+      name: employeeForm.name,
+      email: employeeForm.email,
+      username: employeeForm.username || undefined,
+      password: employeeForm.password || undefined,
+      phone: employeeForm.phone,
+      employmentType: employeeForm.employmentType,
+      role: employeeForm.role,
+      fieldTech: employeeForm.fieldTech,
+      color: employeeForm.color,
+      active: employeeForm.active,
+      newLocation: employeeModal === "owner" && !employeeEditingId ? {
+        name: employeeForm.locationName,
+        slug: employeeForm.locationSlug || undefined,
+        phone: employeeForm.locationPhone || undefined,
+        street1: employeeForm.locationStreet1 || undefined,
+        street2: employeeForm.locationStreet2 || undefined,
+        city: employeeForm.locationCity || undefined,
+        state: employeeForm.locationState || undefined,
+        postalCode: employeeForm.locationPostalCode || undefined,
+        timezone: employeeForm.locationTimezone
+      } : undefined
+    };
+    if (employeeEditingId) {
+      const result = await api<{ technician: Technician }>(`/api/technicians/${employeeEditingId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      setTechnicians((current) => current.map((item) => item.id === employeeEditingId ? result.technician : item).sort((a, b) => a.name.localeCompare(b.name)));
+    } else {
+      const result = await api<{ technician: Technician; location?: LocationAccess["location"] }>("/api/technicians", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      if (result.location) {
+        await loadDashboard();
+      } else {
+        setTechnicians((current) => [...current, result.technician].sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    }
     setEmployeeModal(null);
+    setEmployeeEditingId("");
   }
 
   async function updateEmployeeAccess(employee: Technician, active: boolean) {
@@ -2163,6 +2246,7 @@ export function App() {
               <div className="breadcrumb"><UserPlus size={17} /> Employees</div>
               <div className="action-buttons">
                 <button className="outline-button" type="button" onClick={() => openEmployeeModal("subcontractor")}><Plus size={17} /> Create Subcontractor</button>
+                <button className="outline-button" type="button" onClick={() => openEmployeeModal("owner")}><Plus size={17} /> Create Owner + Location</button>
                 <button className="primary" type="button" onClick={() => openEmployeeModal("employee")}><Plus size={17} /> Create Employee</button>
               </div>
             </div>
@@ -2202,9 +2286,12 @@ export function App() {
                     <span>{employee.fieldTech ? "Yes" : "No"}</span>
                     <span className={`payment-pill ${employee.active ? "paid" : "unpaid"}`}>{employee.active ? "Active" : "Inactive"}</span>
                     <small>{employee.userId ? (employee.permissions.includes("*") ? "Login + full access" : `Login + ${employee.permissions.join(", ")}`) : "Roster only"}</small>
-                    <button className="text-button" onClick={() => updateEmployeeAccess(employee, !employee.active)}>
-                      {employee.active ? "Revoke" : "Restore"}
-                    </button>
+                    <div className="employee-actions">
+                      <button className="text-button" onClick={() => editEmployee(employee)}>Edit</button>
+                      <button className="text-button" onClick={() => updateEmployeeAccess(employee, !employee.active)}>
+                        {employee.active ? "Revoke" : "Restore"}
+                      </button>
+                    </div>
                   </div>
                 ))}
                 {filteredEmployees.length === 0 && <p className="empty table-empty">No employees yet.</p>}
@@ -2215,20 +2302,20 @@ export function App() {
 
         {employeeModal && (
           <div className="modal-backdrop" onClick={() => setEmployeeModal(null)}>
-            <form className="employee-modal record-form" onSubmit={createEmployee} onClick={(event) => event.stopPropagation()}>
-              <h2>{employeeModal === "subcontractor" ? "Create Subcontractor" : "Create Employee"}</h2>
+            <form className="employee-modal record-form" onSubmit={saveEmployee} onClick={(event) => event.stopPropagation()}>
+              <h2>{employeeEditingId ? "Edit Profile" : employeeModal === "owner" ? "Create Owner + Location" : employeeModal === "subcontractor" ? "Create Subcontractor" : "Create Employee"}</h2>
               <div className="employee-form-grid">
                 <label>Name
                   <input value={employeeForm.name} onChange={(event) => setEmployeeForm({ ...employeeForm, name: event.target.value })} required />
                 </label>
                 <label>Email
-                  <input type="email" value={employeeForm.email} onChange={(event) => setEmployeeForm({ ...employeeForm, email: event.target.value })} />
+                  <input type="email" value={employeeForm.email} onChange={(event) => setEmployeeForm({ ...employeeForm, email: event.target.value })} required={employeeModal === "owner"} />
                 </label>
                 <label>Username
                   <input value={employeeForm.username} onChange={(event) => setEmployeeForm({ ...employeeForm, username: event.target.value })} placeholder="optional, defaults from email" />
                 </label>
                 <label>Temporary Password
-                  <input type="password" value={employeeForm.password} onChange={(event) => setEmployeeForm({ ...employeeForm, password: event.target.value })} placeholder="8+ chars to create login" />
+                  <input type="password" value={employeeForm.password} onChange={(event) => setEmployeeForm({ ...employeeForm, password: event.target.value })} placeholder={employeeEditingId ? "Leave blank to keep password" : "8+ chars to create login"} required={employeeModal === "owner" && !employeeEditingId} />
                 </label>
                 <label>Phone Number
                   <input value={employeeForm.phone} onChange={(event) => setEmployeeForm({ ...employeeForm, phone: event.target.value })} required />
@@ -2257,14 +2344,45 @@ export function App() {
                   <input type="color" value={employeeForm.color} onChange={(event) => setEmployeeForm({ ...employeeForm, color: event.target.value })} />
                 </label>
               </div>
+              {employeeModal === "owner" && !employeeEditingId && (
+                <>
+                  <h3 className="modal-subhead">New Location</h3>
+                  <div className="employee-form-grid">
+                    <label>Location Name
+                      <input value={employeeForm.locationName} onChange={(event) => setEmployeeForm({ ...employeeForm, locationName: event.target.value })} placeholder="San Diego" required />
+                    </label>
+                    <label>Location Slug
+                      <input value={employeeForm.locationSlug} onChange={(event) => setEmployeeForm({ ...employeeForm, locationSlug: event.target.value })} placeholder="san-diego" />
+                    </label>
+                    <label>Company Phone
+                      <input value={employeeForm.locationPhone} onChange={(event) => setEmployeeForm({ ...employeeForm, locationPhone: event.target.value })} />
+                    </label>
+                    <label>Street Address
+                      <input value={employeeForm.locationStreet1} onChange={(event) => setEmployeeForm({ ...employeeForm, locationStreet1: event.target.value })} />
+                    </label>
+                    <label>Unit / Suite
+                      <input value={employeeForm.locationStreet2} onChange={(event) => setEmployeeForm({ ...employeeForm, locationStreet2: event.target.value })} />
+                    </label>
+                    <label>City
+                      <input value={employeeForm.locationCity} onChange={(event) => setEmployeeForm({ ...employeeForm, locationCity: event.target.value })} />
+                    </label>
+                    <label>State
+                      <input value={employeeForm.locationState} onChange={(event) => setEmployeeForm({ ...employeeForm, locationState: event.target.value })} />
+                    </label>
+                    <label>ZIP
+                      <input value={employeeForm.locationPostalCode} onChange={(event) => setEmployeeForm({ ...employeeForm, locationPostalCode: event.target.value })} />
+                    </label>
+                  </div>
+                </>
+              )}
               <label className="check-row"><input type="checkbox" checked={employeeForm.fieldTech} onChange={(event) => setEmployeeForm({ ...employeeForm, fieldTech: event.target.checked })} /> Field tech</label>
               <label className="check-row"><input type="checkbox" checked={employeeForm.active} onChange={(event) => setEmployeeForm({ ...employeeForm, active: event.target.checked })} /> Active</label>
               <div className="settings-note">
-                Owners and admins can manage price book, reports, payments, employees, jobs, customers, and invoices. Outside field techs are limited to jobs, job invoices, and customer details tied to their work.
+                Owners and admins can manage price book, reports, payments, employees, jobs, customers, and invoices. Creating an owner with a new location also gives your current admin account access to that new location.
               </div>
               <div className="modal-actions">
                 <button className="outline-button" type="button" onClick={() => setEmployeeModal(null)}>Cancel</button>
-                <button className="primary" type="submit">Create</button>
+                <button className="primary" type="submit">{employeeEditingId ? "Save Changes" : "Create"}</button>
               </div>
             </form>
           </div>
