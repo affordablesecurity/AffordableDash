@@ -91,6 +91,8 @@ model Location {
   messages       Message[]
   apiKeys        LocationApiKey[]
   crmOptions     CrmOption[]
+  priceBookCategories PriceBookCategory[]
+  priceBookItems      PriceBookItem[]
 
   @@unique([organizationId, slug])
 }
@@ -221,6 +223,42 @@ model CrmOption {
 
   @@unique([locationId, kind, name])
   @@index([locationId, kind])
+}
+
+model PriceBookCategory {
+  id          String          @id @default(cuid())
+  locationId  String
+  name        String
+  description String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  location    Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  items       PriceBookItem[]
+
+  @@unique([locationId, name])
+}
+
+model PriceBookItem {
+  id              String             @id @default(cuid())
+  locationId      String
+  categoryId      String?
+  name            String
+  modelNumber     String?
+  itemType        String             @default("service")
+  description     String?
+  price           Int                @default(0)
+  cost            Int                @default(0)
+  taxable         Boolean            @default(true)
+  onlineBooking   Boolean            @default(false)
+  imageName       String?
+  active          Boolean            @default(true)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  location        Location           @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  category        PriceBookCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([locationId, itemType])
+  @@index([locationId, categoryId])
 }
 
 model JobNote {

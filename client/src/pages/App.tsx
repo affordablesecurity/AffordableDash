@@ -109,6 +109,27 @@ type JobTemplate = {
   lineItems: Omit<JobLineDraft, "id">[];
 };
 
+type PriceBookCategory = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+type PriceBookItem = {
+  id: string;
+  name: string;
+  modelNumber?: string;
+  itemType: "service" | "material";
+  description?: string;
+  price: number;
+  cost: number;
+  taxable: boolean;
+  onlineBooking: boolean;
+  imageName?: string;
+  categoryId?: string;
+  category?: PriceBookCategory;
+};
+
 type CustomerForm = {
   firstName: string;
   lastName: string;
@@ -167,7 +188,7 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "customers" | "jobs" | "invoices" | "api";
+type View = "dispatch" | "schedule" | "customers" | "jobs" | "invoices" | "pricebook" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
 type CrmOptions = { leadSources: string[]; tags: string[]; jobTypes: string[] };
@@ -322,6 +343,24 @@ export function App() {
   const [jobTemplateId, setJobTemplateId] = useState("");
   const [jobLines, setJobLines] = useState<JobLineDraft[]>([]);
   const [jobAttachments, setJobAttachments] = useState<string[]>([]);
+  const [priceBookItems, setPriceBookItems] = useState<PriceBookItem[]>([]);
+  const [priceBookCategories, setPriceBookCategories] = useState<PriceBookCategory[]>([]);
+  const [priceBookSearch, setPriceBookSearch] = useState("");
+  const [priceBookTab, setPriceBookTab] = useState<"items" | "categories">("items");
+  const [priceBookModal, setPriceBookModal] = useState<"item" | "category" | null>(null);
+  const [priceBookItemForm, setPriceBookItemForm] = useState({
+    name: "",
+    modelNumber: "",
+    itemType: "service" as "service" | "material",
+    description: "",
+    price: "",
+    cost: "",
+    categoryId: "",
+    taxable: true,
+    onlineBooking: false,
+    imageName: ""
+  });
+  const [priceBookCategoryForm, setPriceBookCategoryForm] = useState({ name: "", description: "" });
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [apiKeyName, setApiKeyName] = useState("Partner API");
   const [newApiToken, setNewApiToken] = useState("");
@@ -427,15 +466,27 @@ export function App() {
   const jobLineSubtotal = useMemo(() => jobLines.reduce((sum, item) => sum + (Number(item.quantity || "0") * dollarsToCents(item.unitPrice)), 0), [jobLines]);
   const jobLineTax = Math.round(jobLineSubtotal * 0.094);
   const jobLineTotal = jobLineSubtotal + jobLineTax;
+  const filteredPriceBookItems = useMemo(() => {
+    const query = priceBookSearch.trim().toLowerCase();
+    if (!query) return priceBookItems;
+    return priceBookItems.filter((item) => [
+      item.name,
+      item.description ?? "",
+      item.modelNumber ?? "",
+      item.category?.name ?? "",
+      item.itemType
+    ].some((value) => value.toLowerCase().includes(query)));
+  }, [priceBookItems, priceBookSearch]);
 
   async function loadDashboard() {
-    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult] = await Promise.all([
       api<Summary>("/api/settings/summary"),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
       api<{ invoices: Invoice[] }>("/api/invoices"),
       api<{ technicians: Technician[] }>("/api/technicians"),
-      api<CrmOptions>("/api/settings/options")
+      api<CrmOptions>("/api/settings/options"),
+      api<{ categories: PriceBookCategory[]; items: PriceBookItem[] }>("/api/pricebook")
     ]);
 
     setSummary(summaryResult);
@@ -444,6 +495,8 @@ export function App() {
     setInvoices(invoicesResult.invoices);
     setTechnicians(techniciansResult.technicians);
     setCrmOptions(optionsResult);
+    setPriceBookCategories(priceBookResult.categories);
+    setPriceBookItems(priceBookResult.items);
 
     const [locationResult, apiKeyResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
@@ -602,6 +655,57 @@ export function App() {
 
   function addJobLine(category: "service" | "material") {
     setJobLines((current) => [...current, lineDraft(category, category === "service" ? "Service call" : "Material")]);
+  }
+
+  function addPriceBookItemToJob(itemId: string) {
+    const item = priceBookItems.find((entry) => entry.id === itemId);
+    if (!item) return;
+    setJobLines((current) => [...current, {
+      id: `pricebook-${item.id}-${Date.now()}`,
+      category: item.itemType,
+      name: item.name,
+      description: item.description ?? "",
+      quantity: "1",
+      unitPrice: String((item.price / 100).toFixed(2))
+    }]);
+  }
+
+  async function createPriceBookCategory(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    const result = await api<{ category: PriceBookCategory }>("/api/pricebook/categories", {
+      method: "POST",
+      body: JSON.stringify(priceBookCategoryForm)
+    });
+    setPriceBookCategories((current) => [...current.filter((item) => item.id !== result.category.id), result.category].sort((a, b) => a.name.localeCompare(b.name)));
+    setPriceBookCategoryForm({ name: "", description: "" });
+    setPriceBookModal(null);
+  }
+
+  async function createPriceBookItem(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    const result = await api<{ item: PriceBookItem }>("/api/pricebook/items", {
+      method: "POST",
+      body: JSON.stringify({
+        ...priceBookItemForm,
+        categoryId: priceBookItemForm.categoryId || undefined,
+        modelNumber: priceBookItemForm.modelNumber || undefined,
+        description: priceBookItemForm.description || undefined,
+        imageName: priceBookItemForm.imageName || undefined,
+        price: dollarsToCents(priceBookItemForm.price),
+        cost: dollarsToCents(priceBookItemForm.cost)
+      })
+    });
+    setPriceBookItems((current) => [result.item, ...current]);
+    setPriceBookItemForm({ name: "", modelNumber: "", itemType: "service", description: "", price: "", cost: "", categoryId: "", taxable: true, onlineBooking: false, imageName: "" });
+    setPriceBookModal(null);
+  }
+
+  async function deletePriceBookItem(id: string) {
+    setError("");
+    await api(`/api/pricebook/items/${id}`, { method: "DELETE" });
+    setPriceBookItems((current) => current.filter((item) => item.id !== id));
   }
 
   function applyJobTemplate(templateId: string) {
@@ -826,7 +930,7 @@ export function App() {
           <button><CalendarDays size={18} /> Events</button>
           <button><Clock3 size={18} /> Time Clock</button>
           <button><Laptop size={18} /> Online Booking</button>
-          <button><Tag size={18} /> Pricebook</button>
+          <button className={activeView === "pricebook" ? "active" : ""} onClick={() => setActiveView("pricebook")}><Tag size={18} /> Pricebook</button>
 
           <span className="nav-section">More</span>
           <button><ListChecks size={18} /> Reports</button>
@@ -1375,7 +1479,15 @@ export function App() {
                       <div className="line-category" key={category}>
                         <div className="line-category-head">
                           <strong>{category === "service" ? "Services" : "Materials"}</strong>
-                          <button type="button" className="text-add-button" onClick={() => addJobLine(category)}><Plus size={18} /> Add {category}</button>
+                          <div className="line-actions">
+                            <select aria-label={`Add ${category} from price book`} onChange={(event) => { addPriceBookItemToJob(event.target.value); event.currentTarget.value = ""; }}>
+                              <option value="">Add from price book</option>
+                              {priceBookItems.filter((item) => item.itemType === category).map((item) => (
+                                <option key={item.id} value={item.id}>{item.name} / {money.format(item.price / 100)}</option>
+                              ))}
+                            </select>
+                            <button type="button" className="text-add-button" onClick={() => addJobLine(category)}><Plus size={18} /> Add {category}</button>
+                          </div>
                         </div>
                         {jobLines.filter((item) => item.category === category).map((item) => (
                           <div className="line-item-row" key={item.id}>
@@ -1398,6 +1510,135 @@ export function App() {
               </form>
             </section>
           )
+        )}
+
+        {activeView === "pricebook" && (
+          <section className="pricebook-page">
+            <div className="section-actions">
+              <div className="breadcrumb"><Settings size={17} /> Settings / Pricebook</div>
+              <div className="action-buttons">
+                <button className="outline-button" type="button" onClick={() => setPriceBookModal("category")}><Plus size={17} /> Create Category</button>
+                <button className="primary" type="button" onClick={() => setPriceBookModal("item")}><Plus size={17} /> Create Item</button>
+              </div>
+            </div>
+
+            <div className="pricebook-panel">
+              <div className="jobs-tools">
+                <div className="search-box table-search">
+                  <Search size={18} />
+                  <input placeholder="Search price book" value={priceBookSearch} onChange={(event) => setPriceBookSearch(event.target.value)} />
+                </div>
+                <select aria-label="Page size">
+                  <option>10</option>
+                  <option>25</option>
+                  <option>50</option>
+                </select>
+                <button className="icon-button" aria-label="More actions"><MoreHorizontal size={18} /></button>
+              </div>
+
+              <div className="job-tabs">
+                <button className={priceBookTab === "items" ? "active" : ""} onClick={() => setPriceBookTab("items")}>Pricebook</button>
+                <button className={priceBookTab === "categories" ? "active" : ""} onClick={() => setPriceBookTab("categories")}>Category</button>
+              </div>
+
+              {priceBookTab === "items" ? (
+                <div className="pricebook-table">
+                  <div className="pricebook-row pricebook-head">
+                    <span>Name</span>
+                    <span>Image</span>
+                    <span>Description</span>
+                    <span>Price</span>
+                    <span>Cost</span>
+                    <span>Category</span>
+                    <span>Item Type</span>
+                    <span>Taxable</span>
+                    <span>Actions</span>
+                  </div>
+                  {filteredPriceBookItems.map((item) => (
+                    <div className="pricebook-row" key={item.id}>
+                      <strong>{item.name}</strong>
+                      <span className="image-chip">{item.imageName ? "IMG" : "-"}</span>
+                      <span>{item.description || "-"}</span>
+                      <span>{money.format(item.price / 100)}</span>
+                      <span>{money.format(item.cost / 100)}</span>
+                      <span>{item.category?.name || "Uncategorized"}</span>
+                      <span>{statusLabel(item.itemType.toUpperCase())}</span>
+                      <span>{item.taxable ? "Yes" : "No"}</span>
+                      <button className="text-button" onClick={() => deletePriceBookItem(item.id)}><Trash2 size={16} /></button>
+                    </div>
+                  ))}
+                  {filteredPriceBookItems.length === 0 && <p className="empty table-empty">No price book items yet.</p>}
+                </div>
+              ) : (
+                <div className="category-grid">
+                  {priceBookCategories.map((category) => (
+                    <article key={category.id}>
+                      <strong>{category.name}</strong>
+                      <span>{category.description || "No description"}</span>
+                    </article>
+                  ))}
+                  {priceBookCategories.length === 0 && <p className="empty">No categories yet.</p>}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {priceBookModal && (
+          <div className="modal-backdrop" onClick={() => setPriceBookModal(null)}>
+            <div className="pricebook-modal" onClick={(event) => event.stopPropagation()}>
+              {priceBookModal === "category" ? (
+                <form className="record-form" onSubmit={createPriceBookCategory}>
+                  <h2>Create Category</h2>
+                  <input placeholder="Category name" value={priceBookCategoryForm.name} onChange={(event) => setPriceBookCategoryForm({ ...priceBookCategoryForm, name: event.target.value })} required />
+                  <textarea placeholder="Description" value={priceBookCategoryForm.description} onChange={(event) => setPriceBookCategoryForm({ ...priceBookCategoryForm, description: event.target.value })} />
+                  <div className="modal-actions">
+                    <button className="outline-button" type="button" onClick={() => setPriceBookModal(null)}>Cancel</button>
+                    <button className="primary" type="submit">Create Category</button>
+                  </div>
+                </form>
+              ) : (
+                <form className="record-form" onSubmit={createPriceBookItem}>
+                  <h2>Create an Item</h2>
+                  <div className="image-upload-row">
+                    <span className="image-chip">IMG</span>
+                    <div>
+                      <strong>Upload Image</strong>
+                      <small>JPG or PNG, file size no more than 5MB</small>
+                    </div>
+                    <input type="file" onChange={(event) => setPriceBookItemForm({ ...priceBookItemForm, imageName: event.currentTarget.files?.[0]?.name ?? "" })} />
+                  </div>
+                  <div className="pricebook-form-grid">
+                    <label>Item Name<input placeholder="Enter item name" value={priceBookItemForm.name} onChange={(event) => setPriceBookItemForm({ ...priceBookItemForm, name: event.target.value })} required /></label>
+                    <label>Model Number<input placeholder="Enter model number (optional)" value={priceBookItemForm.modelNumber} onChange={(event) => setPriceBookItemForm({ ...priceBookItemForm, modelNumber: event.target.value })} /></label>
+                    <label>Price<input placeholder="0" value={priceBookItemForm.price} onChange={(event) => setPriceBookItemForm({ ...priceBookItemForm, price: event.target.value })} /></label>
+                    <label>Your Cost<input placeholder="0" value={priceBookItemForm.cost} onChange={(event) => setPriceBookItemForm({ ...priceBookItemForm, cost: event.target.value })} /></label>
+                    <label>Category
+                      <select value={priceBookItemForm.categoryId} onChange={(event) => setPriceBookItemForm({ ...priceBookItemForm, categoryId: event.target.value })}>
+                        <option value="">Select category</option>
+                        {priceBookCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                      </select>
+                    </label>
+                    <label>Item Type
+                      <select value={priceBookItemForm.itemType} onChange={(event) => setPriceBookItemForm({ ...priceBookItemForm, itemType: event.target.value as "service" | "material" })}>
+                        <option value="service">Service</option>
+                        <option value="material">Material</option>
+                      </select>
+                    </label>
+                    <label className="span-2">Item Description
+                      <textarea placeholder="Enter item description (optional)" value={priceBookItemForm.description} onChange={(event) => setPriceBookItemForm({ ...priceBookItemForm, description: event.target.value })} />
+                    </label>
+                  </div>
+                  <label className="check-row"><input type="checkbox" checked={priceBookItemForm.onlineBooking} onChange={(event) => setPriceBookItemForm({ ...priceBookItemForm, onlineBooking: event.target.checked })} /> Add to Online Booking</label>
+                  <label className="check-row"><input type="checkbox" checked={priceBookItemForm.taxable} onChange={(event) => setPriceBookItemForm({ ...priceBookItemForm, taxable: event.target.checked })} /> Taxable</label>
+                  <div className="modal-actions">
+                    <button className="outline-button" type="button" onClick={() => setPriceBookModal(null)}>Cancel</button>
+                    <button className="primary" type="submit">Create Item</button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
         )}
 
         {activeView === "invoices" && (

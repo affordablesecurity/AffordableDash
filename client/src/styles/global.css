@@ -23,6 +23,10 @@ textarea {
   font: inherit;
 }
 
+input[type="checkbox"] {
+  width: auto;
+}
+
 button {
   cursor: pointer;
 }
@@ -1092,6 +1096,7 @@ textarea {
   min-height: 56px;
   padding: 0 24px;
   background: #fbfcfe;
+  gap: 12px;
 }
 
 .line-category-head strong {
@@ -1107,6 +1112,17 @@ textarea {
   background: transparent;
   color: #0066c9;
   font-weight: 800;
+}
+
+.line-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.line-actions select {
+  width: 210px;
+  padding: 8px 10px;
 }
 
 .line-item-row {
@@ -1142,6 +1158,142 @@ textarea {
 .grand-total {
   font-size: 20px;
   font-weight: 900;
+}
+
+.pricebook-page {
+  display: grid;
+  gap: 20px;
+}
+
+.pricebook-panel {
+  background: #ffffff;
+  border: 1px solid #e6e9f1;
+  border-radius: 18px;
+  padding: 24px;
+}
+
+.pricebook-panel .jobs-tools {
+  grid-template-columns: minmax(280px, 380px) 84px 40px;
+}
+
+.pricebook-table {
+  overflow-x: auto;
+}
+
+.pricebook-row {
+  min-width: 1180px;
+  display: grid;
+  grid-template-columns: 180px 110px minmax(260px, 1fr) 110px 110px 170px 130px 110px 80px;
+  gap: 14px;
+  align-items: center;
+  min-height: 64px;
+  padding: 0 16px;
+  border-bottom: 1px solid #eef1f6;
+  color: #272d3d;
+  font-size: 14px;
+}
+
+.pricebook-row:nth-child(odd):not(.pricebook-head) {
+  background: #fafbfe;
+}
+
+.pricebook-head {
+  min-height: 54px;
+  background: #fafbfe;
+  color: #101421;
+  font-weight: 900;
+}
+
+.image-chip {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #eef1f6;
+  color: #7e8aac;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 20px;
+}
+
+.category-grid article {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #eef1f6;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.category-grid span,
+.image-upload-row small {
+  color: #7e8aac;
+}
+
+.pricebook-modal {
+  width: min(980px, 96vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 22px;
+  box-shadow: 0 24px 70px rgba(28, 33, 47, 0.22);
+}
+
+.pricebook-modal h2 {
+  margin: 0 0 10px;
+}
+
+.image-upload-row,
+.modal-actions,
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.image-upload-row {
+  justify-content: space-between;
+  border-bottom: 1px solid #eef1f6;
+  padding: 10px 0 16px;
+}
+
+.image-upload-row > div {
+  flex: 1;
+  display: grid;
+  gap: 3px;
+}
+
+.image-upload-row input {
+  width: min(260px, 100%);
+}
+
+.pricebook-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.check-row {
+  justify-content: space-between;
+  border: 1px solid #eef1f6;
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-weight: 800;
+}
+
+.check-row input {
+  width: auto;
+}
+
+.modal-actions {
+  justify-content: space-between;
 }
 
 .api-key-form {
@@ -1469,8 +1621,20 @@ textarea {
   .jobs-tools,
   .new-client-grid,
   .schedule-form-grid,
-  .line-item-row {
+  .line-item-row,
+  .pricebook-form-grid,
+  .category-grid {
     grid-template-columns: 1fr;
+  }
+
+  .line-category-head,
+  .line-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .line-actions select {
+    width: 100%;
   }
 
   .span-2 {
