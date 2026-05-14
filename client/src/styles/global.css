@@ -2427,6 +2427,112 @@ textarea {
   border-bottom: 0;
 }
 
+.template-settings {
+  align-content: start;
+}
+
+.template-table {
+  display: grid;
+  border: 1px solid #eef1f6;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.template-table-row {
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(220px, 1.4fr) 120px;
+  align-items: center;
+  gap: 18px;
+  padding: 0 18px;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.template-table-row:nth-child(odd):not(.template-table-head) {
+  background: #fafbfe;
+}
+
+.template-table-row:last-child {
+  border-bottom: 0;
+}
+
+.template-table-head {
+  min-height: 48px;
+  background: #f8f9fb;
+  color: #535c73;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.template-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+.template-actions .text-button:first-child {
+  color: #64748b;
+}
+
+.template-editor {
+  display: grid;
+  gap: 18px;
+}
+
+.template-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 10px;
+  background: #dff0ff;
+  color: #31506f;
+  padding: 14px 16px;
+  font-weight: 700;
+}
+
+.template-editor-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.template-side-stack,
+.template-mini-card {
+  display: grid;
+  gap: 14px;
+}
+
+.template-mini-card,
+.template-line-panel {
+  border: 1px solid #eef1f6;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.template-mini-card {
+  padding: 16px;
+}
+
+.template-mini-card h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.template-line-panel {
+  padding: 0;
+}
+
+.template-line-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1.4fr 80px 110px auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 18px;
+  border-top: 1px solid #eef1f6;
+}
+
 .company-settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2948,6 +3054,9 @@ textarea {
   .new-client-grid,
   .schedule-form-grid,
   .line-item-row,
+  .template-editor-layout,
+  .template-line-row,
+  .template-table-row,
   .pricebook-form-grid,
   .company-settings-grid,
   .company-form-grid,

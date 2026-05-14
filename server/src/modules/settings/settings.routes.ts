@@ -82,6 +82,45 @@ const optionSchema = z.object({
   name: z.string().trim().min(1)
 });
 
+const templateLineItemSchema = z.object({
+  category: z.enum(["service", "material"]).default("service"),
+  name: z.string().trim().min(1),
+  description: z.string().optional().default(""),
+  quantity: z.union([z.string(), z.number()]).transform((value) => String(value || "1")).default("1"),
+  unitPrice: z.union([z.string(), z.number()]).transform((value) => String(value || "0")).default("0")
+});
+
+const jobTemplateSchema = z.object({
+  name: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  jobType: z.string().trim().min(1),
+  leadSource: z.string().trim().optional(),
+  tags: z.array(z.string().trim().min(1)).default([]),
+  privateNotes: z.string().optional().default(""),
+  lineItems: z.array(templateLineItemSchema).default([])
+});
+
+async function saveTemplateOptions(locationId: string, input: z.infer<typeof jobTemplateSchema>) {
+  const optionWrites = [
+    prisma.crmOption.upsert({
+      where: { locationId_kind_name: { locationId, kind: "jobType", name: input.jobType } },
+      create: { locationId, kind: "jobType", name: input.jobType },
+      update: {}
+    }),
+    ...(input.leadSource ? [prisma.crmOption.upsert({
+      where: { locationId_kind_name: { locationId, kind: "leadSource", name: input.leadSource } },
+      create: { locationId, kind: "leadSource", name: input.leadSource },
+      update: {}
+    })] : []),
+    ...input.tags.map((name) => prisma.crmOption.upsert({
+      where: { locationId_kind_name: { locationId, kind: "tag", name } },
+      create: { locationId, kind: "tag", name },
+      update: {}
+    }))
+  ];
+  await Promise.all(optionWrites);
+}
+
 settingsRouter.get("/options", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
   const [options, jobTypes, leadSources, jobTags] = await Promise.all([
@@ -141,5 +180,68 @@ settingsRouter.delete("/options", asyncHandler(async (req, res) => {
   await prisma.crmOption.deleteMany({
     where: { locationId, kind: input.kind, name: input.name }
   });
+  res.status(204).send();
+}));
+
+settingsRouter.get("/job-templates", asyncHandler(async (req, res) => {
+  const locationId = activeLocationId(req);
+  const templates = await prisma.jobTemplate.findMany({
+    where: { locationId },
+    orderBy: { name: "asc" }
+  });
+  res.json({ templates });
+}));
+
+settingsRouter.post("/job-templates", asyncHandler(async (req, res) => {
+  const input = jobTemplateSchema.parse(req.body);
+  const locationId = activeLocationId(req);
+  await saveTemplateOptions(locationId, input);
+  const template = await prisma.jobTemplate.upsert({
+    where: { locationId_name: { locationId, name: input.name } },
+    create: {
+      locationId,
+      name: input.name,
+      title: input.title,
+      jobType: input.jobType,
+      leadSource: input.leadSource || null,
+      tags: [...new Set(input.tags)],
+      privateNotes: input.privateNotes,
+      lineItems: input.lineItems
+    },
+    update: {
+      title: input.title,
+      jobType: input.jobType,
+      leadSource: input.leadSource || null,
+      tags: [...new Set(input.tags)],
+      privateNotes: input.privateNotes,
+      lineItems: input.lineItems
+    }
+  });
+  res.status(201).json({ template });
+}));
+
+settingsRouter.patch("/job-templates/:id", asyncHandler(async (req, res) => {
+  const input = jobTemplateSchema.parse(req.body);
+  const locationId = activeLocationId(req);
+  await saveTemplateOptions(locationId, input);
+  await prisma.jobTemplate.updateMany({
+    where: { id: req.params.id, locationId },
+    data: {
+      name: input.name,
+      title: input.title,
+      jobType: input.jobType,
+      leadSource: input.leadSource || null,
+      tags: [...new Set(input.tags)],
+      privateNotes: input.privateNotes,
+      lineItems: input.lineItems
+    }
+  });
+  const template = await prisma.jobTemplate.findFirstOrThrow({ where: { id: req.params.id, locationId } });
+  res.json({ template });
+}));
+
+settingsRouter.delete("/job-templates/:id", asyncHandler(async (req, res) => {
+  const locationId = activeLocationId(req);
+  await prisma.jobTemplate.deleteMany({ where: { id: req.params.id, locationId } });
   res.status(204).send();
 }));

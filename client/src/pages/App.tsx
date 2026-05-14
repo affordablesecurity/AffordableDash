@@ -139,8 +139,8 @@ type JobTemplate = {
   jobType: string;
   leadSource?: string;
   tags: string[];
-  privateNotes: string;
-  lineItems: Omit<JobLineDraft, "id">[];
+  privateNotes?: string;
+  lineItems?: Omit<JobLineDraft, "id">[];
 };
 
 type PriceBookCategory = {
@@ -258,7 +258,7 @@ type View = "dispatch" | "schedule" | "customers" | "jobs" | "employees" | "invo
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
-type SettingsSection = "overview" | "company" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans";
+type SettingsSection = "overview" | "company" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans" | "jobTemplates";
 type CrmOptions = {
   leadSources: string[];
   tags: string[];
@@ -316,7 +316,7 @@ const reportGroupings = [
   { value: "quarter", label: "Quarter" },
   { value: "year", label: "Year" }
 ];
-const jobTemplates: JobTemplate[] = [
+const defaultJobTemplates: JobTemplate[] = [
   {
     id: "residential-repair-lock",
     name: "Residential repair lock",
@@ -467,6 +467,15 @@ function lineDraft(category: "service" | "material", name = "", unitPrice = ""):
   };
 }
 
+function normalizeJobTemplate(template: JobTemplate): JobTemplate {
+  return {
+    ...template,
+    tags: template.tags ?? [],
+    privateNotes: template.privateNotes ?? "",
+    lineItems: template.lineItems ?? []
+  };
+}
+
 function formatChartValue(value: number, format: "money" | "number") {
   return format === "money" ? money.format(value / 100) : new Intl.NumberFormat("en-US").format(value);
 }
@@ -495,7 +504,7 @@ const optionKeyByKind: Record<CrmOptionKind, keyof CrmOptions> = {
 };
 
 const settingsSections: Array<{
-  id: Exclude<SettingsSection, "overview">;
+  id: Exclude<SettingsSection, "overview" | "company" | "jobTemplates">;
   kind: CrmOptionKind;
   title: string;
   description: string;
@@ -558,6 +567,18 @@ export function App() {
   const [jobAddressSearch, setJobAddressSearch] = useState("");
   const [tagDraft, setTagDraft] = useState("");
   const [jobTemplateId, setJobTemplateId] = useState("");
+  const [jobTemplates, setJobTemplates] = useState<JobTemplate[]>(defaultJobTemplates);
+  const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState("");
+  const [templateForm, setTemplateForm] = useState({
+    name: "",
+    title: "",
+    jobType: "Car Lockout Service",
+    leadSource: "Phone Call",
+    tags: "",
+    privateNotes: ""
+  });
+  const [templateLineItems, setTemplateLineItems] = useState<JobLineDraft[]>([]);
   const [jobLines, setJobLines] = useState<JobLineDraft[]>([]);
   const [jobAttachments, setJobAttachments] = useState<string[]>([]);
   const [priceBookItems, setPriceBookItems] = useState<PriceBookItem[]>([]);
@@ -772,14 +793,15 @@ export function App() {
   ].filter(Boolean).join(", ") || "No company address saved yet";
 
   async function loadDashboard() {
-    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult] = await Promise.all([
       api<Summary>("/api/settings/summary"),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
       api<{ invoices: Invoice[] }>("/api/invoices"),
       api<{ technicians: Technician[] }>("/api/technicians"),
       api<CrmOptions>("/api/settings/options"),
-      api<{ categories: PriceBookCategory[]; items: PriceBookItem[] }>("/api/pricebook")
+      api<{ categories: PriceBookCategory[]; items: PriceBookItem[] }>("/api/pricebook"),
+      api<{ templates: JobTemplate[] }>("/api/settings/job-templates")
     ]);
 
     setSummary(summaryResult);
@@ -790,6 +812,11 @@ export function App() {
     setCrmOptions((current) => ({ ...current, ...optionsResult }));
     setPriceBookCategories(priceBookResult.categories);
     setPriceBookItems(priceBookResult.items);
+    const savedTemplates = templatesResult.templates.map(normalizeJobTemplate);
+    setJobTemplates([
+      ...savedTemplates,
+      ...defaultJobTemplates.filter((template) => !savedTemplates.some((saved) => saved.name.toLowerCase() === template.name.toLowerCase()))
+    ]);
 
     const [locationResult, apiKeyResult, meResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
@@ -1281,6 +1308,95 @@ export function App() {
     setPriceBookItems((current) => current.filter((item) => item.id !== id));
   }
 
+  function isStarterTemplate(id: string) {
+    return defaultJobTemplates.some((template) => template.id === id);
+  }
+
+  function templateContents(template: JobTemplate) {
+    const parts: string[] = [];
+    const lineItems = template.lineItems ?? [];
+    if (lineItems.length) parts.push(`${lineItems.length} line ${lineItems.length === 1 ? "item" : "items"}`);
+    if (template.tags.length) parts.push(`${template.tags.length} ${template.tags.length === 1 ? "tag" : "tags"}`);
+    if (template.privateNotes) parts.push("1 note");
+    return parts.join(" · ") || "No saved contents yet";
+  }
+
+  function openTemplateEditor(template?: JobTemplate) {
+    setError("");
+    setTemplateEditorOpen(true);
+    setEditingTemplateId(template?.id ?? "");
+    setTemplateForm({
+      name: template?.name ?? "",
+      title: template?.title ?? "",
+      jobType: template?.jobType ?? "Car Lockout Service",
+      leadSource: template?.leadSource ?? "Phone Call",
+      tags: template?.tags.join(", ") ?? "",
+      privateNotes: template?.privateNotes ?? ""
+    });
+    setTemplateLineItems((template?.lineItems ?? []).map((item) => ({
+      ...item,
+      id: `template-${item.category}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    })));
+  }
+
+  function closeTemplateEditor() {
+    setTemplateEditorOpen(false);
+    setEditingTemplateId("");
+    setTemplateForm({ name: "", title: "", jobType: "Car Lockout Service", leadSource: "Phone Call", tags: "", privateNotes: "" });
+    setTemplateLineItems([]);
+  }
+
+  function updateTemplateLine(id: string, patch: Partial<JobLineDraft>) {
+    setTemplateLineItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  }
+
+  function addTemplateLine(category: "service" | "material") {
+    setTemplateLineItems((current) => [...current, lineDraft(category, category === "service" ? "Service call" : "Material")]);
+  }
+
+  async function saveJobTemplate(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    const payload = {
+      name: templateForm.name,
+      title: templateForm.title,
+      jobType: templateForm.jobType,
+      leadSource: templateForm.leadSource || undefined,
+      tags: splitTags(templateForm.tags),
+      privateNotes: templateForm.privateNotes,
+      lineItems: templateLineItems
+        .filter((item) => item.name.trim())
+        .map(({ id: _id, ...item }) => item)
+    };
+    const isSavedTemplate = editingTemplateId && !isStarterTemplate(editingTemplateId);
+    const result = await api<{ template: JobTemplate }>(isSavedTemplate ? `/api/settings/job-templates/${editingTemplateId}` : "/api/settings/job-templates", {
+      method: isSavedTemplate ? "PATCH" : "POST",
+      body: JSON.stringify(payload)
+    });
+    const savedTemplate = normalizeJobTemplate(result.template);
+    setJobTemplates((current) => [
+      savedTemplate,
+      ...current.filter((template) => template.id !== editingTemplateId && template.id !== savedTemplate.id && template.name.toLowerCase() !== savedTemplate.name.toLowerCase())
+    ].sort((a, b) => a.name.localeCompare(b.name)));
+    setCrmOptions((current) => ({
+      ...current,
+      jobTypes: [...new Set([...current.jobTypes, savedTemplate.jobType])].sort(),
+      leadSources: savedTemplate.leadSource ? [...new Set([...current.leadSources, savedTemplate.leadSource])].sort() : current.leadSources,
+      tags: [...new Set([...current.tags, ...(savedTemplate.tags ?? [])])].sort()
+    }));
+    closeTemplateEditor();
+  }
+
+  async function deleteJobTemplate(id: string) {
+    if (isStarterTemplate(id)) {
+      setJobTemplates((current) => current.filter((template) => template.id !== id));
+      return;
+    }
+    setError("");
+    await api(`/api/settings/job-templates/${id}`, { method: "DELETE" });
+    setJobTemplates((current) => current.filter((template) => template.id !== id));
+  }
+
   function applyJobTemplate(templateId: string) {
     setJobTemplateId(templateId);
     const template = jobTemplates.find((item) => item.id === templateId);
@@ -1291,9 +1407,9 @@ export function App() {
       jobType: template.jobType,
       leadSource: template.leadSource ?? current.leadSource,
       tags: [...new Set([...splitTags(current.tags), ...template.tags])].join(", "),
-      internalNotes: current.internalNotes ? `${current.internalNotes}\n${template.privateNotes}` : template.privateNotes
+      internalNotes: current.internalNotes && template.privateNotes ? `${current.internalNotes}\n${template.privateNotes}` : (template.privateNotes ?? current.internalNotes)
     }));
-    setJobLines(template.lineItems.map((item) => ({ ...item, id: `${item.category}-${Date.now()}-${Math.random().toString(36).slice(2)}` })));
+    setJobLines((template.lineItems ?? []).map((item) => ({ ...item, id: `${item.category}-${Date.now()}-${Math.random().toString(36).slice(2)}` })));
     template.tags.forEach((tag) => saveJobOption("tag", tag).catch(() => undefined));
     saveJobOption("jobType", template.jobType).catch(() => undefined);
     if (template.leadSource) saveJobOption("leadSource", template.leadSource).catch(() => undefined);
@@ -2639,7 +2755,7 @@ export function App() {
                     <span className="settings-icon red"><Tag size={22} /></span>
                     <strong>Pricebook</strong>
                   </button>
-                  <button type="button" className="settings-card" onClick={() => setSettingsSection("jobTypes")}>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("jobTemplates")}>
                     <span className="settings-icon yellow"><Wrench size={22} /></span>
                     <strong>Job Settings</strong>
                   </button>
@@ -2693,6 +2809,7 @@ export function App() {
                   <button className="active" onClick={() => setSettingsSection("company")}>Company</button>
                   <button onClick={() => setActiveView("api")}>API Access</button>
                   <span>Feature Configurations</span>
+                  <button onClick={() => setSettingsSection("jobTemplates")}>Job Templates</button>
                   <button onClick={() => setSettingsSection("jobTypes")}>Job Types</button>
                   <button onClick={() => setActiveView("pricebook")}>Price Book</button>
                   <button onClick={() => setSettingsSection("servicePlans")}>Service Plans</button>
@@ -2815,6 +2932,134 @@ export function App() {
                   </section>
                 </form>
               </div>
+            ) : settingsSection === "jobTemplates" ? (
+              <div className="settings-layout">
+                <aside className="settings-menu">
+                  <span>Global Settings</span>
+                  <button onClick={() => setSettingsSection("company")}>Company</button>
+                  <button onClick={() => setActiveView("api")}>API Access</button>
+                  <span>Feature Configurations</span>
+                  <button className="active" onClick={() => setSettingsSection("jobTemplates")}>Job Templates</button>
+                  <button onClick={() => setSettingsSection("jobTypes")}>Job Types</button>
+                  <button onClick={() => setActiveView("pricebook")}>Price Book</button>
+                  <button onClick={() => setSettingsSection("servicePlans")}>Service Plans</button>
+                  <span>Tags & Tools</span>
+                  <button onClick={() => setSettingsSection("checklists")}>Checklists</button>
+                  <button onClick={() => setSettingsSection("jobFields")}>Job Fields</button>
+                  <button onClick={() => setSettingsSection("leadSources")}>Lead Sources</button>
+                  <button onClick={() => setSettingsSection("tags")}>Tags</button>
+                </aside>
+
+                <section className="settings-panel template-settings">
+                  {!templateEditorOpen ? (
+                    <>
+                      <div className="settings-panel-head">
+                        <div>
+                          <p className="settings-kicker">Jobs</p>
+                          <h2>Templates</h2>
+                          <p>Create common locksmith jobs with saved title, job type, tags, private notes, and price book style line items.</p>
+                        </div>
+                        <button className="primary" type="button" onClick={() => openTemplateEditor()}><Plus size={17} /> Job Template</button>
+                      </div>
+
+                      <div className="template-table">
+                        <div className="template-table-row template-table-head">
+                          <span>Template name</span>
+                          <span>Contents</span>
+                          <span>Actions</span>
+                        </div>
+                        {jobTemplates.map((template) => (
+                          <div className="template-table-row" key={template.id}>
+                            <strong>{template.name}</strong>
+                            <span>{templateContents(template)}{isStarterTemplate(template.id) ? " · Starter" : ""}</span>
+                            <span className="template-actions">
+                              <button className="text-button" type="button" onClick={() => openTemplateEditor(template)} aria-label={`Edit ${template.name}`}><FileText size={16} /></button>
+                              <button className="text-button danger" type="button" onClick={() => deleteJobTemplate(template.id)} aria-label={`Delete ${template.name}`}><Trash2 size={16} /></button>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <form className="template-editor" onSubmit={saveJobTemplate}>
+                      <div className="settings-panel-head">
+                        <div>
+                          <p className="settings-kicker">Job Template</p>
+                          <h2>{editingTemplateId ? "Edit job template" : "New job template"}</h2>
+                          <p>These fields apply to the New Job form when the template is selected.</p>
+                        </div>
+                        <div className="action-buttons">
+                          <button className="outline-button" type="button" onClick={closeTemplateEditor}>Cancel</button>
+                          <button className="primary" type="submit">Save</button>
+                        </div>
+                      </div>
+
+                      <div className="template-alert"><FileText size={17} /> Price book items copied into a template can be adjusted on the job after the template is applied.</div>
+
+                      <label>Template name
+                        <input value={templateForm.name} onChange={(event) => setTemplateForm({ ...templateForm, name: event.target.value })} placeholder="Emergency car lockout service" required />
+                      </label>
+
+                      <div className="template-editor-layout">
+                        <div className="template-side-stack">
+                          <section className="template-mini-card">
+                            <h3>Job fields</h3>
+                            <label>Job title
+                              <input value={templateForm.title} onChange={(event) => setTemplateForm({ ...templateForm, title: event.target.value })} placeholder="Car lockout service" required />
+                            </label>
+                            <label>Job type
+                              <input list="template-job-types" value={templateForm.jobType} onChange={(event) => setTemplateForm({ ...templateForm, jobType: event.target.value })} required />
+                            </label>
+                            <label>Lead source
+                              <input list="template-lead-sources" value={templateForm.leadSource} onChange={(event) => setTemplateForm({ ...templateForm, leadSource: event.target.value })} />
+                            </label>
+                          </section>
+
+                          <section className="template-mini-card">
+                            <h3>Job tags</h3>
+                            <input value={templateForm.tags} onChange={(event) => setTemplateForm({ ...templateForm, tags: event.target.value })} placeholder="lockout, automotive" />
+                          </section>
+
+                          <section className="template-mini-card">
+                            <h3>Private notes</h3>
+                            <textarea value={templateForm.privateNotes} onChange={(event) => setTemplateForm({ ...templateForm, privateNotes: event.target.value })} placeholder="Add an internal note for the office or tech." />
+                          </section>
+                        </div>
+
+                        <section className="template-line-panel">
+                          <div className="line-items-header">
+                            <h2>Line items</h2>
+                          </div>
+                          {(["service", "material"] as const).map((category) => (
+                            <div className="line-category" key={category}>
+                              <div className="line-category-head">
+                                <strong>{category === "service" ? "Services" : "Materials"}</strong>
+                                <button className="text-add-button" type="button" onClick={() => addTemplateLine(category)}><Plus size={17} /> Add {category}</button>
+                              </div>
+                              {templateLineItems.filter((item) => item.category === category).map((item) => (
+                                <div className="template-line-row" key={item.id}>
+                                  <input value={item.name} onChange={(event) => updateTemplateLine(item.id, { name: event.target.value })} placeholder={`${category} name`} />
+                                  <input value={item.description} onChange={(event) => updateTemplateLine(item.id, { description: event.target.value })} placeholder="Description" />
+                                  <input value={item.quantity} onChange={(event) => updateTemplateLine(item.id, { quantity: event.target.value })} placeholder="Qty" />
+                                  <input value={item.unitPrice} onChange={(event) => updateTemplateLine(item.id, { unitPrice: event.target.value })} placeholder="Price" />
+                                  <button className="text-button danger" type="button" onClick={() => setTemplateLineItems((current) => current.filter((line) => line.id !== item.id))}><Trash2 size={15} /></button>
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </section>
+                      </div>
+                    </form>
+                  )}
+
+                  <datalist id="template-job-types">
+                    {crmOptions.jobTypes.map((value) => <option key={value} value={value} />)}
+                  </datalist>
+                  <datalist id="template-lead-sources">
+                    {crmOptions.leadSources.map((value) => <option key={value} value={value} />)}
+                  </datalist>
+                </section>
+              </div>
             ) : selectedSettings && (
               <div className="settings-layout">
                 <aside className="settings-menu">
@@ -2822,6 +3067,7 @@ export function App() {
                   <button onClick={() => setSettingsSection("company")}>Company</button>
                   <button onClick={() => setActiveView("api")}>API Access</button>
                   <span>Feature Configurations</span>
+                  <button className={settingsSection === "jobTemplates" ? "active" : ""} onClick={() => setSettingsSection("jobTemplates")}>Job Templates</button>
                   <button className={settingsSection === "jobTypes" ? "active" : ""} onClick={() => setSettingsSection("jobTypes")}>Job Types</button>
                   <button onClick={() => setActiveView("pricebook")}>Price Book</button>
                   <button className={settingsSection === "servicePlans" ? "active" : ""} onClick={() => setSettingsSection("servicePlans")}>Service Plans</button>

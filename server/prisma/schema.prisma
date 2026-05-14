@@ -98,6 +98,7 @@ model Location {
   messages       Message[]
   apiKeys        LocationApiKey[]
   crmOptions     CrmOption[]
+  jobTemplates   JobTemplate[]
   priceBookCategories PriceBookCategory[]
   priceBookItems      PriceBookItem[]
 
@@ -254,6 +255,24 @@ model CrmOption {
 
   @@unique([locationId, kind, name])
   @@index([locationId, kind])
+}
+
+model JobTemplate {
+  id           String   @id @default(cuid())
+  locationId   String
+  name         String
+  title        String
+  jobType      String
+  leadSource   String?
+  tags         String[] @default([])
+  privateNotes String?
+  lineItems    Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  location     Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, name])
+  @@index([locationId])
 }
 
 model PriceBookCategory {
