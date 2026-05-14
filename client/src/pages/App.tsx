@@ -106,6 +106,8 @@ type Job = {
   jobNumber: number;
   title: string;
   jobType: string;
+  leadSource?: string;
+  tags?: string[];
   status: string;
   scheduledStart?: string;
   scheduledEnd?: string;
@@ -146,6 +148,7 @@ type ApiKey = {
 type View = "dispatch" | "schedule" | "customers" | "jobs" | "invoices" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
+type CrmOptions = { leadSources: string[]; tags: string[]; jobTypes: string[] };
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -235,6 +238,9 @@ export function App() {
   const [jobSearch, setJobSearch] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState("all");
   const [createClientInline, setCreateClientInline] = useState(false);
+  const [jobClientSearch, setJobClientSearch] = useState("");
+  const [jobAddressSearch, setJobAddressSearch] = useState("");
+  const [tagDraft, setTagDraft] = useState("");
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [apiKeyName, setApiKeyName] = useState("Partner API");
   const [newApiToken, setNewApiToken] = useState("");
@@ -243,6 +249,11 @@ export function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [crmOptions, setCrmOptions] = useState<CrmOptions>({
+    leadSources: ["Unknown", "Online Booking", "Google Ads", "Facebook Ads", "Yelp Ads", "Referral", "Phone Call"],
+    tags: [],
+    jobTypes: ["Car Lockout Service", "House Lockout Service", "Rekey", "Lock Install", "Car Key", "Ignition", "Safe", "Access Control"]
+  });
   const [customerForm, setCustomerForm] = useState<CustomerForm>({
     firstName: "",
     lastName: "",
@@ -292,6 +303,22 @@ export function App() {
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
   const selectedJobCustomer = customers.find((customer) => customer.id === jobForm.customerId);
   const selectedJobAddresses = selectedJobCustomer?.addresses ?? [];
+  const clientMatches = useMemo(() => {
+    const query = jobClientSearch.trim().toLowerCase();
+    if (!query) return customers.slice(0, 8);
+    return customers.filter((customer) => [
+      customer.firstName,
+      customer.lastName,
+      customer.phone,
+      customer.email ?? "",
+      ...(customer.addresses ?? []).map(addressLine)
+    ].some((value) => value.toLowerCase().includes(query))).slice(0, 8);
+  }, [customers, jobClientSearch]);
+  const addressMatches = useMemo(() => {
+    const query = jobAddressSearch.trim().toLowerCase();
+    if (!query) return selectedJobAddresses;
+    return selectedJobAddresses.filter((address) => addressLine(address).toLowerCase().includes(query));
+  }, [jobAddressSearch, selectedJobAddresses]);
   const filteredJobs = useMemo(() => {
     const query = jobSearch.trim().toLowerCase();
     return jobs.filter((job) => {
@@ -300,6 +327,8 @@ export function App() {
         String(job.jobNumber),
         job.title,
         job.jobType,
+        job.leadSource ?? "",
+        ...(job.tags ?? []),
         job.customer.firstName,
         job.customer.lastName,
         addressLine(job.address ?? job.customer.addresses?.[0])
@@ -316,12 +345,13 @@ export function App() {
   }), [jobs]);
 
   async function loadDashboard() {
-    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult] = await Promise.all([
       api<Summary>("/api/settings/summary"),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
       api<{ invoices: Invoice[] }>("/api/invoices"),
-      api<{ technicians: Technician[] }>("/api/technicians")
+      api<{ technicians: Technician[] }>("/api/technicians"),
+      api<CrmOptions>("/api/settings/options")
     ]);
 
     setSummary(summaryResult);
@@ -329,6 +359,7 @@ export function App() {
     setJobs(jobsResult.jobs);
     setInvoices(invoicesResult.invoices);
     setTechnicians(techniciansResult.technicians);
+    setCrmOptions(optionsResult);
 
     const [locationResult, apiKeyResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
@@ -420,6 +451,67 @@ export function App() {
     await loadDashboard();
   }
 
+  async function saveJobOption(kind: "leadSource" | "tag" | "jobType", name: string) {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    await api("/api/settings/options", {
+      method: "POST",
+      body: JSON.stringify({ kind, name: cleanName })
+    });
+    setCrmOptions((current) => {
+      const key: keyof CrmOptions = kind === "leadSource" ? "leadSources" : kind === "jobType" ? "jobTypes" : "tags";
+      return { ...current, [key]: [...new Set([...current[key], cleanName])].sort() };
+    });
+  }
+
+  async function saveInlineJobClient() {
+    setError("");
+    const customerResult = await api<{ customer: Customer }>("/api/customers", {
+      method: "POST",
+      body: JSON.stringify({
+        firstName: jobClientForm.firstName,
+        lastName: jobClientForm.lastName,
+        phone: jobClientForm.phone,
+        email: jobClientForm.email,
+        source: jobForm.leadSource || jobClientForm.source,
+        address: jobClientForm.street1 ? {
+          street1: jobClientForm.street1,
+          city: jobClientForm.city,
+          state: jobClientForm.state,
+          postalCode: jobClientForm.postalCode
+        } : undefined
+      })
+    });
+    const customer = customerResult.customer;
+    setCustomers((current) => [customer, ...current.filter((item) => item.id !== customer.id)]);
+    setJobForm((current) => ({ ...current, customerId: customer.id, addressId: customer.addresses?.[0]?.id ?? "" }));
+    setJobClientSearch(`${customer.firstName} ${customer.lastName} / ${customer.phone}`);
+    setJobAddressSearch(customer.addresses?.[0] ? addressLine(customer.addresses[0]) : "");
+    setCreateClientInline(false);
+    setJobClientForm({ firstName: "", lastName: "", phone: "", email: "", source: "", street1: "", city: "", state: "CA", postalCode: "" });
+  }
+
+  async function addJobTag(name: string) {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    const nextTags = [...new Set([...splitTags(jobForm.tags), cleanName])];
+    setJobForm((current) => ({ ...current, tags: nextTags.join(", ") }));
+    setTagDraft("");
+    await saveJobOption("tag", cleanName);
+  }
+
+  function selectJobCustomer(customer: Customer) {
+    setCreateClientInline(false);
+    setJobForm((current) => ({ ...current, customerId: customer.id, addressId: customer.addresses?.[0]?.id ?? "" }));
+    setJobClientSearch(`${customer.firstName} ${customer.lastName} / ${customer.phone}`);
+    setJobAddressSearch(customer.addresses?.[0] ? addressLine(customer.addresses[0]) : "");
+  }
+
+  function selectJobAddress(address: Address) {
+    setJobForm((current) => ({ ...current, addressId: address.id }));
+    setJobAddressSearch(addressLine(address));
+  }
+
   async function createJob(event: FormEvent) {
     event.preventDefault();
     setError("");
@@ -463,6 +555,8 @@ export function App() {
         technicianId: jobForm.technicianId || undefined,
         title: jobForm.title || jobForm.jobType,
         jobType: jobForm.jobType,
+        leadSource: jobForm.leadSource,
+        tags: splitTags(jobForm.tags),
         status: "SCHEDULED",
         scheduledStart: jobForm.scheduledStart ? new Date(jobForm.scheduledStart).toISOString() : undefined,
         scheduledEnd: jobForm.scheduledEnd ? new Date(jobForm.scheduledEnd).toISOString() : undefined,
@@ -485,6 +579,9 @@ export function App() {
     });
     setJobClientForm({ firstName: "", lastName: "", phone: "", email: "", source: "", street1: "", city: "", state: "CA", postalCode: "" });
     setCreateClientInline(false);
+    setJobClientSearch("");
+    setJobAddressSearch("");
+    setTagDraft("");
     await loadDashboard();
     setJobPageMode("list");
   }
@@ -954,16 +1051,49 @@ export function App() {
                     <div className="panel-header"><h2>Client</h2></div>
                     {!createClientInline && (
                       <div className="record-form">
-                        <select value={jobForm.customerId} onChange={(event) => setJobForm({ ...jobForm, customerId: event.target.value, addressId: "" })}>
-                          <option value="">Search or select client</option>
-                          {customers.map((customer) => (
-                            <option key={customer.id} value={customer.id}>{customer.firstName} {customer.lastName} / {customer.phone}</option>
-                          ))}
-                        </select>
-                        <select value={jobForm.addressId} onChange={(event) => setJobForm({ ...jobForm, addressId: event.target.value })} disabled={!selectedJobAddresses.length}>
-                          <option value="">Select address details</option>
-                          {selectedJobAddresses.map((address) => <option key={address.id} value={address.id}>{addressLine(address)}</option>)}
-                        </select>
+                        <div className="typeahead">
+                          <input
+                            placeholder="Name, email, phone or address"
+                            value={jobClientSearch}
+                            onChange={(event) => {
+                              setJobClientSearch(event.target.value);
+                              setJobForm({ ...jobForm, customerId: "", addressId: "" });
+                              setJobAddressSearch("");
+                            }}
+                          />
+                          {jobClientSearch && !jobForm.customerId && (
+                            <div className="typeahead-results">
+                              {clientMatches.map((customer) => (
+                                <button type="button" key={customer.id} onClick={() => selectJobCustomer(customer)}>
+                                  <strong>{customer.firstName} {customer.lastName}</strong>
+                                  <span>{customer.phone}{customer.email ? ` / ${customer.email}` : ""}</span>
+                                </button>
+                              ))}
+                              {clientMatches.length === 0 && <span className="typeahead-empty">No matching clients yet.</span>}
+                            </div>
+                          )}
+                        </div>
+                        <div className="typeahead">
+                          <input
+                            placeholder="Select address details"
+                            value={jobAddressSearch}
+                            disabled={!selectedJobAddresses.length}
+                            onChange={(event) => {
+                              setJobAddressSearch(event.target.value);
+                              setJobForm({ ...jobForm, addressId: "" });
+                            }}
+                          />
+                          {jobAddressSearch && selectedJobAddresses.length > 0 && !jobForm.addressId && (
+                            <div className="typeahead-results">
+                              {addressMatches.map((address) => (
+                                <button type="button" key={address.id} onClick={() => selectJobAddress(address)}>
+                                  <strong>{addressLine(address)}</strong>
+                                </button>
+                              ))}
+                              {addressMatches.length === 0 && <span className="typeahead-empty">No matching addresses.</span>}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
 
@@ -980,9 +1110,12 @@ export function App() {
                       </div>
                     )}
                     <div className="or-divider">OR</div>
+                    {createClientInline && <button className="outline-button centered-action" type="button" onClick={saveInlineJobClient}>Save Client</button>}
                     <button className="primary centered-action" type="button" onClick={() => {
                       setCreateClientInline((current) => !current);
                       setJobForm((current) => ({ ...current, customerId: "", addressId: "" }));
+                      setJobClientSearch("");
+                      setJobAddressSearch("");
                     }}>
                       <Plus size={18} /> {createClientInline ? "Select Existing Client" : "Create New Client"}
                     </button>
@@ -1026,30 +1159,68 @@ export function App() {
                         <input value={jobForm.title} onChange={(event) => setJobForm({ ...jobForm, title: event.target.value })} placeholder="Car lockout, Rekey, Install" required />
                       </label>
                       <label>Lead Source
-                        <select value={jobForm.leadSource} onChange={(event) => setJobForm({ ...jobForm, leadSource: event.target.value })}>
-                          <option>Unknown</option>
-                          <option>Online Booking</option>
-                          <option>Google Ads</option>
-                          <option>Facebook Ads</option>
-                          <option>Yelp Ads</option>
-                          <option>Referral</option>
-                          <option>Phone Call</option>
-                        </select>
+                        <input
+                          list="lead-source-options"
+                          value={jobForm.leadSource}
+                          onChange={(event) => setJobForm({ ...jobForm, leadSource: event.target.value })}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              saveJobOption("leadSource", jobForm.leadSource).catch((err: Error) => setError(err.message));
+                            }
+                          }}
+                          onBlur={() => saveJobOption("leadSource", jobForm.leadSource).catch(() => undefined)}
+                          placeholder="Type a source and press Enter"
+                        />
+                        <datalist id="lead-source-options">
+                          {crmOptions.leadSources.map((source) => <option key={source} value={source} />)}
+                        </datalist>
                       </label>
                       <label>Tags
-                        <input placeholder="urgent, warranty, commercial" value={jobForm.tags} onChange={(event) => setJobForm({ ...jobForm, tags: event.target.value })} />
+                        <div className="tag-editor">
+                          <div className="tag-list">
+                            {splitTags(jobForm.tags).map((tag) => (
+                              <button type="button" key={tag} onClick={() => setJobForm({ ...jobForm, tags: splitTags(jobForm.tags).filter((item) => item !== tag).join(", ") })}>
+                                {tag}
+                              </button>
+                            ))}
+                          </div>
+                          <input
+                            list="tag-options"
+                            placeholder="Type tag and press Enter"
+                            value={tagDraft}
+                            onChange={(event) => setTagDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === ",") {
+                                event.preventDefault();
+                                addJobTag(tagDraft).catch((err: Error) => setError(err.message));
+                              }
+                            }}
+                            onBlur={() => addJobTag(tagDraft).catch(() => undefined)}
+                          />
+                          <datalist id="tag-options">
+                            {crmOptions.tags.map((tag) => <option key={tag} value={tag} />)}
+                          </datalist>
+                        </div>
                       </label>
                       <label>Job Type
-                        <select value={jobForm.jobType} onChange={(event) => setJobForm({ ...jobForm, jobType: event.target.value })}>
-                          <option>Car Lockout Service</option>
-                          <option>House Lockout Service</option>
-                          <option>Rekey</option>
-                          <option>Lock Install</option>
-                          <option>Car Key</option>
-                          <option>Ignition</option>
-                          <option>Safe</option>
-                          <option>Access Control</option>
-                        </select>
+                        <input
+                          list="job-type-options"
+                          value={jobForm.jobType}
+                          onChange={(event) => setJobForm({ ...jobForm, jobType: event.target.value })}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              saveJobOption("jobType", jobForm.jobType).catch((err: Error) => setError(err.message));
+                            }
+                          }}
+                          onBlur={() => saveJobOption("jobType", jobForm.jobType).catch(() => undefined)}
+                          placeholder="Type a job type and press Enter"
+                          required
+                        />
+                        <datalist id="job-type-options">
+                          {crmOptions.jobTypes.map((jobType) => <option key={jobType} value={jobType} />)}
+                        </datalist>
                       </label>
                       <label>Description
                         <input placeholder="Visible job description" value={jobForm.description} onChange={(event) => setJobForm({ ...jobForm, description: event.target.value })} />

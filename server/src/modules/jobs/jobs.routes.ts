@@ -13,6 +13,8 @@ const jobSchema = z.object({
   technicianId: z.string().optional(),
   title: z.string().min(1),
   jobType: z.string().min(1),
+  leadSource: z.string().optional(),
+  tags: z.array(z.string()).default([]),
   status: z.nativeEnum(JobStatus).optional(),
   priority: z.string().default("normal"),
   scheduledStart: z.string().datetime().optional(),
@@ -42,6 +44,11 @@ jobsRouter.get("/", asyncHandler(async (req, res) => {
 jobsRouter.post("/", asyncHandler(async (req, res) => {
   const input = jobSchema.parse(req.body);
   const locationId = activeLocationId(req);
+  const optionNames = [
+    { kind: "jobType", name: input.jobType },
+    ...(input.leadSource ? [{ kind: "leadSource", name: input.leadSource }] : []),
+    ...input.tags.map((name) => ({ kind: "tag", name }))
+  ];
   const job = await prisma.job.create({
     data: {
       ...input,
@@ -57,6 +64,13 @@ jobsRouter.post("/", asyncHandler(async (req, res) => {
       invoices: { include: { payments: true } }
     }
   });
+  if (optionNames.length) {
+    await Promise.all(optionNames.map((option) => prisma.crmOption.upsert({
+      where: { locationId_kind_name: { locationId, kind: option.kind, name: option.name } },
+      create: { locationId, kind: option.kind, name: option.name },
+      update: {}
+    })));
+  }
   res.status(201).json({ job });
 }));
 

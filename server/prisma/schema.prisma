@@ -90,6 +90,7 @@ model Location {
   invoices       Invoice[]
   messages       Message[]
   apiKeys        LocationApiKey[]
+  crmOptions     CrmOption[]
 
   @@unique([organizationId, slug])
 }
@@ -187,6 +188,8 @@ model Job {
   technicianId   String?
   title          String
   jobType        String
+  leadSource     String?
+  tags           String[]      @default([])
   status         JobStatus     @default(LEAD)
   priority       String        @default("normal")
   scheduledStart DateTime?
@@ -204,6 +207,19 @@ model Job {
   notes          JobNote[]
   lineItems      JobLineItem[]
   invoices       Invoice[]
+}
+
+model CrmOption {
+  id         String   @id @default(cuid())
+  locationId String
+  kind       String
+  name       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, kind, name])
+  @@index([locationId, kind])
 }
 
 model JobNote {
