@@ -6,6 +6,26 @@ import { asyncHandler } from "../../utils/async-handler.js";
 
 export const customersRouter = Router();
 
+const phoneEntrySchema = z.object({
+  label: z.enum(["mobile", "work", "home", "other"]).default("mobile"),
+  number: z.string().min(7)
+});
+
+const communicationPrefsSchema = z.object({
+  sms: z.boolean().default(true),
+  email: z.boolean().default(true),
+  phone: z.boolean().default(true)
+});
+
+const addressSchema = z.object({
+  label: z.string().default("Service"),
+  street1: z.string().min(1),
+  street2: z.string().optional(),
+  city: z.string().min(1),
+  state: z.string().min(2),
+  postalCode: z.string().min(3)
+});
+
 const customerSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
@@ -13,17 +33,46 @@ const customerSchema = z.object({
   email: z.string().email().optional().or(z.literal("")),
   phone: z.string().min(7),
   alternatePhone: z.string().optional(),
+  additionalEmails: z.array(z.string().email()).default([]),
+  additionalPhones: z.array(phoneEntrySchema).default([]),
   source: z.string().optional(),
+  tags: z.array(z.string()).default([]),
   notes: z.string().optional(),
-  address: z.object({
-    label: z.string().default("Service"),
-    street1: z.string().min(1),
-    street2: z.string().optional(),
-    city: z.string().min(1),
-    state: z.string().min(2),
-    postalCode: z.string().min(3)
-  }).optional()
+  communicationPrefs: communicationPrefsSchema.default({ sms: true, email: true, phone: true }),
+  attachments: z.array(z.string()).default([]),
+  paymentMethodNote: z.string().optional(),
+  address: addressSchema.optional()
 });
+
+const customerUpdateSchema = customerSchema.partial();
+const customerNoteSchema = z.object({ content: z.string().min(1), author: z.string().optional() });
+const attachmentSchema = z.object({ name: z.string().min(1) });
+
+const customerInclude = {
+  addresses: true,
+  privateNotes: { orderBy: { createdAt: "desc" as const } },
+  jobs: {
+    orderBy: { createdAt: "desc" as const },
+    include: { address: true, technician: true, invoices: true }
+  },
+  invoices: {
+    orderBy: { createdAt: "desc" as const },
+    include: { job: true, payments: true, items: true }
+  },
+  messages: { orderBy: { createdAt: "desc" as const } }
+};
+
+async function saveCustomerOptions(locationId: string, input: { source?: string; tags?: string[] }) {
+  const optionCreates = [
+    ...(input.source ? [{ kind: "leadSource", name: input.source }] : []),
+    ...(input.tags ?? []).map((name) => ({ kind: "tag", name }))
+  ];
+  await Promise.all(optionCreates.map((option) => prisma.crmOption.upsert({
+    where: { locationId_kind_name: { locationId, kind: option.kind, name: option.name } },
+    create: { locationId, ...option },
+    update: {}
+  })));
+}
 
 customersRouter.get("/", asyncHandler(async (req, res) => {
   const q = typeof req.query.q === "string" ? req.query.q : "";
@@ -40,7 +89,7 @@ customersRouter.get("/", asyncHandler(async (req, res) => {
         ]
       } : {})
     },
-    include: { addresses: true },
+    include: customerInclude,
     orderBy: { updatedAt: "desc" },
     take: 100
   });
@@ -50,6 +99,7 @@ customersRouter.get("/", asyncHandler(async (req, res) => {
 customersRouter.post("/", asyncHandler(async (req, res) => {
   const input = customerSchema.parse(req.body);
   const locationId = activeLocationId(req);
+  await saveCustomerOptions(locationId, { source: input.source, tags: input.tags });
   const customer = await prisma.customer.create({
     data: {
       locationId,
@@ -59,11 +109,17 @@ customersRouter.post("/", asyncHandler(async (req, res) => {
       email: input.email || undefined,
       phone: input.phone,
       alternatePhone: input.alternatePhone,
+      additionalEmails: input.additionalEmails,
+      additionalPhones: input.additionalPhones,
       source: input.source,
+      tags: input.tags,
       notes: input.notes,
+      communicationPrefs: input.communicationPrefs,
+      attachments: input.attachments,
+      paymentMethodNote: input.paymentMethodNote,
       addresses: input.address ? { create: input.address } : undefined
     },
-    include: { addresses: true }
+    include: customerInclude
   });
   res.status(201).json({ customer });
 }));
@@ -72,11 +128,81 @@ customersRouter.get("/:id", asyncHandler(async (req, res) => {
   const customerId = String(req.params.id);
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, locationId: activeLocationId(req) },
-    include: { addresses: true, jobs: true, invoices: true, messages: { orderBy: { createdAt: "desc" } } }
+    include: customerInclude
   });
 
   if (!customer) return res.status(404).json({ error: "Customer not found" });
   res.json({ customer });
+}));
+
+customersRouter.patch("/:id", asyncHandler(async (req, res) => {
+  const customerId = String(req.params.id);
+  const locationId = activeLocationId(req);
+  const input = customerUpdateSchema.parse(req.body);
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId } });
+  if (!existing) return res.status(404).json({ error: "Customer not found" });
+
+  await saveCustomerOptions(locationId, { source: input.source, tags: input.tags });
+  const customer = await prisma.customer.update({
+    where: { id: existing.id },
+    data: {
+      firstName: input.firstName,
+      lastName: input.lastName,
+      companyName: input.companyName,
+      email: input.email || undefined,
+      phone: input.phone,
+      alternatePhone: input.alternatePhone,
+      additionalEmails: input.additionalEmails,
+      additionalPhones: input.additionalPhones,
+      source: input.source,
+      tags: input.tags,
+      notes: input.notes,
+      communicationPrefs: input.communicationPrefs,
+      attachments: input.attachments,
+      paymentMethodNote: input.paymentMethodNote
+    },
+    include: customerInclude
+  });
+  res.json({ customer });
+}));
+
+customersRouter.post("/:id/addresses", asyncHandler(async (req, res) => {
+  const customerId = String(req.params.id);
+  const locationId = activeLocationId(req);
+  const input = addressSchema.parse(req.body);
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId } });
+  if (!existing) return res.status(404).json({ error: "Customer not found" });
+
+  await prisma.address.create({ data: { customerId: existing.id, ...input } });
+  const customer = await prisma.customer.findUniqueOrThrow({ where: { id: existing.id }, include: customerInclude });
+  res.status(201).json({ customer });
+}));
+
+customersRouter.post("/:id/notes", asyncHandler(async (req, res) => {
+  const customerId = String(req.params.id);
+  const locationId = activeLocationId(req);
+  const input = customerNoteSchema.parse(req.body);
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId } });
+  if (!existing) return res.status(404).json({ error: "Customer not found" });
+
+  await prisma.customerNote.create({ data: { customerId: existing.id, content: input.content, author: input.author || "Office" } });
+  const customer = await prisma.customer.findUniqueOrThrow({ where: { id: existing.id }, include: customerInclude });
+  res.status(201).json({ customer });
+}));
+
+customersRouter.post("/:id/attachments", asyncHandler(async (req, res) => {
+  const customerId = String(req.params.id);
+  const locationId = activeLocationId(req);
+  const input = attachmentSchema.parse(req.body);
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId } });
+  if (!existing) return res.status(404).json({ error: "Customer not found" });
+
+  const customer = await prisma.customer.update({
+    where: { id: existing.id },
+    data: { attachments: [...existing.attachments, input.name] },
+    include: customerInclude
+  });
+  res.status(201).json({ customer });
 }));
 
 customersRouter.delete("/:id", asyncHandler(async (req, res) => {

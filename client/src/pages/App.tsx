@@ -19,15 +19,20 @@ import {
   ListChecks,
   LogOut,
   Map,
+  MapPin,
+  Mail,
   MessageSquareText,
   MoreHorizontal,
   Navigation,
+  Paperclip,
   Percent,
   Phone,
   Plus,
   ReceiptText,
   Search,
   Settings,
+  Smartphone,
+  StickyNote,
   Tag,
   Trash2,
   TrendingUp,
@@ -68,18 +73,39 @@ type Customer = {
   firstName: string;
   lastName: string;
   phone: string;
+  companyName?: string;
   email?: string;
+  alternatePhone?: string;
+  additionalEmails?: string[];
+  additionalPhones?: Array<{ label: "mobile" | "work" | "home" | "other"; number: string }>;
   source?: string;
+  tags?: string[];
+  notes?: string;
+  communicationPrefs?: { sms: boolean; email: boolean; phone: boolean };
+  attachments?: string[];
+  paymentMethodNote?: string;
+  createdAt?: string;
+  privateNotes?: CustomerNote[];
+  jobs?: Job[];
+  invoices?: Invoice[];
   addresses?: Address[];
 };
 
 type Address = {
   id: string;
+  label?: string;
   street1: string;
   street2?: string;
   city: string;
   state: string;
   postalCode: string;
+};
+
+type CustomerNote = {
+  id: string;
+  author: string;
+  content: string;
+  createdAt: string;
 };
 
 type Technician = {
@@ -141,11 +167,20 @@ type CustomerForm = {
   lastName: string;
   phone: string;
   email: string;
+  additionalEmails: string;
+  workPhone: string;
+  homePhone: string;
   source: string;
+  tags: string;
+  notes: string;
   street1: string;
+  street2: string;
   city: string;
   state: string;
   postalCode: string;
+  communicationSms: boolean;
+  communicationEmail: boolean;
+  communicationPhone: boolean;
 };
 
 type Job = {
@@ -158,6 +193,7 @@ type Job = {
   status: string;
   scheduledStart?: string;
   scheduledEnd?: string;
+  completedAt?: string;
   description?: string;
   internalNotes?: string;
   attachments?: string[];
@@ -173,7 +209,10 @@ type Invoice = {
   invoiceNumber: number;
   status: string;
   total: number;
+  createdAt?: string;
+  paidAt?: string;
   customer: Customer;
+  job?: Job;
 };
 
 type LocationAccess = {
@@ -378,6 +417,38 @@ function splitTags(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function blankCustomerForm(): CustomerForm {
+  return {
+    firstName: "",
+    lastName: "",
+    phone: "",
+    email: "",
+    additionalEmails: "",
+    workPhone: "",
+    homePhone: "",
+    source: "",
+    tags: "",
+    notes: "",
+    street1: "",
+    street2: "",
+    city: "",
+    state: "CA",
+    postalCode: "",
+    communicationSms: true,
+    communicationEmail: true,
+    communicationPhone: true
+  };
+}
+
+function customerName(customer?: Customer) {
+  if (!customer) return "Unknown customer";
+  return [customer.firstName, customer.lastName].filter(Boolean).join(" ") || customer.companyName || "Unnamed customer";
+}
+
+function formatDate(value?: string) {
+  return value ? new Date(value).toLocaleDateString([], { month: "2-digit", day: "2-digit", year: "numeric" }) : "Not recorded";
+}
+
 function dollarsToCents(value: string) {
   return Math.round(Number(value || "0") * 100);
 }
@@ -521,6 +592,12 @@ export function App() {
   const [currentRole, setCurrentRole] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [customerProfileTab, setCustomerProfileTab] = useState<"profile" | "leads" | "estimates" | "jobs" | "invoices" | "attachments" | "notes">("profile");
+  const [customerNoteDraft, setCustomerNoteDraft] = useState("");
+  const [customerAddressForm, setCustomerAddressForm] = useState({ label: "Service", street1: "", street2: "", city: "", state: "CA", postalCode: "" });
+  const [customerAttachmentName, setCustomerAttachmentName] = useState("");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -532,17 +609,7 @@ export function App() {
     checklists: ["Arrival checklist", "Vehicle lockout checklist", "Rekey checklist", "Invoice review"],
     servicePlans: ["Residential maintenance", "Commercial priority", "Property manager"]
   });
-  const [customerForm, setCustomerForm] = useState<CustomerForm>({
-    firstName: "",
-    lastName: "",
-    phone: "",
-    email: "",
-    source: "",
-    street1: "",
-    city: "",
-    state: "CA",
-    postalCode: ""
-  });
+  const [customerForm, setCustomerForm] = useState<CustomerForm>(() => blankCustomerForm());
   const [jobForm, setJobForm] = useState({
     customerId: "",
     addressId: "",
@@ -556,17 +623,7 @@ export function App() {
     leadSource: "Unknown",
     tags: ""
   });
-  const [jobClientForm, setJobClientForm] = useState<CustomerForm>({
-    firstName: "",
-    lastName: "",
-    phone: "",
-    email: "",
-    source: "",
-    street1: "",
-    city: "",
-    state: "CA",
-    postalCode: ""
-  });
+  const [jobClientForm, setJobClientForm] = useState<CustomerForm>(() => blankCustomerForm());
   const [invoiceForm, setInvoiceForm] = useState({
     customerId: "",
     jobId: "",
@@ -614,6 +671,36 @@ export function App() {
       return matchesStatus && matchesQuery;
     });
   }, [jobSearch, jobStatusFilter, jobs]);
+  const filteredCustomers = useMemo(() => {
+    const query = customerSearch.trim().toLowerCase();
+    if (!query) return customers;
+    return customers.filter((customer) => [
+      customerName(customer),
+      customer.phone,
+      customer.email ?? "",
+      customer.source ?? "",
+      ...(customer.tags ?? []),
+      ...(customer.additionalEmails ?? []),
+      ...(customer.additionalPhones ?? []).map((phoneEntry) => phoneEntry.number),
+      ...(customer.addresses ?? []).map(addressLine)
+    ].some((value) => value.toLowerCase().includes(query)));
+  }, [customerSearch, customers]);
+  const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId) ?? null;
+  const selectedCustomerJobs = useMemo(() => {
+    if (!selectedCustomer) return [];
+    return jobs.filter((job) => job.customer.id === selectedCustomer.id);
+  }, [jobs, selectedCustomer]);
+  const selectedCustomerInvoices = useMemo(() => {
+    if (!selectedCustomer) return [];
+    return invoices.filter((invoice) => invoice.customer.id === selectedCustomer.id);
+  }, [invoices, selectedCustomer]);
+  const selectedCustomerLifetimeValue = selectedCustomerInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
+  const selectedCustomerOutstanding = selectedCustomerInvoices
+    .filter((invoice) => invoice.status !== "PAID")
+    .reduce((sum, invoice) => sum + invoice.total, 0);
+  const selectedCustomerLastService = [...selectedCustomerJobs]
+    .filter((job) => job.scheduledStart || job.completedAt)
+    .sort((a, b) => new Date(b.completedAt ?? b.scheduledStart ?? "").getTime() - new Date(a.completedAt ?? a.scheduledStart ?? "").getTime())[0];
   const filteredEmployees = useMemo(() => {
     const query = employeeSearch.trim().toLowerCase();
     if (!query) return technicians;
@@ -809,30 +896,89 @@ export function App() {
   async function createCustomer(event: FormEvent) {
     event.preventDefault();
     setError("");
-    await api("/api/customers", {
+    const result = await api<{ customer: Customer }>("/api/customers", {
       method: "POST",
       body: JSON.stringify({
         firstName: customerForm.firstName,
         lastName: customerForm.lastName,
         phone: customerForm.phone,
         email: customerForm.email,
+        additionalEmails: splitTags(customerForm.additionalEmails),
+        additionalPhones: [
+          customerForm.workPhone ? { label: "work", number: customerForm.workPhone } : null,
+          customerForm.homePhone ? { label: "home", number: customerForm.homePhone } : null
+        ].filter(Boolean),
         source: customerForm.source,
+        tags: splitTags(customerForm.tags),
+        notes: customerForm.notes,
+        communicationPrefs: {
+          sms: customerForm.communicationSms,
+          email: customerForm.communicationEmail,
+          phone: customerForm.communicationPhone
+        },
         address: customerForm.street1 ? {
+          label: "Service",
           street1: customerForm.street1,
+          street2: customerForm.street2 || undefined,
           city: customerForm.city,
           state: customerForm.state,
           postalCode: customerForm.postalCode
         } : undefined
       })
     });
-    setCustomerForm({ firstName: "", lastName: "", phone: "", email: "", source: "", street1: "", city: "", state: "CA", postalCode: "" });
+    setCustomers((current) => [result.customer, ...current.filter((item) => item.id !== result.customer.id)]);
+    setSelectedCustomerId(result.customer.id);
+    setCustomerProfileTab("profile");
+    setCustomerForm(blankCustomerForm());
     await loadDashboard();
   }
 
   async function removeCustomer(id: string) {
     setError("");
     await api(`/api/customers/${id}`, { method: "DELETE" });
+    if (selectedCustomerId === id) setSelectedCustomerId("");
     await loadDashboard();
+  }
+
+  function updateCustomerInState(customer: Customer) {
+    setCustomers((current) => [customer, ...current.filter((item) => item.id !== customer.id)]);
+    setSelectedCustomerId(customer.id);
+  }
+
+  async function addCustomerNote(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedCustomer || !customerNoteDraft.trim()) return;
+    setError("");
+    const result = await api<{ customer: Customer }>(`/api/customers/${selectedCustomer.id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ content: customerNoteDraft })
+    });
+    updateCustomerInState(result.customer);
+    setCustomerNoteDraft("");
+  }
+
+  async function addCustomerAddress(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedCustomer) return;
+    setError("");
+    const result = await api<{ customer: Customer }>(`/api/customers/${selectedCustomer.id}/addresses`, {
+      method: "POST",
+      body: JSON.stringify(customerAddressForm)
+    });
+    updateCustomerInState(result.customer);
+    setCustomerAddressForm({ label: "Service", street1: "", street2: "", city: "", state: "CA", postalCode: "" });
+  }
+
+  async function addCustomerAttachment(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedCustomer || !customerAttachmentName.trim()) return;
+    setError("");
+    const result = await api<{ customer: Customer }>(`/api/customers/${selectedCustomer.id}/attachments`, {
+      method: "POST",
+      body: JSON.stringify({ name: customerAttachmentName })
+    });
+    updateCustomerInState(result.customer);
+    setCustomerAttachmentName("");
   }
 
   async function saveJobOption(kind: CrmOptionKind, name: string) {
@@ -889,9 +1035,18 @@ export function App() {
         lastName: jobClientForm.lastName,
         phone: jobClientForm.phone,
         email: jobClientForm.email,
+        additionalEmails: splitTags(jobClientForm.additionalEmails),
+        additionalPhones: [
+          jobClientForm.workPhone ? { label: "work", number: jobClientForm.workPhone } : null,
+          jobClientForm.homePhone ? { label: "home", number: jobClientForm.homePhone } : null
+        ].filter(Boolean),
         source: jobForm.leadSource || jobClientForm.source,
+        tags: splitTags(jobClientForm.tags),
+        notes: jobClientForm.notes,
         address: jobClientForm.street1 ? {
+          label: "Service",
           street1: jobClientForm.street1,
+          street2: jobClientForm.street2 || undefined,
           city: jobClientForm.city,
           state: jobClientForm.state,
           postalCode: jobClientForm.postalCode
@@ -904,7 +1059,7 @@ export function App() {
     setJobClientSearch(`${customer.firstName} ${customer.lastName} / ${customer.phone}`);
     setJobAddressSearch(customer.addresses?.[0] ? addressLine(customer.addresses[0]) : "");
     setCreateClientInline(false);
-    setJobClientForm({ firstName: "", lastName: "", phone: "", email: "", source: "", street1: "", city: "", state: "CA", postalCode: "" });
+    setJobClientForm(blankCustomerForm());
   }
 
   async function addJobTag(name: string) {
@@ -1019,9 +1174,18 @@ export function App() {
           lastName: jobClientForm.lastName,
           phone: jobClientForm.phone,
           email: jobClientForm.email,
+          additionalEmails: splitTags(jobClientForm.additionalEmails),
+          additionalPhones: [
+            jobClientForm.workPhone ? { label: "work", number: jobClientForm.workPhone } : null,
+            jobClientForm.homePhone ? { label: "home", number: jobClientForm.homePhone } : null
+          ].filter(Boolean),
           source: jobForm.leadSource || jobClientForm.source,
+          tags: splitTags(jobClientForm.tags),
+          notes: jobClientForm.notes,
           address: jobClientForm.street1 ? {
+            label: "Service",
             street1: jobClientForm.street1,
+            street2: jobClientForm.street2 || undefined,
             city: jobClientForm.city,
             state: jobClientForm.state,
             postalCode: jobClientForm.postalCode
@@ -1079,7 +1243,7 @@ export function App() {
       leadSource: "Unknown",
       tags: ""
     });
-    setJobClientForm({ firstName: "", lastName: "", phone: "", email: "", source: "", street1: "", city: "", state: "CA", postalCode: "" });
+    setJobClientForm(blankCustomerForm());
     setCreateClientInline(false);
     setJobClientSearch("");
     setJobAddressSearch("");
@@ -1398,37 +1562,225 @@ export function App() {
         )}
 
         {activeView === "customers" && (
-          <div className="content-grid">
-            <section className="panel">
-              <div className="panel-header"><h2>Add Customer</h2><Users size={18} /></div>
-              <form className="record-form" onSubmit={createCustomer}>
-                <input placeholder="First name" value={customerForm.firstName} onChange={(event) => setCustomerForm({ ...customerForm, firstName: event.target.value })} required />
-                <input placeholder="Last name" value={customerForm.lastName} onChange={(event) => setCustomerForm({ ...customerForm, lastName: event.target.value })} required />
-                <input placeholder="Phone" value={customerForm.phone} onChange={(event) => setCustomerForm({ ...customerForm, phone: event.target.value })} required />
-                <input placeholder="Email" value={customerForm.email} onChange={(event) => setCustomerForm({ ...customerForm, email: event.target.value })} />
-                <input placeholder="Source" value={customerForm.source} onChange={(event) => setCustomerForm({ ...customerForm, source: event.target.value })} />
-                <input placeholder="Street" value={customerForm.street1} onChange={(event) => setCustomerForm({ ...customerForm, street1: event.target.value })} />
-                <input placeholder="City" value={customerForm.city} onChange={(event) => setCustomerForm({ ...customerForm, city: event.target.value })} />
-                <input placeholder="State" value={customerForm.state} onChange={(event) => setCustomerForm({ ...customerForm, state: event.target.value })} />
-                <input placeholder="Postal code" value={customerForm.postalCode} onChange={(event) => setCustomerForm({ ...customerForm, postalCode: event.target.value })} />
-                <button className="primary" type="submit">Add customer</button>
-              </form>
-            </section>
-            <section className="panel wide">
-              <div className="panel-header"><h2>Customer List</h2><Users size={18} /></div>
-              <div className="table-list">
-                {customers.map((customer) => (
-                  <article key={customer.id}>
-                    <div>
-                      <strong>{customer.firstName} {customer.lastName}</strong>
-                      <span>{customer.phone} {customer.email ? `/ ${customer.email}` : ""}</span>
+          <section className="customer-workspace">
+            <div className="section-actions">
+              <div className="breadcrumb"><Users size={17} /> Clients & Leads</div>
+              <button className="primary" onClick={() => setSelectedCustomerId("")}><Plus size={18} /> Create Customer</button>
+            </div>
+
+            {!selectedCustomer ? (
+              <div className="customer-grid">
+                <section className="panel customer-form-panel">
+                  <div className="panel-header"><h2>Create Customer</h2><UserPlus size={18} /></div>
+                  <form className="record-form customer-create-form" onSubmit={createCustomer}>
+                    <input placeholder="First name" value={customerForm.firstName} onChange={(event) => setCustomerForm({ ...customerForm, firstName: event.target.value })} required />
+                    <input placeholder="Last name" value={customerForm.lastName} onChange={(event) => setCustomerForm({ ...customerForm, lastName: event.target.value })} required />
+                    <input placeholder="Mobile phone" value={customerForm.phone} onChange={(event) => setCustomerForm({ ...customerForm, phone: event.target.value })} required />
+                    <input placeholder="Email" value={customerForm.email} onChange={(event) => setCustomerForm({ ...customerForm, email: event.target.value })} />
+                    <input placeholder="Additional emails, comma separated" value={customerForm.additionalEmails} onChange={(event) => setCustomerForm({ ...customerForm, additionalEmails: event.target.value })} />
+                    <input placeholder="Work phone" value={customerForm.workPhone} onChange={(event) => setCustomerForm({ ...customerForm, workPhone: event.target.value })} />
+                    <input placeholder="Home phone" value={customerForm.homePhone} onChange={(event) => setCustomerForm({ ...customerForm, homePhone: event.target.value })} />
+                    <select value={customerForm.source} onChange={(event) => setCustomerForm({ ...customerForm, source: event.target.value })}>
+                      <option value="">Lead source</option>
+                      {crmOptions.leadSources.map((source) => <option key={source} value={source}>{source}</option>)}
+                    </select>
+                    <input placeholder="Customer tags, comma separated" value={customerForm.tags} onChange={(event) => setCustomerForm({ ...customerForm, tags: event.target.value })} />
+                    <input className="span-2" placeholder="Street address" value={customerForm.street1} onChange={(event) => setCustomerForm({ ...customerForm, street1: event.target.value })} />
+                    <input placeholder="Unit, suite, gate code" value={customerForm.street2} onChange={(event) => setCustomerForm({ ...customerForm, street2: event.target.value })} />
+                    <input placeholder="City" value={customerForm.city} onChange={(event) => setCustomerForm({ ...customerForm, city: event.target.value })} />
+                    <input placeholder="State" value={customerForm.state} onChange={(event) => setCustomerForm({ ...customerForm, state: event.target.value })} />
+                    <input placeholder="Postal code" value={customerForm.postalCode} onChange={(event) => setCustomerForm({ ...customerForm, postalCode: event.target.value })} />
+                    <textarea className="span-2" placeholder="Customer notes" value={customerForm.notes} onChange={(event) => setCustomerForm({ ...customerForm, notes: event.target.value })} />
+                    <div className="span-2 preference-row">
+                      <label><input type="checkbox" checked={customerForm.communicationSms} onChange={(event) => setCustomerForm({ ...customerForm, communicationSms: event.target.checked })} /> SMS ok</label>
+                      <label><input type="checkbox" checked={customerForm.communicationEmail} onChange={(event) => setCustomerForm({ ...customerForm, communicationEmail: event.target.checked })} /> Email ok</label>
+                      <label><input type="checkbox" checked={customerForm.communicationPhone} onChange={(event) => setCustomerForm({ ...customerForm, communicationPhone: event.target.checked })} /> Phone ok</label>
                     </div>
-                    <button className="text-button" onClick={() => removeCustomer(customer.id)}>Remove</button>
-                  </article>
-                ))}
+                    <button className="primary span-2" type="submit"><Plus size={18} /> Save customer</button>
+                  </form>
+                </section>
+
+                <section className="panel wide customers-list-panel">
+                  <div className="panel-header"><h2>Customer List</h2><Users size={18} /></div>
+                  <div className="table-search"><Search size={18} /><input placeholder="Search name, phone, email, tag, or address" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} /></div>
+                  <div className="customer-list">
+                    {filteredCustomers.map((customer) => (
+                      <article key={customer.id} onClick={() => { setSelectedCustomerId(customer.id); setCustomerProfileTab("profile"); }}>
+                        <div className="customer-avatar">{customer.firstName.slice(0, 1)}{customer.lastName.slice(0, 1)}</div>
+                        <div>
+                          <strong>{customerName(customer)}</strong>
+                          <span>{customer.phone} {customer.email ? `/ ${customer.email}` : ""}</span>
+                          <small>{addressLine(customer.addresses?.[0])}</small>
+                        </div>
+                        <div className="customer-tags">{(customer.tags ?? []).slice(0, 3).map((tagName) => <span key={tagName}>{tagName}</span>)}</div>
+                      </article>
+                    ))}
+                    {filteredCustomers.length === 0 && <p className="empty">No customers match that search yet.</p>}
+                  </div>
+                </section>
               </div>
-            </section>
-          </div>
+            ) : (
+              <div className="customer-profile">
+                <div className="customer-profile-header">
+                  <button className="text-button" onClick={() => setSelectedCustomerId("")}><ChevronLeft size={16} /> Customers</button>
+                  <div>
+                    <span>Customers &gt; {customerName(selectedCustomer)}</span>
+                    <h1>{customerName(selectedCustomer)}</h1>
+                  </div>
+                  <div className="customer-profile-actions">
+                    <button className="outline-button" onClick={() => { setActiveView("jobs"); setJobPageMode("create"); selectJobCustomer(selectedCustomer); }}><Plus size={17} /> Job</button>
+                    <button className="outline-button"><Plus size={17} /> Estimate</button>
+                    <button className="outline-button"><Plus size={17} /> Lead</button>
+                    <button className="text-button" onClick={() => removeCustomer(selectedCustomer.id)}><Trash2 size={16} /> Remove</button>
+                  </div>
+                </div>
+
+                <div className="customer-tabs">
+                  {(["profile", "leads", "estimates", "jobs", "invoices", "attachments", "notes"] as const).map((tab) => (
+                    <button key={tab} className={customerProfileTab === tab ? "active" : ""} onClick={() => setCustomerProfileTab(tab)}>
+                      {tab[0].toUpperCase() + tab.slice(1)}
+                    </button>
+                  ))}
+                </div>
+
+                {customerProfileTab === "profile" && (
+                  <div className="customer-profile-grid">
+                    <aside className="customer-side-card">
+                      <section>
+                        <h3>Summary</h3>
+                        <dl>
+                          <dt>Last service</dt><dd>{formatDate(selectedCustomerLastService?.completedAt ?? selectedCustomerLastService?.scheduledStart)}</dd>
+                          <dt>Created</dt><dd>{formatDate(selectedCustomer.createdAt)}</dd>
+                          <dt>Lifetime value</dt><dd>{money.format(selectedCustomerLifetimeValue / 100)}</dd>
+                          <dt>Outstanding balance</dt><dd>{money.format(selectedCustomerOutstanding / 100)}</dd>
+                        </dl>
+                      </section>
+                      <section>
+                        <h3>Contact Info</h3>
+                        <p><Phone size={15} /> {selectedCustomer.phone}</p>
+                        {selectedCustomer.email && <p><Mail size={15} /> {selectedCustomer.email}</p>}
+                        {(selectedCustomer.additionalPhones ?? []).map((entry) => <p key={`${entry.label}-${entry.number}`}><Smartphone size={15} /> {entry.label}: {entry.number}</p>)}
+                        {(selectedCustomer.additionalEmails ?? []).map((entry) => <p key={entry}><Mail size={15} /> {entry}</p>)}
+                      </section>
+                      <section>
+                        <h3>Payment Method</h3>
+                        <button className="outline-button"><CreditCard size={16} /> Add credit card</button>
+                        <button className="outline-button"><CreditCard size={16} /> Request card on file</button>
+                      </section>
+                      <section>
+                        <h3>Communication Preferences</h3>
+                        <p>{selectedCustomer.communicationPrefs?.sms === false ? "SMS opted out" : "SMS allowed"}</p>
+                        <p>{selectedCustomer.communicationPrefs?.email === false ? "Email opted out" : "Email allowed"}</p>
+                        <p>{selectedCustomer.communicationPrefs?.phone === false ? "Phone opted out" : "Phone allowed"}</p>
+                      </section>
+                    </aside>
+
+                    <div className="customer-main-stack">
+                      <section className="panel customer-map-panel">
+                        <div className="customer-map-placeholder"><MapPin size={28} /><span>{addressLine(selectedCustomer.addresses?.[0])}</span></div>
+                        <div className="panel-header">
+                          <h2>{selectedCustomer.addresses?.length ?? 0} address{(selectedCustomer.addresses?.length ?? 0) === 1 ? "" : "es"}</h2>
+                        </div>
+                        <div className="address-list">
+                          {(selectedCustomer.addresses ?? []).map((address) => (
+                            <article key={address.id}>
+                              <strong>{address.label ?? "Service"}</strong>
+                              <span>{addressLine(address)}</span>
+                            </article>
+                          ))}
+                        </div>
+                        <form className="inline-address-form" onSubmit={addCustomerAddress}>
+                          <input placeholder="Label" value={customerAddressForm.label} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, label: event.target.value })} />
+                          <input placeholder="Street address" value={customerAddressForm.street1} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, street1: event.target.value })} required />
+                          <input placeholder="Unit" value={customerAddressForm.street2} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, street2: event.target.value })} />
+                          <input placeholder="City" value={customerAddressForm.city} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, city: event.target.value })} required />
+                          <input placeholder="State" value={customerAddressForm.state} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, state: event.target.value })} required />
+                          <input placeholder="ZIP" value={customerAddressForm.postalCode} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, postalCode: event.target.value })} required />
+                          <button className="outline-button" type="submit"><Plus size={16} /> Add address</button>
+                        </form>
+                      </section>
+
+                      <section className="panel customer-notes-panel">
+                        <div className="panel-header"><h2>Private Notes</h2><StickyNote size={18} /></div>
+                        <form className="note-form" onSubmit={addCustomerNote}>
+                          <textarea placeholder="Add a private customer note" value={customerNoteDraft} onChange={(event) => setCustomerNoteDraft(event.target.value)} />
+                          <button className="primary" type="submit"><Plus size={16} /> Add note</button>
+                        </form>
+                        <div className="customer-notes-list">
+                          {(selectedCustomer.privateNotes ?? []).map((note) => (
+                            <article key={note.id}>
+                              <strong>{note.author}</strong>
+                              <span>{formatDate(note.createdAt)}</span>
+                              <p>{note.content}</p>
+                            </article>
+                          ))}
+                          {(selectedCustomer.privateNotes ?? []).length === 0 && <p className="empty">No customer notes yet.</p>}
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+                )}
+
+                {customerProfileTab === "jobs" && (
+                  <section className="panel">
+                    <div className="panel-header"><h2>Jobs</h2><Wrench size={18} /></div>
+                    <div className="profile-table">
+                      {selectedCustomerJobs.map((job) => (
+                        <article key={job.id}>
+                          <strong>#{job.jobNumber} {job.title}</strong>
+                          <span>{formatDate(job.scheduledStart)} / {statusLabel(job.status)}</span>
+                          <span>{addressLine(job.address ?? selectedCustomer.addresses?.[0])}</span>
+                        </article>
+                      ))}
+                      {selectedCustomerJobs.length === 0 && <p className="empty">No jobs for this customer yet.</p>}
+                    </div>
+                  </section>
+                )}
+
+                {customerProfileTab === "invoices" && (
+                  <section className="panel">
+                    <div className="panel-header"><h2>Invoices</h2><ReceiptText size={18} /></div>
+                    <div className="profile-table">
+                      {selectedCustomerInvoices.map((invoice) => (
+                        <article key={invoice.id}>
+                          <strong>Invoice #{invoice.invoiceNumber}</strong>
+                          <span>{formatDate(invoice.createdAt)} / {statusLabel(invoice.status)}</span>
+                          <span>{money.format(invoice.total / 100)}</span>
+                        </article>
+                      ))}
+                      {selectedCustomerInvoices.length === 0 && <p className="empty">No invoices for this customer yet.</p>}
+                    </div>
+                  </section>
+                )}
+
+                {customerProfileTab === "attachments" && (
+                  <section className="panel">
+                    <div className="panel-header"><h2>Attachments</h2><Paperclip size={18} /></div>
+                    <form className="attachment-form" onSubmit={addCustomerAttachment}>
+                      <input placeholder="Attachment filename or link" value={customerAttachmentName} onChange={(event) => setCustomerAttachmentName(event.target.value)} />
+                      <button className="primary" type="submit"><Plus size={16} /> Add attachment</button>
+                    </form>
+                    <div className="profile-table">
+                      {(selectedCustomer.attachments ?? []).map((attachment) => <article key={attachment}><strong>{attachment}</strong><span>Customer file</span></article>)}
+                      {(selectedCustomer.attachments ?? []).length === 0 && <p className="empty">No attachments saved yet.</p>}
+                    </div>
+                  </section>
+                )}
+
+                {(customerProfileTab === "notes" || customerProfileTab === "leads" || customerProfileTab === "estimates") && (
+                  <section className="panel">
+                    <div className="panel-header"><h2>{customerProfileTab[0].toUpperCase() + customerProfileTab.slice(1)}</h2><FileText size={18} /></div>
+                    {customerProfileTab === "notes" ? (
+                      <div className="profile-table">
+                        {(selectedCustomer.privateNotes ?? []).map((note) => <article key={note.id}><strong>{note.content}</strong><span>{note.author} / {formatDate(note.createdAt)}</span></article>)}
+                        {(selectedCustomer.privateNotes ?? []).length === 0 && <p className="empty">No notes for this customer yet.</p>}
+                      </div>
+                    ) : <p className="empty">This tab is ready for the estimates and leads records as those modules come online.</p>}
+                  </section>
+                )}
+              </div>
+            )}
+          </section>
         )}
 
         {activeView === "jobs" && (

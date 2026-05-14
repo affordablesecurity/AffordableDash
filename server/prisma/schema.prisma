@@ -143,16 +143,32 @@ model Customer {
   email              String?
   phone              String
   alternatePhone     String?
+  additionalEmails   String[]  @default([])
+  additionalPhones   Json?
   source             String?
+  tags               String[]  @default([])
   housecallProId     String?   @unique
   notes              String?
+  communicationPrefs Json?
+  attachments        String[]  @default([])
+  paymentMethodNote  String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   addresses          Address[]
   jobs               Job[]
   invoices           Invoice[]
   messages           Message[]
+  privateNotes       CustomerNote[]
   location           Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+}
+
+model CustomerNote {
+  id         String   @id @default(cuid())
+  customerId String
+  author     String   @default("Office")
+  content    String
+  createdAt  DateTime @default(now())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 }
 
 model Address {
