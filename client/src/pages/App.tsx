@@ -110,6 +110,7 @@ type CustomerNote = {
 
 type Technician = {
   id: string;
+  userId?: string;
   name: string;
   email?: string;
   phone: string;
@@ -531,6 +532,8 @@ export function App() {
   const [employeeForm, setEmployeeForm] = useState({
     name: "",
     email: "",
+    username: "",
+    password: "",
     phone: "",
     employmentType: "employee" as "employee" | "subcontractor",
     role: "OUTSIDE_FIELD_TECH" as "OWNER" | "ADMIN" | "INSIDE_SALES" | "OUTSIDE_FIELD_TECH",
@@ -866,6 +869,8 @@ export function App() {
     setEmployeeForm({
       name: "",
       email: "",
+      username: "",
+      password: "",
       phone: "",
       employmentType: type,
       role: type === "subcontractor" ? "OUTSIDE_FIELD_TECH" : "INSIDE_SALES",
@@ -885,6 +890,15 @@ export function App() {
     });
     setTechnicians((current) => [...current, result.technician].sort((a, b) => a.name.localeCompare(b.name)));
     setEmployeeModal(null);
+  }
+
+  async function updateEmployeeAccess(employee: Technician, active: boolean) {
+    setError("");
+    const result = await api<{ technician: Technician }>(`/api/technicians/${employee.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active })
+    });
+    setTechnicians((current) => current.map((item) => item.id === employee.id ? result.technician : item));
   }
 
   async function revokeApiKey(id: string) {
@@ -2016,7 +2030,7 @@ export function App() {
                       <label className="span-2">Field Techs
                         <select value={jobForm.technicianId} onChange={(event) => setJobForm({ ...jobForm, technicianId: event.target.value })}>
                           <option value="">Unassigned</option>
-                          {technicians.map((tech) => <option key={tech.id} value={tech.id}>{tech.name}</option>)}
+                          {technicians.filter((tech) => tech.active && tech.fieldTech).map((tech) => <option key={tech.id} value={tech.id}>{tech.name}</option>)}
                         </select>
                       </label>
                     </div>
@@ -2176,6 +2190,7 @@ export function App() {
                   <span>Field Tech</span>
                   <span>Status</span>
                   <span>Access</span>
+                  <span>Actions</span>
                 </div>
                 {filteredEmployees.map((employee) => (
                   <div className="employees-row" key={employee.id}>
@@ -2186,7 +2201,10 @@ export function App() {
                     <span>{employeeRoleLabel(employee.role)}</span>
                     <span>{employee.fieldTech ? "Yes" : "No"}</span>
                     <span className={`payment-pill ${employee.active ? "paid" : "unpaid"}`}>{employee.active ? "Active" : "Inactive"}</span>
-                    <small>{employee.permissions.includes("*") ? "Full access" : employee.permissions.join(", ")}</small>
+                    <small>{employee.userId ? (employee.permissions.includes("*") ? "Login + full access" : `Login + ${employee.permissions.join(", ")}`) : "Roster only"}</small>
+                    <button className="text-button" onClick={() => updateEmployeeAccess(employee, !employee.active)}>
+                      {employee.active ? "Revoke" : "Restore"}
+                    </button>
                   </div>
                 ))}
                 {filteredEmployees.length === 0 && <p className="empty table-empty">No employees yet.</p>}
@@ -2205,6 +2223,12 @@ export function App() {
                 </label>
                 <label>Email
                   <input type="email" value={employeeForm.email} onChange={(event) => setEmployeeForm({ ...employeeForm, email: event.target.value })} />
+                </label>
+                <label>Username
+                  <input value={employeeForm.username} onChange={(event) => setEmployeeForm({ ...employeeForm, username: event.target.value })} placeholder="optional, defaults from email" />
+                </label>
+                <label>Temporary Password
+                  <input type="password" value={employeeForm.password} onChange={(event) => setEmployeeForm({ ...employeeForm, password: event.target.value })} placeholder="8+ chars to create login" />
                 </label>
                 <label>Phone Number
                   <input value={employeeForm.phone} onChange={(event) => setEmployeeForm({ ...employeeForm, phone: event.target.value })} required />

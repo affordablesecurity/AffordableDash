@@ -1506,9 +1506,9 @@ textarea {
 }
 
 .employees-row {
-  min-width: 1080px;
+  min-width: 1240px;
   display: grid;
-  grid-template-columns: 170px 190px 150px 130px 170px 110px 120px minmax(180px, 1fr);
+  grid-template-columns: 170px 190px 150px 130px 170px 110px 120px minmax(180px, 1fr) 92px;
   gap: 14px;
   align-items: center;
   min-height: 64px;

@@ -47,6 +47,7 @@ model User {
   email        String           @unique
   username     String           @unique
   name         String
+  phone        String?
   passwordHash String
   role         UserRole         @default(DISPATCHER)
   active       Boolean          @default(true)
@@ -190,6 +191,7 @@ model Address {
 
 model Technician {
   id             String   @id @default(cuid())
+  userId         String?
   locationId     String
   name           String
   email          String?
@@ -205,6 +207,8 @@ model Technician {
   updatedAt      DateTime @updatedAt
   jobs           Job[]
   location       Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId, userId])
 }
 
 model Job {

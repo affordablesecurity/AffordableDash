@@ -94,6 +94,7 @@ authRouter.post("/signup", asyncHandler(async (req, res) => {
         email: input.email,
         username: input.username,
         name: input.name,
+        phone: input.phone,
         passwordHash,
         role: "OWNER"
       }
@@ -105,6 +106,21 @@ authRouter.post("/signup", asyncHandler(async (req, res) => {
         organizationId: organization.id,
         locationId: location.id,
         role: "OWNER"
+      }
+    });
+
+    await tx.technician.create({
+      data: {
+        userId: user.id,
+        locationId: location.id,
+        name: user.name,
+        email: user.email,
+        phone: input.phone || "Not set",
+        employmentType: "employee",
+        role: "OWNER",
+        fieldTech: false,
+        permissions: ["*"],
+        active: true
       }
     });
 
