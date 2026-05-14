@@ -79,6 +79,12 @@ model Location {
   state          String?
   postalCode     String?
   timezone       String           @default("America/Phoenix")
+  companyColor   String           @default("#26aef2")
+  website        String?
+  industry       String?
+  description    String?
+  termsOfService String?
+  logoName       String?
   active         Boolean          @default(true)
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt

@@ -186,6 +186,12 @@ type LocationAccess = {
     state?: string;
     postalCode?: string;
     timezone?: string;
+    companyColor?: string;
+    website?: string;
+    industry?: string;
+    description?: string;
+    termsOfService?: string;
+    logoName?: string;
   };
 };
 
@@ -448,6 +454,22 @@ export function App() {
   const [priceBookModal, setPriceBookModal] = useState<"item" | "category" | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("overview");
   const [settingsDraft, setSettingsDraft] = useState("");
+  const [companySettingsForm, setCompanySettingsForm] = useState({
+    companyName: "",
+    phone: "",
+    street1: "",
+    street2: "",
+    city: "",
+    state: "",
+    postalCode: "",
+    timezone: "America/Phoenix",
+    companyColor: "#26aef2",
+    website: "",
+    industry: "Locksmith",
+    description: "",
+    termsOfService: "",
+    logoName: ""
+  });
   const [reports, setReports] = useState<ReportsPayload | null>(null);
   const [selectedReportId, setSelectedReportId] = useState("job-revenue-earned");
   const [reportDashboard, setReportDashboard] = useState<"businessOwner" | "leads" | "jobs">("businessOwner");
@@ -594,6 +616,12 @@ export function App() {
     ? reports?.dashboards.leads ?? []
     : reports?.dashboards.businessOwner ?? [];
   const reportTitle = reportDashboard === "leads" ? "Leads" : reportDashboard === "jobs" ? "Jobs" : "Business Owner";
+  const companyAddressPreview = [
+    activeLocationAccess?.location.street1,
+    activeLocationAccess?.location.city,
+    activeLocationAccess?.location.state,
+    activeLocationAccess?.location.postalCode
+  ].filter(Boolean).join(", ") || "No company address saved yet";
 
   async function loadDashboard() {
     const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult] = await Promise.all([
@@ -639,6 +667,26 @@ export function App() {
     if (!token) return;
     loadReports().catch((err: Error) => setError(err.message));
   }, [token, reportDateRange, reportShowBy]);
+
+  useEffect(() => {
+    if (!activeLocationAccess) return;
+    setCompanySettingsForm({
+      companyName: activeLocationAccess.organization.name || activeLocationAccess.location.name || "",
+      phone: activeLocationAccess.location.phone ?? "",
+      street1: activeLocationAccess.location.street1 ?? "",
+      street2: activeLocationAccess.location.street2 ?? "",
+      city: activeLocationAccess.location.city ?? "",
+      state: activeLocationAccess.location.state ?? "",
+      postalCode: activeLocationAccess.location.postalCode ?? "",
+      timezone: activeLocationAccess.location.timezone ?? "America/Phoenix",
+      companyColor: activeLocationAccess.location.companyColor ?? "#26aef2",
+      website: activeLocationAccess.location.website ?? "",
+      industry: activeLocationAccess.location.industry ?? "Locksmith",
+      description: activeLocationAccess.location.description ?? "",
+      termsOfService: activeLocationAccess.location.termsOfService ?? "",
+      logoName: activeLocationAccess.location.logoName ?? ""
+    });
+  }, [activeLocationAccess]);
 
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
@@ -747,6 +795,18 @@ export function App() {
       const key = optionKeyByKind[kind];
       return { ...current, [key]: current[key].filter((item) => item !== name) };
     });
+  }
+
+  async function saveCompanySettings(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    const result = await api<{ organization: LocationAccess["organization"]; location: LocationAccess["location"] }>("/api/locations/active/company-settings", {
+      method: "PATCH",
+      body: JSON.stringify(companySettingsForm)
+    });
+    setLocations((current) => current.map((item) => item.location.id === result.location.id
+      ? { ...item, organization: result.organization, location: result.location }
+      : item));
   }
 
   async function saveInlineJobClient() {
@@ -1905,47 +1965,117 @@ export function App() {
                   <button onClick={() => setSettingsSection("tags")}>Tags</button>
                 </aside>
 
-                <section className="settings-panel">
-                  <div className="settings-panel-head">
-                    <div>
-                      <p className="settings-kicker">Location separated account</p>
-                      <h2>Company Settings</h2>
-                      <p>These IDs are generated automatically and keep every location's records separated.</p>
+                <form className="company-settings-page" onSubmit={saveCompanySettings}>
+                  <div className="company-settings-topbar">
+                    <div className="breadcrumb"><Settings size={17} /> Settings / Company Settings</div>
+                    <button className="primary" type="submit">Save</button>
+                  </div>
+
+                  <section className="company-card">
+                    <h2>Company Details</h2>
+                    <div className="logo-row">
+                      <div className="logo-preview">{companySettingsForm.logoName ? "IMG" : "A"}</div>
+                      <div>
+                        <strong>Company Logo</strong>
+                        <span>JPG or PNG, file size no more than 10MB</span>
+                      </div>
+                      <label className="primary file-button">Change
+                        <input type="file" onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, logoName: event.currentTarget.files?.[0]?.name ?? "" })} />
+                      </label>
                     </div>
-                    <span>{activeLocationAccess?.role ?? "Owner"}</span>
-                  </div>
 
-                  <div className="company-settings-grid">
-                    <article>
-                      <span>Organization ID</span>
-                      <code>{activeLocationAccess?.organization.id ?? "Not loaded"}</code>
-                    </article>
-                    <article>
-                      <span>Location ID</span>
-                      <code>{activeLocationAccess?.location.id ?? "Not loaded"}</code>
-                    </article>
-                    <article>
-                      <span>Organization Name</span>
-                      <strong>{activeLocationAccess?.organization.name ?? "Not loaded"}</strong>
-                    </article>
-                    <article>
-                      <span>Location Name</span>
-                      <strong>{activeLocationAccess?.location.name ?? "Not loaded"}</strong>
-                    </article>
-                    <article>
-                      <span>Location Slug</span>
-                      <strong>{activeLocationAccess?.location.slug ?? "Not loaded"}</strong>
-                    </article>
-                    <article>
-                      <span>Timezone</span>
-                      <strong>{activeLocationAccess?.location.timezone ?? "America/Phoenix"}</strong>
-                    </article>
-                  </div>
+                    <label>Company Color
+                      <div className="color-input-row">
+                        <input type="color" value={companySettingsForm.companyColor} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, companyColor: event.target.value })} />
+                        <input value={companySettingsForm.companyColor} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, companyColor: event.target.value })} />
+                      </div>
+                    </label>
 
-                  <div className="settings-note">
-                    Price book items, categories, job types, tags, lead sources, job fields, checklists, service plans, customers, jobs, invoices, technicians, API keys, messages, and reports are scoped to the active Location ID.
-                  </div>
-                </section>
+                    <label>Company ID
+                      <input readOnly value={activeLocationAccess?.organization.id ?? ""} />
+                    </label>
+                    <label>Location ID
+                      <input readOnly value={activeLocationAccess?.location.id ?? ""} />
+                    </label>
+
+                    <div className="settings-note">
+                      Price book items, categories, job types, tags, lead sources, job fields, checklists, service plans, customers, jobs, invoices, technicians, API keys, messages, and reports are scoped to this active Location ID.
+                    </div>
+
+                    <div className="company-form-grid">
+                      <label>Company Name
+                        <input value={companySettingsForm.companyName} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, companyName: event.target.value })} required />
+                      </label>
+                      <label>Phone Number
+                        <input value={companySettingsForm.phone} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, phone: event.target.value })} />
+                      </label>
+                      <label>Company Website
+                        <input value={companySettingsForm.website} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, website: event.target.value })} />
+                      </label>
+                      <label>Industry
+                        <select value={companySettingsForm.industry} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, industry: event.target.value })}>
+                          <option>Locksmith</option>
+                          <option>Security</option>
+                          <option>Garage Door</option>
+                          <option>Other</option>
+                        </select>
+                      </label>
+                      <label className="span-2">Time Zone
+                        <select value={companySettingsForm.timezone} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, timezone: event.target.value })}>
+                          <option value="America/Phoenix">(UTC-7) America/Phoenix</option>
+                          <option value="America/Los_Angeles">(UTC-8) America/Los Angeles</option>
+                          <option value="America/Denver">(UTC-7) America/Denver</option>
+                          <option value="America/Chicago">(UTC-6) America/Chicago</option>
+                          <option value="America/New_York">(UTC-5) America/New York</option>
+                        </select>
+                      </label>
+                      <label className="span-2">Company Description
+                        <textarea value={companySettingsForm.description} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, description: event.target.value })} placeholder="Professional locksmith services..." />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="company-card owner-card">
+                    <div className="logo-preview small">A</div>
+                    <div>
+                      <strong>{name || identifier || "Owner"}</strong>
+                      <span>{activeLocationAccess?.role ?? "Owner"}</span>
+                    </div>
+                  </section>
+
+                  <section className="company-card">
+                    <h2>Company Address</h2>
+                    <div className="map-placeholder">
+                      <strong>{companyAddressPreview}</strong>
+                      <span>Map preview placeholder</span>
+                    </div>
+                    <label>Street Address
+                      <input value={companySettingsForm.street1} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, street1: event.target.value })} />
+                    </label>
+                    <label>Unit #
+                      <input value={companySettingsForm.street2} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, street2: event.target.value })} />
+                    </label>
+                    <label>City
+                      <input value={companySettingsForm.city} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, city: event.target.value })} />
+                    </label>
+                    <div className="company-form-grid">
+                      <label>State
+                        <input value={companySettingsForm.state} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, state: event.target.value })} />
+                      </label>
+                      <label>ZIP
+                        <input value={companySettingsForm.postalCode} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, postalCode: event.target.value })} />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="company-card">
+                    <h2>Terms of Service</h2>
+                    <div className="settings-note">
+                      This text can be shown on invoices and estimates sent to customers.
+                    </div>
+                    <textarea value={companySettingsForm.termsOfService} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, termsOfService: event.target.value })} placeholder="Warranty, payment, and service terms..." />
+                  </section>
+                </form>
               </div>
             ) : selectedSettings && (
               <div className="settings-layout">
