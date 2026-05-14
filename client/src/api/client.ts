@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4100";
+const API_URL = import.meta.env.VITE_API_URL ?? "";
 
 export type LoginResponse = {
   token: string;
