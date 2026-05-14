@@ -188,7 +188,7 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "customers" | "jobs" | "invoices" | "pricebook" | "settings" | "api";
+type View = "dispatch" | "schedule" | "customers" | "jobs" | "invoices" | "reports" | "pricebook" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
@@ -200,6 +200,21 @@ type CrmOptions = {
   jobFields: string[];
   checklists: string[];
   servicePlans: string[];
+};
+
+type ReportRow = { label: string; value: string; detail?: string };
+type ReportItem = { id: string; label: string; value: string; detail: string; rows: ReportRow[] };
+type ReportSection = { title: string; items: ReportItem[] };
+type ReportsPayload = {
+  overview: {
+    jobs: number;
+    completedJobs: number;
+    invoices: number;
+    revenue: string;
+    paidRevenue: string;
+    paidRate: string;
+  };
+  sections: ReportSection[];
 };
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -383,6 +398,8 @@ export function App() {
   const [priceBookModal, setPriceBookModal] = useState<"item" | "category" | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("overview");
   const [settingsDraft, setSettingsDraft] = useState("");
+  const [reports, setReports] = useState<ReportsPayload | null>(null);
+  const [selectedReportId, setSelectedReportId] = useState("job-revenue-earned");
   const [priceBookItemForm, setPriceBookItemForm] = useState({
     name: "",
     modelNumber: "",
@@ -517,16 +534,19 @@ export function App() {
   }, [priceBookItems, priceBookSearch]);
   const selectedSettings = settingsSections.find((section) => section.id === settingsSection);
   const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
+  const reportItems = reports?.sections.flatMap((section) => section.items) ?? [];
+  const selectedReport = reportItems.find((item) => item.id === selectedReportId) ?? reportItems[0];
 
   async function loadDashboard() {
-    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, reportsResult] = await Promise.all([
       api<Summary>("/api/settings/summary"),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
       api<{ invoices: Invoice[] }>("/api/invoices"),
       api<{ technicians: Technician[] }>("/api/technicians"),
       api<CrmOptions>("/api/settings/options"),
-      api<{ categories: PriceBookCategory[]; items: PriceBookItem[] }>("/api/pricebook")
+      api<{ categories: PriceBookCategory[]; items: PriceBookItem[] }>("/api/pricebook"),
+      api<ReportsPayload>("/api/reports/jobs")
     ]);
 
     setSummary(summaryResult);
@@ -537,6 +557,7 @@ export function App() {
     setCrmOptions((current) => ({ ...current, ...optionsResult }));
     setPriceBookCategories(priceBookResult.categories);
     setPriceBookItems(priceBookResult.items);
+    setReports(reportsResult);
 
     const [locationResult, apiKeyResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
@@ -993,7 +1014,7 @@ export function App() {
           <button className={activeView === "pricebook" ? "active" : ""} onClick={() => setActiveView("pricebook")}><Tag size={18} /> Pricebook</button>
 
           <span className="nav-section">More</span>
-          <button><ListChecks size={18} /> Reports</button>
+          <button className={activeView === "reports" ? "active" : ""} onClick={() => setActiveView("reports")}><ListChecks size={18} /> Reports</button>
           <button className={activeView === "settings" ? "active" : ""} onClick={() => setActiveView("settings")}><Settings size={18} /> Settings</button>
           <button className={activeView === "api" ? "active" : ""} onClick={() => setActiveView("api")}><KeyRound size={18} /> API Access</button>
           <button><Headphones size={18} /> Support</button>
@@ -1570,6 +1591,99 @@ export function App() {
               </form>
             </section>
           )
+        )}
+
+        {activeView === "reports" && (
+          <section className="reports-page">
+            <aside className="reports-nav">
+              <h2>Reporting</h2>
+              <button>Business insights <span>New</span></button>
+              <strong>Dashboards</strong>
+              <button>Tech Performance</button>
+              <button>Administrative</button>
+              <button>Business Owner</button>
+              <strong>All Reports</strong>
+              <button className="active">Jobs</button>
+              <button>Estimates</button>
+              <button>Leads</button>
+              <button>Service plans</button>
+              <button>Invoices</button>
+              <button>Payments</button>
+              <button>Custom</button>
+            </aside>
+
+            <div className="reports-main">
+              <div className="reports-titlebar">
+                <div>
+                  <span>Reporting / Jobs</span>
+                  <h1>Jobs</h1>
+                </div>
+                <div className="action-buttons">
+                  <button className="text-button" type="button">Advanced reporting</button>
+                  <button className="outline-button" type="button"><Plus size={17} /> Create report</button>
+                  <button className="outline-button accent" type="button">Ask Analyst AI</button>
+                </div>
+              </div>
+
+              {reports && (
+                <div className="report-overview">
+                  <span><strong>{reports.overview.revenue}</strong> Revenue</span>
+                  <span><strong>{reports.overview.paidRevenue}</strong> Paid</span>
+                  <span><strong>{reports.overview.jobs}</strong> Jobs</span>
+                  <span><strong>{reports.overview.completedJobs}</strong> Completed</span>
+                  <span><strong>{reports.overview.paidRate}</strong> Paid rate</span>
+                </div>
+              )}
+
+              <div className="reports-layout">
+                <div className="report-card-grid">
+                  {(reports?.sections ?? []).map((section) => (
+                    <section className="report-group" key={section.title}>
+                      <h2>{section.title}</h2>
+                      {section.items.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={selectedReport?.id === item.id ? "active" : ""}
+                          onClick={() => setSelectedReportId(item.id)}
+                        >
+                          <span>{item.label}</span>
+                          <strong>{item.value}</strong>
+                        </button>
+                      ))}
+                    </section>
+                  ))}
+                </div>
+
+                <section className="report-detail">
+                  {selectedReport ? (
+                    <>
+                      <div className="report-detail-head">
+                        <div>
+                          <span>Selected report</span>
+                          <h2>{selectedReport.label}</h2>
+                          <p>{selectedReport.detail}</p>
+                        </div>
+                        <strong>{selectedReport.value}</strong>
+                      </div>
+                      <div className="report-row-list">
+                        {selectedReport.rows.map((row) => (
+                          <div className="report-row" key={`${selectedReport.id}-${row.label}`}>
+                            <span>{row.label}</span>
+                            <strong>{row.value}</strong>
+                            {row.detail && <em>{row.detail}</em>}
+                          </div>
+                        ))}
+                        {selectedReport.rows.length === 0 && <p className="empty">No data for this report yet.</p>}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="empty">Reports will appear after your CRM has jobs and invoices.</p>
+                  )}
+                </section>
+              </div>
+            </div>
+          </section>
         )}
 
         {activeView === "settings" && (
