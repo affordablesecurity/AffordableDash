@@ -245,6 +245,7 @@ type ApiKey = {
   id: string;
   name: string;
   tokenPrefix: string;
+  token?: string;
   scopes: string[];
   active: boolean;
   lastUsedAt?: string;
@@ -3007,11 +3008,11 @@ export function App() {
                   <div>
                     <strong>{item.name}</strong>
                     <span>{item.tokenPrefix} / {item.active ? "active" : "revoked"}</span>
-                    {!apiKeySecrets[item.id] && <small>Full token is only available for keys generated in this browser.</small>}
+                    {!item.token && !apiKeySecrets[item.id] && <small>Older keys cannot be fully recovered. Generate a new key to copy the full token.</small>}
                   </div>
                   <div className="api-key-actions">
-                    <button className="outline-button" type="button" onClick={() => copyText(apiKeySecrets[item.id] ?? item.tokenPrefix)}>
-                      <Copy size={16} /> Copy {apiKeySecrets[item.id] ? "Token" : "Prefix"}
+                    <button className="outline-button" type="button" onClick={() => copyText(item.token ?? apiKeySecrets[item.id] ?? item.tokenPrefix)}>
+                      <Copy size={16} /> Copy {item.token || apiKeySecrets[item.id] ? "Token" : "Prefix"}
                     </button>
                     {item.active && <button className="text-button" type="button" onClick={() => revokeApiKey(item.id)}>Revoke</button>}
                     <button className="text-button danger" type="button" onClick={() => deleteApiKey(item.id)}>Delete</button>

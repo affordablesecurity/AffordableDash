@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
-import { createLocationApiToken } from "./api-key-utils.js";
+import { createLocationApiToken, decryptApiToken, encryptApiToken } from "./api-key-utils.js";
 
 export const apiKeysRouter = Router();
 
@@ -29,12 +29,18 @@ apiKeysRouter.get("/", asyncHandler(async (req, res) => {
       lastUsedAt: true,
       expiresAt: true,
       createdAt: true,
-      revokedAt: true
+      revokedAt: true,
+      tokenCipher: true
     },
     orderBy: { createdAt: "desc" }
   });
 
-  res.json({ apiKeys });
+  res.json({
+    apiKeys: apiKeys.map(({ tokenCipher, ...apiKey }) => ({
+      ...apiKey,
+      token: decryptApiToken(tokenCipher)
+    }))
+  });
 }));
 
 apiKeysRouter.post("/", asyncHandler(async (req, res) => {
@@ -50,6 +56,7 @@ apiKeysRouter.post("/", asyncHandler(async (req, res) => {
       name: input.name,
       tokenPrefix: generated.tokenPrefix,
       tokenHash: generated.tokenHash,
+      tokenCipher: encryptApiToken(generated.token),
       scopes: input.scopes,
       expiresAt: input.expiresAt ? new Date(input.expiresAt) : undefined,
       createdById: req.user!.id
@@ -58,6 +65,7 @@ apiKeysRouter.post("/", asyncHandler(async (req, res) => {
       id: true,
       name: true,
       tokenPrefix: true,
+      tokenCipher: true,
       scopes: true,
       active: true,
       expiresAt: true,
@@ -66,9 +74,9 @@ apiKeysRouter.post("/", asyncHandler(async (req, res) => {
   });
 
   res.status(201).json({
-    apiKey,
+    apiKey: { ...apiKey, token: decryptApiToken(apiKey.tokenCipher), tokenCipher: undefined },
     token: generated.token,
-    warning: "Store this token now. It will not be shown again."
+    warning: "This token is encrypted at rest and can be copied later by owners and admins."
   });
 }));
 

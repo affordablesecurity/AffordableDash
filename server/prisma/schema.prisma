@@ -110,6 +110,7 @@ model LocationApiKey {
   name        String
   tokenPrefix String    @unique
   tokenHash   String    @unique
+  tokenCipher String?
   scopes      String[]  @default(["customers:read", "jobs:read"])
   active      Boolean   @default(true)
   createdById String?
