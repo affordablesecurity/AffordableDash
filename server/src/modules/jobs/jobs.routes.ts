@@ -20,7 +20,17 @@ const jobSchema = z.object({
   scheduledStart: z.string().datetime().optional(),
   scheduledEnd: z.string().datetime().optional(),
   description: z.string().optional(),
-  internalNotes: z.string().optional()
+  internalNotes: z.string().optional(),
+  attachments: z.array(z.string()).default([]),
+  lineItems: z.array(z.object({
+    category: z.enum(["service", "material"]).default("service"),
+    name: z.string().min(1),
+    description: z.string().optional(),
+    quantity: z.number().positive().default(1),
+    unitPrice: z.number().int().default(0),
+    unitCost: z.number().int().default(0),
+    taxable: z.boolean().default(true)
+  })).default([])
 });
 
 jobsRouter.get("/", asyncHandler(async (req, res) => {
@@ -51,10 +61,22 @@ jobsRouter.post("/", asyncHandler(async (req, res) => {
   ];
   const job = await prisma.job.create({
     data: {
-      ...input,
+      customerId: input.customerId,
+      addressId: input.addressId,
+      technicianId: input.technicianId,
+      title: input.title,
+      jobType: input.jobType,
+      leadSource: input.leadSource,
+      tags: input.tags,
+      status: input.status,
+      priority: input.priority,
+      description: input.description,
+      internalNotes: input.internalNotes,
+      attachments: input.attachments,
       locationId,
       scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
-      scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined
+      scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined,
+      lineItems: input.lineItems.length ? { create: input.lineItems } : undefined
     },
     include: {
       customer: { include: { addresses: true } },
@@ -87,12 +109,13 @@ jobsRouter.get("/:id", asyncHandler(async (req, res) => {
 jobsRouter.patch("/:id", asyncHandler(async (req, res) => {
   const jobId = String(req.params.id);
   const input = jobSchema.partial().parse(req.body);
+  const { lineItems: _lineItems, ...jobInput } = input;
   const existing = await prisma.job.findFirst({ where: { id: jobId, locationId: activeLocationId(req) } });
   if (!existing) return res.status(404).json({ error: "Job not found" });
   const job = await prisma.job.update({
     where: { id: jobId },
     data: {
-      ...input,
+      ...jobInput,
       scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
       scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined
     },
@@ -113,6 +136,7 @@ jobsRouter.post("/:id/notes", asyncHandler(async (req, res) => {
 jobsRouter.post("/:id/line-items", asyncHandler(async (req, res) => {
   const jobId = String(req.params.id);
   const input = z.object({
+    category: z.enum(["service", "material"]).default("service"),
     name: z.string().min(1),
     description: z.string().optional(),
     quantity: z.number().positive().default(1),

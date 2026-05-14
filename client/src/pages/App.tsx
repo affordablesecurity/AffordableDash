@@ -89,6 +89,26 @@ type Technician = {
   color: string;
 };
 
+type JobLineDraft = {
+  id: string;
+  category: "service" | "material";
+  name: string;
+  description: string;
+  quantity: string;
+  unitPrice: string;
+};
+
+type JobTemplate = {
+  id: string;
+  name: string;
+  title: string;
+  jobType: string;
+  leadSource?: string;
+  tags: string[];
+  privateNotes: string;
+  lineItems: Omit<JobLineDraft, "id">[];
+};
+
 type CustomerForm = {
   firstName: string;
   lastName: string;
@@ -113,9 +133,11 @@ type Job = {
   scheduledEnd?: string;
   description?: string;
   internalNotes?: string;
+  attachments?: string[];
   customer: Customer;
   address?: Address;
   technician?: Technician;
+  lineItems?: Array<{ id: string; category: string; name: string; quantity: string; unitPrice: number }>;
   invoices?: Invoice[];
 };
 
@@ -154,6 +176,47 @@ const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 const percent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const dayLabels = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const calendarHours = Array.from({ length: 24 }, (_item, hour) => hour);
+const jobTemplates: JobTemplate[] = [
+  {
+    id: "residential-repair-lock",
+    name: "Residential repair lock",
+    title: "Residential lock repair",
+    jobType: "Residential Lock Repair",
+    leadSource: "Phone Call",
+    tags: ["residential", "repair"],
+    privateNotes: "Confirm lock condition, door alignment, and whether hardware can be repaired before replacing.",
+    lineItems: [
+      { category: "service", name: "Service call", description: "Dispatch and diagnosis", quantity: "1", unitPrice: "85" },
+      { category: "service", name: "Residential lock labor", description: "Repair or adjust lock hardware", quantity: "1", unitPrice: "95" }
+    ]
+  },
+  {
+    id: "car-lockout",
+    name: "Car lockout",
+    title: "Car lockout service",
+    jobType: "Car Lockout Service",
+    leadSource: "Phone Call",
+    tags: ["automotive", "lockout"],
+    privateNotes: "Verify vehicle make, model, year, location, and proof of ownership before opening.",
+    lineItems: [
+      { category: "service", name: "Vehicle lockout", description: "Non-destructive vehicle entry", quantity: "1", unitPrice: "85" }
+    ]
+  },
+  {
+    id: "commercial-rekey",
+    name: "Commercial rekey",
+    title: "Commercial rekey",
+    jobType: "Rekey",
+    leadSource: "Referral",
+    tags: ["commercial", "rekey"],
+    privateNotes: "Confirm key count, lock count, restricted keyway needs, and site contact.",
+    lineItems: [
+      { category: "service", name: "Commercial service call", description: "Dispatch and site assessment", quantity: "1", unitPrice: "95" },
+      { category: "service", name: "Rekey labor", description: "Per cylinder", quantity: "1", unitPrice: "25" },
+      { category: "material", name: "Duplicate key", description: "Standard key copy", quantity: "2", unitPrice: "4" }
+    ]
+  }
+];
 
 function startOfWeek(date: Date) {
   const next = new Date(date);
@@ -217,6 +280,21 @@ function splitTags(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function dollarsToCents(value: string) {
+  return Math.round(Number(value || "0") * 100);
+}
+
+function lineDraft(category: "service" | "material", name = "", unitPrice = ""): JobLineDraft {
+  return {
+    id: `${category}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    category,
+    name,
+    description: "",
+    quantity: "1",
+    unitPrice
+  };
+}
+
 export function App() {
   const [token, updateToken] = useState(getToken());
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -241,6 +319,9 @@ export function App() {
   const [jobClientSearch, setJobClientSearch] = useState("");
   const [jobAddressSearch, setJobAddressSearch] = useState("");
   const [tagDraft, setTagDraft] = useState("");
+  const [jobTemplateId, setJobTemplateId] = useState("");
+  const [jobLines, setJobLines] = useState<JobLineDraft[]>([]);
+  const [jobAttachments, setJobAttachments] = useState<string[]>([]);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [apiKeyName, setApiKeyName] = useState("Partner API");
   const [newApiToken, setNewApiToken] = useState("");
@@ -343,6 +424,9 @@ export function App() {
     completed: jobs.filter((job) => job.status === "COMPLETED").length,
     canceled: jobs.filter((job) => job.status === "CANCELED").length
   }), [jobs]);
+  const jobLineSubtotal = useMemo(() => jobLines.reduce((sum, item) => sum + (Number(item.quantity || "0") * dollarsToCents(item.unitPrice)), 0), [jobLines]);
+  const jobLineTax = Math.round(jobLineSubtotal * 0.094);
+  const jobLineTotal = jobLineSubtotal + jobLineTax;
 
   async function loadDashboard() {
     const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult] = await Promise.all([
@@ -512,6 +596,32 @@ export function App() {
     setJobAddressSearch(addressLine(address));
   }
 
+  function updateJobLine(id: string, patch: Partial<JobLineDraft>) {
+    setJobLines((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  }
+
+  function addJobLine(category: "service" | "material") {
+    setJobLines((current) => [...current, lineDraft(category, category === "service" ? "Service call" : "Material")]);
+  }
+
+  function applyJobTemplate(templateId: string) {
+    setJobTemplateId(templateId);
+    const template = jobTemplates.find((item) => item.id === templateId);
+    if (!template) return;
+    setJobForm((current) => ({
+      ...current,
+      title: template.title,
+      jobType: template.jobType,
+      leadSource: template.leadSource ?? current.leadSource,
+      tags: [...new Set([...splitTags(current.tags), ...template.tags])].join(", "),
+      internalNotes: current.internalNotes ? `${current.internalNotes}\n${template.privateNotes}` : template.privateNotes
+    }));
+    setJobLines(template.lineItems.map((item) => ({ ...item, id: `${item.category}-${Date.now()}-${Math.random().toString(36).slice(2)}` })));
+    template.tags.forEach((tag) => saveJobOption("tag", tag).catch(() => undefined));
+    saveJobOption("jobType", template.jobType).catch(() => undefined);
+    if (template.leadSource) saveJobOption("leadSource", template.leadSource).catch(() => undefined);
+  }
+
   async function createJob(event: FormEvent) {
     event.preventDefault();
     setError("");
@@ -561,7 +671,16 @@ export function App() {
         scheduledStart: jobForm.scheduledStart ? new Date(jobForm.scheduledStart).toISOString() : undefined,
         scheduledEnd: jobForm.scheduledEnd ? new Date(jobForm.scheduledEnd).toISOString() : undefined,
         description: jobForm.description,
-        internalNotes: noteText || undefined
+        internalNotes: noteText || undefined,
+        attachments: jobAttachments,
+        lineItems: jobLines.filter((item) => item.name.trim()).map((item) => ({
+          category: item.category,
+          name: item.name,
+          description: item.description || undefined,
+          quantity: Number(item.quantity || "1"),
+          unitPrice: dollarsToCents(item.unitPrice),
+          taxable: true
+        }))
       })
     });
     setJobForm({
@@ -582,6 +701,9 @@ export function App() {
     setJobClientSearch("");
     setJobAddressSearch("");
     setTagDraft("");
+    setJobTemplateId("");
+    setJobLines([]);
+    setJobAttachments([]);
     await loadDashboard();
     setJobPageMode("list");
   }
@@ -1032,8 +1154,12 @@ export function App() {
               <div className="section-actions">
                 <div className="breadcrumb"><Wrench size={17} /> Jobs / New Job</div>
                 <div className="action-buttons">
+                  <select value={jobTemplateId} onChange={(event) => applyJobTemplate(event.target.value)} aria-label="Job template">
+                    <option value="">Job Template</option>
+                    {jobTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+                  </select>
                   <button className="outline-button" type="button" onClick={() => setJobPageMode("list")}>Back to Jobs</button>
-                  <button className="primary" type="submit" form="create-job-form"><Plus size={18} /> Create Job</button>
+                  <button className="primary" type="submit" form="create-job-form">Save Job</button>
                 </div>
               </div>
 
@@ -1124,6 +1250,15 @@ export function App() {
                   <section className="panel">
                     <div className="panel-header"><h2>Private Notes</h2></div>
                     <textarea placeholder="Enter notes (internal only)" value={jobForm.internalNotes} onChange={(event) => setJobForm({ ...jobForm, internalNotes: event.target.value })} />
+                  </section>
+
+                  <section className="panel attachment-panel">
+                    <div className="panel-header"><h2>Attachments</h2><FileText size={18} /></div>
+                    <input type="file" multiple onChange={(event) => setJobAttachments(Array.from(event.currentTarget.files ?? []).map((file) => file.name))} />
+                    <div className="attachment-list">
+                      {jobAttachments.map((name) => <span key={name}>{name}</span>)}
+                      {jobAttachments.length === 0 && <p className="empty">No attachments selected.</p>}
+                    </div>
                   </section>
                 </div>
 
@@ -1225,6 +1360,38 @@ export function App() {
                       <label>Description
                         <input placeholder="Visible job description" value={jobForm.description} onChange={(event) => setJobForm({ ...jobForm, description: event.target.value })} />
                       </label>
+                    </div>
+                  </section>
+
+                  <section className="panel line-items-panel">
+                    <div className="line-items-header">
+                      <h2>Line items</h2>
+                      <div className="mini-segment">
+                        <button type="button" className="selected">List</button>
+                        <button type="button">Details</button>
+                      </div>
+                    </div>
+                    {(["service", "material"] as const).map((category) => (
+                      <div className="line-category" key={category}>
+                        <div className="line-category-head">
+                          <strong>{category === "service" ? "Services" : "Materials"}</strong>
+                          <button type="button" className="text-add-button" onClick={() => addJobLine(category)}><Plus size={18} /> Add {category}</button>
+                        </div>
+                        {jobLines.filter((item) => item.category === category).map((item) => (
+                          <div className="line-item-row" key={item.id}>
+                            <input placeholder={`${category === "service" ? "Service" : "Material"} name`} value={item.name} onChange={(event) => updateJobLine(item.id, { name: event.target.value })} />
+                            <input placeholder="Description" value={item.description} onChange={(event) => updateJobLine(item.id, { description: event.target.value })} />
+                            <input placeholder="Qty" value={item.quantity} onChange={(event) => updateJobLine(item.id, { quantity: event.target.value })} />
+                            <input placeholder="Price" value={item.unitPrice} onChange={(event) => updateJobLine(item.id, { unitPrice: event.target.value })} />
+                            <button type="button" className="text-button" onClick={() => setJobLines((current) => current.filter((line) => line.id !== item.id))}><Trash2 size={16} /></button>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                    <div className="totals-box">
+                      <span>Subtotal <strong>{money.format(jobLineSubtotal / 100)}</strong></span>
+                      <span>Tax rate <em>AZ Taxes (9.4%)</em> <strong>{money.format(jobLineTax / 100)}</strong></span>
+                      <span className="grand-total">Total <strong>{money.format(jobLineTotal / 100)}</strong></span>
                     </div>
                   </section>
                 </div>

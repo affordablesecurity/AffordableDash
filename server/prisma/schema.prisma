@@ -197,6 +197,7 @@ model Job {
   completedAt    DateTime?
   description    String?
   internalNotes  String?
+  attachments    String[]       @default([])
   housecallProId String?       @unique
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -234,6 +235,7 @@ model JobNote {
 model JobLineItem {
   id          String   @id @default(cuid())
   jobId       String
+  category    String   @default("service")
   name        String
   description String?
   quantity    Decimal  @default(1)

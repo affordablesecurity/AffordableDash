@@ -1,0 +1,2 @@
+ALTER TABLE "JobLineItem" ADD COLUMN "category" TEXT NOT NULL DEFAULT 'service';
+ALTER TABLE "Job" ADD COLUMN "attachments" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
