@@ -42,6 +42,7 @@ jobsRouter.get("/", asyncHandler(async (req, res) => {
       customer: { include: { addresses: true } },
       address: true,
       technician: true,
+      notes: { orderBy: { createdAt: "desc" } },
       lineItems: true,
       invoices: { include: { payments: true } }
     },
@@ -100,7 +101,14 @@ jobsRouter.get("/:id", asyncHandler(async (req, res) => {
   const jobId = String(req.params.id);
   const job = await prisma.job.findFirst({
     where: { id: jobId, locationId: activeLocationId(req) },
-    include: { customer: true, address: true, technician: true, notes: true, lineItems: true, invoices: true }
+    include: {
+      customer: { include: { addresses: true } },
+      address: true,
+      technician: true,
+      notes: { orderBy: { createdAt: "desc" } },
+      lineItems: true,
+      invoices: { include: { payments: true } }
+    }
   });
   if (!job) return res.status(404).json({ error: "Job not found" });
   res.json({ job });
@@ -123,6 +131,7 @@ jobsRouter.patch("/:id", asyncHandler(async (req, res) => {
       customer: { include: { addresses: true } },
       address: true,
       technician: true,
+      notes: { orderBy: { createdAt: "desc" } },
       lineItems: true,
       invoices: { include: { payments: true } }
     }

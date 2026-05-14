@@ -237,6 +237,7 @@ type Job = {
   technician?: Technician;
   lineItems?: Array<{ id: string; category: string; name: string; quantity: string; unitPrice: number; taxable?: boolean }>;
   invoices?: Invoice[];
+  notes?: Array<{ id: string; author: string; content: string; createdAt: string }>;
 };
 
 type Invoice = {
@@ -649,6 +650,10 @@ export function App() {
   const [tagFocused, setTagFocused] = useState(false);
   const [leadSourceFocused, setLeadSourceFocused] = useState(false);
   const [jobNoteTarget, setJobNoteTarget] = useState<"job" | "customer">("job");
+  const [detailTagDraft, setDetailTagDraft] = useState("");
+  const [detailLeadSource, setDetailLeadSource] = useState("");
+  const [detailPrivateNote, setDetailPrivateNote] = useState("");
+  const [detailSummary, setDetailSummary] = useState("");
   const [jobTemplateId, setJobTemplateId] = useState("");
   const [jobTemplates, setJobTemplates] = useState<JobTemplate[]>(defaultJobTemplates);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
@@ -976,6 +981,14 @@ export function App() {
     if (!token) return;
     loadDashboard().catch((err: Error) => setError(err.message));
   }, [token]);
+
+  useEffect(() => {
+    if (!selectedJob) return;
+    setDetailLeadSource(selectedJob.leadSource || "");
+    setDetailSummary(selectedJob.description || "");
+    setDetailPrivateNote("");
+    setDetailTagDraft("");
+  }, [selectedJob?.id, selectedJob?.leadSource, selectedJob?.description]);
 
   useEffect(() => {
     if (!token) return;
@@ -1760,6 +1773,80 @@ export function App() {
     await loadDashboard();
   }
 
+  async function updateJobDetails(job: Job, payload: Partial<Pick<Job, "tags" | "leadSource" | "description" | "internalNotes">>) {
+    setError("");
+    const result = await api<{ job: Job }>(`/api/jobs/${job.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
+    mergeJob(result.job);
+    setSelectedJobId(job.id);
+    await loadDashboard();
+    return result.job;
+  }
+
+  async function addJobDetailTag(job: Job) {
+    const cleanName = detailTagDraft.trim();
+    if (!cleanName) return;
+    const tags = [...new Set([...(job.tags ?? []), cleanName])];
+    await saveJobOption("tag", cleanName);
+    await updateJobDetails(job, { tags });
+    setDetailTagDraft("");
+  }
+
+  async function removeJobDetailTag(job: Job, tag: string) {
+    await updateJobDetails(job, { tags: (job.tags ?? []).filter((item) => item !== tag) });
+  }
+
+  async function saveJobDetailLeadSource(job: Job) {
+    const cleanName = detailLeadSource.trim() || "Unknown";
+    await saveJobOption("leadSource", cleanName);
+    await updateJobDetails(job, { leadSource: cleanName });
+  }
+
+  async function saveJobSummary(job: Job) {
+    await updateJobDetails(job, { description: detailSummary.trim() });
+  }
+
+  async function addJobPrivateNote(job: Job) {
+    const content = detailPrivateNote.trim();
+    if (!content) return;
+    await api(`/api/jobs/${job.id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ author: "Office", content })
+    });
+    const existingNotes = job.internalNotes?.trim();
+    await updateJobDetails(job, { internalNotes: existingNotes ? `${existingNotes}\n\n${content}` : content });
+    setDetailPrivateNote("");
+  }
+
+  function addAppointmentForJob(job: Job) {
+    const start = job.scheduledEnd ? new Date(job.scheduledEnd) : new Date();
+    if (!job.scheduledEnd) start.setHours(start.getHours() + 1, 0, 0, 0);
+    const end = new Date(start);
+    end.setHours(start.getHours() + 1);
+    setSelectedJobId("");
+    setCreateClientInline(false);
+    setJobForm((current) => ({
+      ...current,
+      customerId: job.customer.id,
+      addressId: job.address?.id ?? job.customer.addresses?.[0]?.id ?? "",
+      technicianId: job.technician?.id ?? "",
+      title: job.title || `Follow-up for job #${job.jobNumber}`,
+      jobType: job.jobType,
+      leadSource: job.leadSource || "Unknown",
+      tags: (job.tags ?? []).join(", "),
+      description: job.description || "",
+      internalNotes: "",
+      scheduledStart: toDateTimeLocal(start),
+      scheduledEnd: toDateTimeLocal(end)
+    }));
+    setJobClientSearch(`${customerName(job.customer)} / ${job.customer.phone}`);
+    setJobAddressSearch(addressLine(job.address ?? job.customer.addresses?.[0]));
+    setJobPageMode("create");
+    setActiveView("jobs");
+  }
+
   async function createInvoiceFromJob(job: Job) {
     const existingInvoice = job.invoices?.[0];
     if (existingInvoice) return existingInvoice;
@@ -2412,7 +2499,7 @@ export function App() {
                       <span className={`status-pill job-status-${selectedJob.status.toLowerCase()}`}>{selectedJob.status === "DISPATCHED" ? "On My Way" : statusLabel(selectedJob.status)}</span>
                     </div>
                     <div className="job-detail-actions">
-                      <button className="outline-button" type="button" onClick={() => setActiveView("schedule")}><CalendarDays size={17} /> Add Appointment</button>
+                      <button className="outline-button" type="button" onClick={() => addAppointmentForJob(selectedJob)}><CalendarDays size={17} /> Add Appointment</button>
                       <button className="outline-button" type="button" onClick={() => updateJobStatus(selectedJob, "DISPATCHED")}><Navigation size={17} /> On My Way</button>
                       <button className="outline-button" type="button" onClick={() => updateJobStatus(selectedJob, "IN_PROGRESS")}><Clock3 size={17} /> Start</button>
                       <button className="outline-button" type="button" onClick={() => updateJobStatus(selectedJob, "COMPLETED")}><CheckCheck size={17} /> Finish</button>
@@ -2446,19 +2533,42 @@ export function App() {
                       <section className="panel job-detail-meta">
                         <div className="panel-header"><h2><Tag size={18} /> Job tags</h2></div>
                         {!!selectedJob.tags?.length ? (
-                          <div className="job-detail-tags">{selectedJob.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+                          <div className="job-detail-tags">{selectedJob.tags.map((tag) => <span key={tag}>{tag}<button type="button" onClick={() => removeJobDetailTag(selectedJob, tag)}>x</button></span>)}</div>
                         ) : <p className="empty">No tags added.</p>}
+                        <form className="detail-inline-form" onSubmit={(event) => { event.preventDefault(); addJobDetailTag(selectedJob); }}>
+                          <input
+                            list="job-detail-tags-list"
+                            placeholder="Add tag and press Enter"
+                            value={detailTagDraft}
+                            onChange={(event) => setDetailTagDraft(event.target.value)}
+                          />
+                          <button className="outline-button" type="submit"><Plus size={16} /> Add</button>
+                        </form>
+                        <datalist id="job-detail-tags-list">
+                          {crmOptions.tags.map((tag) => <option value={tag} key={tag} />)}
+                        </datalist>
                       </section>
 
                       <section className="panel job-detail-meta">
                         <div className="panel-header"><h2><Navigation size={18} /> Lead source</h2></div>
-                        <p>{selectedJob.leadSource || "Unknown"}</p>
+                        <form className="detail-inline-form" onSubmit={(event) => { event.preventDefault(); saveJobDetailLeadSource(selectedJob); }}>
+                          <input
+                            list="job-detail-leads-list"
+                            value={detailLeadSource}
+                            onChange={(event) => setDetailLeadSource(event.target.value)}
+                            placeholder="Lead source"
+                          />
+                          <button className="outline-button" type="submit">Save</button>
+                        </form>
+                        <datalist id="job-detail-leads-list">
+                          {crmOptions.leadSources.map((source) => <option value={source} key={source} />)}
+                        </datalist>
                       </section>
                     </aside>
 
                     <main className="job-detail-main">
                       <section className="panel job-workflow-panel">
-                        <button type="button" onClick={() => setActiveView("schedule")}>
+                        <button type="button" onClick={() => addAppointmentForJob(selectedJob)}>
                           <CalendarDays size={22} />
                           <strong>Add Appointment</strong>
                           <span>{selectedJob.scheduledStart ? new Date(selectedJob.scheduledStart).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "Unscheduled"}</span>
@@ -2471,12 +2581,17 @@ export function App() {
                       </section>
 
                       <section className="panel">
-                        <div className="panel-header"><h2>Summary of Work</h2><button className="text-button" type="button">Add to invoice</button></div>
-                        <p className="job-detail-note">{selectedJob.description || "No visible job summary yet."}</p>
+                        <div className="panel-header"><h2>Summary of Work</h2><button className="text-button" type="button" onClick={() => saveJobSummary(selectedJob)}>Save summary</button></div>
+                        <textarea
+                          className="detail-textarea"
+                          placeholder="Add the visible summary of work for this job"
+                          value={detailSummary}
+                          onChange={(event) => setDetailSummary(event.target.value)}
+                        />
                       </section>
 
                       <section className="panel">
-                        <div className="panel-header"><h2>Appointments <span className="count-chip">{selectedJob.scheduledStart ? 1 : 0}</span></h2><button className="outline-button" type="button" onClick={() => setActiveView("schedule")}><Plus size={17} /> Appointment</button></div>
+                        <div className="panel-header"><h2>Appointments <span className="count-chip">{selectedJob.scheduledStart ? 1 : 0}</span></h2><button className="outline-button" type="button" onClick={() => addAppointmentForJob(selectedJob)}><Plus size={17} /> Appointment</button></div>
                         <div className="appointment-table">
                           <span>#</span><span>Date</span><span>Time</span><span>Arrival window</span><span>Employees</span>
                           {selectedJob.scheduledStart ? (
@@ -2532,19 +2647,27 @@ export function App() {
                         </div>
                       </section>
 
-                      {selectedJob.internalNotes && (
-                        <section className="panel">
-                          <div className="panel-header"><h2>Private Notes</h2><StickyNote size={18} /></div>
-                          <p className="job-detail-note">{selectedJob.internalNotes}</p>
-                        </section>
-                      )}
+                      <section className="panel">
+                        <div className="panel-header"><h2>Private Notes</h2><button className="text-button" type="button" onClick={() => addJobPrivateNote(selectedJob)}>Add note</button></div>
+                        <textarea
+                          className="detail-textarea compact"
+                          placeholder="Add an internal private note"
+                          value={detailPrivateNote}
+                          onChange={(event) => setDetailPrivateNote(event.target.value)}
+                        />
+                        {selectedJob.internalNotes && <p className="job-detail-note">{selectedJob.internalNotes}</p>}
+                      </section>
 
                       <section className="panel">
                         <div className="panel-header"><h2>Activity Feed</h2><MoreHorizontal size={18} /></div>
                         <div className="activity-feed">
                           <p><Wrench size={17} /> Job #{selectedJob.jobNumber} created: total = {money.format(jobInvoiceTotal(selectedJob) / 100)}</p>
                           {selectedJob.scheduledStart && <p><CalendarDays size={17} /> Job scheduled for {new Date(selectedJob.scheduledStart).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>}
-                          {selectedJob.technician && <p><UserPlus size={17} /> Dispatched to {selectedJob.technician.name}</p>}
+                          {selectedJob.status === "DISPATCHED" && <p><Navigation size={17} /> Technician marked on the way.</p>}
+                          {selectedJob.status === "IN_PROGRESS" && <p><Clock3 size={17} /> Job marked started.</p>}
+                          {selectedJob.status === "COMPLETED" && <p><CheckCheck size={17} /> Job marked finished.</p>}
+                          {selectedJob.technician && <p><UserPlus size={17} /> Assigned to {selectedJob.technician.name}</p>}
+                          {(selectedJob.notes ?? []).map((note) => <p key={note.id}><StickyNote size={17} /> {note.content}</p>)}
                           {selectedJobInvoice && <p><ReceiptText size={17} /> Invoice #{selectedJobInvoice.invoiceNumber} linked to job.</p>}
                         </div>
                       </section>

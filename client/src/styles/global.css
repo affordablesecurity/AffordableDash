@@ -1432,6 +1432,9 @@ textarea {
 }
 
 .job-detail-tags span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border-radius: 999px;
   background: #f0efff;
   color: #3733ff;
@@ -1440,10 +1443,52 @@ textarea {
   font-weight: 900;
 }
 
+.job-detail-tags button {
+  border: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #d8d7ff;
+  color: #3733ff;
+  cursor: pointer;
+  font-weight: 900;
+  line-height: 1;
+}
+
 .job-detail-note {
-  margin: 0;
+  margin: 14px 0 0;
+  border-top: 1px solid #e8ebf3;
+  padding-top: 14px;
   white-space: pre-wrap;
   color: #4f5a72;
+}
+
+.detail-inline-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.detail-inline-form input,
+.detail-textarea {
+  width: 100%;
+  border: 1px solid #dfe4ee;
+  border-radius: 8px;
+  background: white;
+  color: #141824;
+  font: inherit;
+  font-weight: 800;
+  padding: 11px 12px;
+}
+
+.detail-textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+
+.detail-textarea.compact {
+  min-height: 76px;
 }
 
 .service-plans-page,
