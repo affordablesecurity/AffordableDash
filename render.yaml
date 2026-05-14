@@ -4,8 +4,7 @@ services:
     runtime: node
     plan: starter
     buildCommand: npm install && npm run generate --workspace server && npm run build
-    preDeployCommand: npm run db:deploy --workspace server
-    startCommand: npm run start --workspace server
+    startCommand: npm run render:start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
