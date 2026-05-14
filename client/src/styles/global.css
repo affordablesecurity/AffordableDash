@@ -18,7 +18,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -64,7 +65,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid #e1e5ef;
   border-radius: 10px;
@@ -75,9 +77,15 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: #3f3df2;
   box-shadow: 0 0 0 3px rgba(63, 61, 242, 0.1);
+}
+
+textarea {
+  min-height: 210px;
+  resize: vertical;
 }
 
 .app-shell {
@@ -638,6 +646,317 @@ select:focus {
   text-decoration: none;
 }
 
+.outline-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px solid #3f3df2;
+  color: #3f3df2;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 800;
+}
+
+.section-actions,
+.action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.section-actions {
+  justify-content: space-between;
+}
+
+.jobs-page {
+  display: grid;
+  gap: 20px;
+}
+
+.job-summary-panel,
+.jobs-table-panel {
+  background: #ffffff;
+  border: 1px solid #e6e9f1;
+  border-radius: 18px;
+}
+
+.job-summary-panel {
+  min-height: 110px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: center;
+  padding: 22px;
+}
+
+.job-summary-panel button {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 40px auto;
+  grid-template-areas:
+    "icon value"
+    ". label";
+  gap: 4px 12px;
+  align-items: center;
+  border: 0;
+  border-right: 1px solid #eef1f6;
+  background: transparent;
+  text-align: left;
+  color: #101421;
+}
+
+.job-summary-panel button:last-child {
+  border-right: 0;
+}
+
+.job-summary-panel button svg {
+  grid-area: icon;
+  width: 40px;
+  height: 40px;
+  padding: 10px;
+  color: #3f3df2;
+  background: #f0efff;
+  border-radius: 10px;
+}
+
+.job-summary-panel button:nth-child(2) svg {
+  color: #1887f2;
+  background: #e6f4ff;
+}
+
+.job-summary-panel button:nth-child(3) svg {
+  color: #e46c1a;
+  background: #fff0e5;
+}
+
+.job-summary-panel button:nth-child(4) svg {
+  color: #25a93d;
+  background: #e8f9e8;
+}
+
+.job-summary-panel button:nth-child(5) svg {
+  color: #ef4444;
+  background: #ffeded;
+}
+
+.job-summary-panel strong {
+  grid-area: value;
+  font-size: 24px;
+}
+
+.job-summary-panel span {
+  grid-area: label;
+  color: #7e8aac;
+  font-weight: 800;
+}
+
+.job-summary-panel button.selected span {
+  color: #3733ff;
+}
+
+.jobs-table-panel {
+  padding: 24px;
+}
+
+.jobs-tools {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) 96px 84px 40px;
+  gap: 12px;
+  align-items: center;
+  padding-bottom: 22px;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.table-search {
+  width: 100%;
+}
+
+.job-tabs {
+  display: flex;
+  gap: 26px;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.job-tabs button {
+  border: 0;
+  background: transparent;
+  color: #272d3d;
+  padding: 22px 0 18px;
+  font-weight: 800;
+  border-bottom: 3px solid transparent;
+}
+
+.job-tabs button.active {
+  color: #3733ff;
+  border-bottom-color: #3733ff;
+}
+
+.jobs-table {
+  overflow-x: auto;
+}
+
+.jobs-table-row {
+  min-width: 1120px;
+  display: grid;
+  grid-template-columns: 44px 86px 180px 270px minmax(320px, 1fr) 150px 150px 100px 72px;
+  gap: 14px;
+  align-items: center;
+  min-height: 56px;
+  padding: 0 14px;
+  border-bottom: 1px solid #eef1f6;
+  color: #272d3d;
+  font-size: 14px;
+}
+
+.jobs-table-row:nth-child(odd):not(.jobs-table-head) {
+  background: #fafbfe;
+}
+
+.jobs-table-head {
+  min-height: 66px;
+  background: #fafbfe;
+  color: #101421;
+  font-weight: 900;
+}
+
+.jobs-table-row .status-pill,
+.jobs-table-row .payment-pill {
+  justify-self: start;
+}
+
+.job-status-completed,
+.payment-pill.paid {
+  background: #e8f9e8;
+  color: #25a93d;
+}
+
+.job-status-dispatched {
+  background: #e6f4ff;
+  color: #1887f2;
+}
+
+.job-status-canceled {
+  background: #ffeded;
+  color: #ef4444;
+}
+
+.job-status-in_progress {
+  background: #fff0e5;
+  color: #e46c1a;
+}
+
+.payment-pill {
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: #fff7db;
+  color: #cc9a00;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.table-empty {
+  padding: 22px 14px;
+}
+
+.job-create-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 0.95fr);
+  gap: 20px;
+}
+
+.job-create-column {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+}
+
+.sms-toggle {
+  min-height: 90px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.switch {
+  display: inline-flex;
+  width: 40px;
+  height: 24px;
+  position: relative;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch span {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: #d9deea;
+}
+
+.switch span::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  top: 3px;
+  left: 3px;
+  border-radius: 999px;
+  background: #ffffff;
+  transition: transform 0.15s ease;
+}
+
+.switch input:checked + span {
+  background: #3f3df2;
+}
+
+.switch input:checked + span::after {
+  transform: translateX(16px);
+}
+
+.new-client-grid,
+.schedule-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.span-2 {
+  grid-column: span 2;
+}
+
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
+  color: #272d3d;
+  font-weight: 900;
+  justify-content: center;
+}
+
+.or-divider::before,
+.or-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: #eef1f6;
+}
+
+.centered-action {
+  margin: 0 auto;
+}
+
+.panel-header h2 svg {
+  vertical-align: -4px;
+  margin-right: 7px;
+}
+
 .api-key-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -876,8 +1195,24 @@ select:focus {
 
 @media (max-width: 1100px) {
   .stats-grid,
-  .content-grid {
+  .content-grid,
+  .job-create-layout {
     grid-template-columns: 1fr;
+  }
+
+  .job-summary-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .job-summary-panel button {
+    border-right: 0;
+    border-bottom: 1px solid #eef1f6;
+    padding-bottom: 12px;
+  }
+
+  .jobs-tools {
+    grid-template-columns: 1fr 96px 84px 40px;
   }
 
   .quick-add-menu {
@@ -936,6 +1271,22 @@ select:focus {
   .topbar-actions select,
   .date-pill {
     width: 100%;
+  }
+
+  .section-actions,
+  .action-buttons {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .jobs-tools,
+  .new-client-grid,
+  .schedule-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .span-2 {
+    grid-column: auto;
   }
 
   .api-key-form,

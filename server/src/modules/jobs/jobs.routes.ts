@@ -26,7 +26,13 @@ jobsRouter.get("/", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
   const jobs = await prisma.job.findMany({
     where: { locationId, ...(status ? { status } : {}) },
-    include: { customer: true, address: true, technician: true, lineItems: true },
+    include: {
+      customer: { include: { addresses: true } },
+      address: true,
+      technician: true,
+      lineItems: true,
+      invoices: { include: { payments: true } }
+    },
     orderBy: [{ scheduledStart: "asc" }, { createdAt: "desc" }],
     take: 150
   });
@@ -43,7 +49,13 @@ jobsRouter.post("/", asyncHandler(async (req, res) => {
       scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
       scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined
     },
-    include: { customer: true, address: true, technician: true }
+    include: {
+      customer: { include: { addresses: true } },
+      address: true,
+      technician: true,
+      lineItems: true,
+      invoices: { include: { payments: true } }
+    }
   });
   res.status(201).json({ job });
 }));

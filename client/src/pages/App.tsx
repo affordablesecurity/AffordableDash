@@ -11,6 +11,7 @@ import {
   Clock3,
   CreditCard,
   FileText,
+  FolderOpen,
   Headphones,
   Home,
   KeyRound,
@@ -19,6 +20,8 @@ import {
   LogOut,
   Map,
   MessageSquareText,
+  MoreHorizontal,
+  Navigation,
   Percent,
   Phone,
   Plus,
@@ -26,7 +29,9 @@ import {
   Search,
   Settings,
   Tag,
+  Trash2,
   TrendingUp,
+  Upload,
   UserPlus,
   Users,
   WalletCards,
@@ -64,6 +69,24 @@ type Customer = {
   phone: string;
   email?: string;
   source?: string;
+  addresses?: Address[];
+};
+
+type Address = {
+  id: string;
+  street1: string;
+  street2?: string;
+  city: string;
+  state: string;
+  postalCode: string;
+};
+
+type Technician = {
+  id: string;
+  name: string;
+  email?: string;
+  phone: string;
+  color: string;
 };
 
 type CustomerForm = {
@@ -85,8 +108,13 @@ type Job = {
   jobType: string;
   status: string;
   scheduledStart?: string;
+  scheduledEnd?: string;
+  description?: string;
+  internalNotes?: string;
   customer: Customer;
-  technician?: { name: string; color: string };
+  address?: Address;
+  technician?: Technician;
+  invoices?: Invoice[];
 };
 
 type Invoice = {
@@ -161,6 +189,31 @@ function sourceColor(index: number) {
   return ["green", "navy", "purple", "yellow", "red"][index % 5];
 }
 
+function statusLabel(status: string) {
+  return status.split("_").map((part) => part[0] + part.slice(1).toLowerCase()).join(" ");
+}
+
+function addressLine(address?: Address) {
+  if (!address) return "No address selected";
+  return [address.street1, address.city, address.state, address.postalCode].filter(Boolean).join(", ");
+}
+
+function jobInvoiceTotal(job: Job) {
+  return (job.invoices ?? []).reduce((sum, invoice) => sum + invoice.total, 0);
+}
+
+function jobPaymentStatus(job: Job) {
+  const invoices = job.invoices ?? [];
+  if (!invoices.length) return "Unpaid";
+  if (invoices.some((invoice) => invoice.status === "PAID")) return "Paid";
+  if (invoices.some((invoice) => invoice.status === "SENT" || invoice.status === "DRAFT")) return "Unpaid";
+  return invoices[0].status;
+}
+
+function splitTags(value: string) {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
 export function App() {
   const [token, updateToken] = useState(getToken());
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -178,12 +231,17 @@ export function App() {
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("week");
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [slotPrompt, setSlotPrompt] = useState<SlotPrompt>(null);
+  const [jobPageMode, setJobPageMode] = useState<"list" | "create">("list");
+  const [jobSearch, setJobSearch] = useState("");
+  const [jobStatusFilter, setJobStatusFilter] = useState("all");
+  const [createClientInline, setCreateClientInline] = useState(false);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [apiKeyName, setApiKeyName] = useState("Partner API");
   const [newApiToken, setNewApiToken] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [customerForm, setCustomerForm] = useState<CustomerForm>({
     firstName: "",
@@ -198,11 +256,27 @@ export function App() {
   });
   const [jobForm, setJobForm] = useState({
     customerId: "",
+    addressId: "",
+    technicianId: "",
     title: "",
-    jobType: "Lockout",
+    jobType: "Car Lockout Service",
     scheduledStart: "",
     scheduledEnd: "",
-    description: ""
+    description: "",
+    internalNotes: "",
+    leadSource: "Unknown",
+    tags: ""
+  });
+  const [jobClientForm, setJobClientForm] = useState<CustomerForm>({
+    firstName: "",
+    lastName: "",
+    phone: "",
+    email: "",
+    source: "",
+    street1: "",
+    city: "",
+    state: "CA",
+    postalCode: ""
   });
   const [invoiceForm, setInvoiceForm] = useState({
     customerId: "",
@@ -216,19 +290,45 @@ export function App() {
 
   const scheduledJobs = useMemo(() => jobs.filter((job) => job.status !== "COMPLETED" && job.status !== "CANCELED"), [jobs]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
+  const selectedJobCustomer = customers.find((customer) => customer.id === jobForm.customerId);
+  const selectedJobAddresses = selectedJobCustomer?.addresses ?? [];
+  const filteredJobs = useMemo(() => {
+    const query = jobSearch.trim().toLowerCase();
+    return jobs.filter((job) => {
+      const matchesStatus = jobStatusFilter === "all" || (jobStatusFilter === "open" ? job.status === "LEAD" || job.status === "SCHEDULED" : job.status === jobStatusFilter);
+      const matchesQuery = !query || [
+        String(job.jobNumber),
+        job.title,
+        job.jobType,
+        job.customer.firstName,
+        job.customer.lastName,
+        addressLine(job.address ?? job.customer.addresses?.[0])
+      ].some((value) => value.toLowerCase().includes(query));
+      return matchesStatus && matchesQuery;
+    });
+  }, [jobSearch, jobStatusFilter, jobs]);
+  const jobCounts = useMemo(() => ({
+    open: jobs.filter((job) => job.status === "LEAD" || job.status === "SCHEDULED").length,
+    dispatched: jobs.filter((job) => job.status === "DISPATCHED").length,
+    inProgress: jobs.filter((job) => job.status === "IN_PROGRESS").length,
+    completed: jobs.filter((job) => job.status === "COMPLETED").length,
+    canceled: jobs.filter((job) => job.status === "CANCELED").length
+  }), [jobs]);
 
   async function loadDashboard() {
-    const [summaryResult, customersResult, jobsResult, invoicesResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult] = await Promise.all([
       api<Summary>("/api/settings/summary"),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
-      api<{ invoices: Invoice[] }>("/api/invoices")
+      api<{ invoices: Invoice[] }>("/api/invoices"),
+      api<{ technicians: Technician[] }>("/api/technicians")
     ]);
 
     setSummary(summaryResult);
     setCustomers(customersResult.customers);
     setJobs(jobsResult.jobs);
     setInvoices(invoicesResult.invoices);
+    setTechnicians(techniciansResult.technicians);
 
     const [locationResult, apiKeyResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
@@ -323,20 +423,70 @@ export function App() {
   async function createJob(event: FormEvent) {
     event.preventDefault();
     setError("");
+    let customerId = jobForm.customerId;
+    let addressId = jobForm.addressId || undefined;
+
+    if (!customerId && createClientInline) {
+      const customerResult = await api<{ customer: Customer }>("/api/customers", {
+        method: "POST",
+        body: JSON.stringify({
+          firstName: jobClientForm.firstName,
+          lastName: jobClientForm.lastName,
+          phone: jobClientForm.phone,
+          email: jobClientForm.email,
+          source: jobForm.leadSource || jobClientForm.source,
+          address: jobClientForm.street1 ? {
+            street1: jobClientForm.street1,
+            city: jobClientForm.city,
+            state: jobClientForm.state,
+            postalCode: jobClientForm.postalCode
+          } : undefined
+        })
+      });
+      customerId = customerResult.customer.id;
+      addressId = customerResult.customer.addresses?.[0]?.id;
+    }
+
+    if (!customerId) {
+      setError("Select an existing client or create a new client before creating the job.");
+      return;
+    }
+
+    const tagText = splitTags(jobForm.tags).length ? `Tags: ${splitTags(jobForm.tags).join(", ")}` : "";
+    const noteText = [jobForm.internalNotes, tagText].filter(Boolean).join("\n");
+
     await api("/api/jobs", {
       method: "POST",
       body: JSON.stringify({
-        customerId: jobForm.customerId || customers[0]?.id,
-        title: jobForm.title,
+        customerId,
+        addressId,
+        technicianId: jobForm.technicianId || undefined,
+        title: jobForm.title || jobForm.jobType,
         jobType: jobForm.jobType,
+        status: "SCHEDULED",
         scheduledStart: jobForm.scheduledStart ? new Date(jobForm.scheduledStart).toISOString() : undefined,
         scheduledEnd: jobForm.scheduledEnd ? new Date(jobForm.scheduledEnd).toISOString() : undefined,
-        description: jobForm.description
+        description: jobForm.description,
+        internalNotes: noteText || undefined
       })
     });
-    setJobForm({ customerId: "", title: "", jobType: "Lockout", scheduledStart: "", scheduledEnd: "", description: "" });
+    setJobForm({
+      customerId: "",
+      addressId: "",
+      technicianId: "",
+      title: "",
+      jobType: "Car Lockout Service",
+      scheduledStart: "",
+      scheduledEnd: "",
+      description: "",
+      internalNotes: "",
+      leadSource: "Unknown",
+      tags: ""
+    });
+    setJobClientForm({ firstName: "", lastName: "", phone: "", email: "", source: "", street1: "", city: "", state: "CA", postalCode: "" });
+    setCreateClientInline(false);
     await loadDashboard();
-    setActiveView("dispatch");
+    setJobPageMode("list");
   }
 
   async function createInvoice(event: FormEvent) {
@@ -371,6 +521,7 @@ export function App() {
       scheduledEnd: toDateTimeLocal(end)
     }));
     setSlotPrompt(null);
+    setJobPageMode("create");
     setActiveView("jobs");
   }
 
@@ -482,7 +633,7 @@ export function App() {
               <button onClick={() => setAddMenuOpen(false)}><MessageSquareText size={16} /> Message</button>
               <button onClick={() => { setActiveView("customers"); setAddMenuOpen(false); }}><Users size={16} /> Client or Lead</button>
               <button><UserPlus size={16} /> Employee</button>
-              <button onClick={() => { setActiveView("jobs"); setAddMenuOpen(false); }}><Wrench size={16} /> Job</button>
+              <button onClick={() => { setActiveView("jobs"); setJobPageMode("create"); setAddMenuOpen(false); }}><Wrench size={16} /> Job</button>
               <button onClick={() => { setActiveView("invoices"); setAddMenuOpen(false); }}><ReceiptText size={16} /> Invoice</button>
               <button><FileText size={16} /> Estimate</button>
               <button onClick={() => { setActiveView("schedule"); setAddMenuOpen(false); }}><CalendarDays size={16} /> Event</button>
@@ -509,7 +660,7 @@ export function App() {
 
         {error && <div className="error">{error}</div>}
 
-        {activeView !== "schedule" && <div className="stats-grid">
+        {activeView === "dispatch" && <div className="stats-grid">
           <StatCard label="Sales" value={money.format((summary?.salesCents ?? 0) / 100)} icon={CircleDollarSign} />
           <StatCard label="Collected Payments" value={money.format((summary?.collectedCents ?? 0) / 100)} icon={BadgeDollarSign} />
           <StatCard label="Jobs Completed" value={String(summary?.completedJobs ?? 0)} icon={CheckCheck} />
@@ -679,43 +830,236 @@ export function App() {
         )}
 
         {activeView === "jobs" && (
-          <div className="content-grid">
-            <section className="panel">
-              <div className="panel-header"><h2>Add Job</h2><Wrench size={18} /></div>
-              <form className="record-form" onSubmit={createJob}>
-                <select value={jobForm.customerId} onChange={(event) => setJobForm({ ...jobForm, customerId: event.target.value })} required>
-                  <option value="">Select customer</option>
-                  {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.firstName} {customer.lastName}</option>)}
-                </select>
-                <input placeholder="Job title" value={jobForm.title} onChange={(event) => setJobForm({ ...jobForm, title: event.target.value })} required />
-                <select value={jobForm.jobType} onChange={(event) => setJobForm({ ...jobForm, jobType: event.target.value })}>
-                  <option>Lockout</option>
-                  <option>Rekey</option>
-                  <option>Lock install</option>
-                  <option>Car key</option>
-                  <option>Ignition</option>
-                  <option>Safe</option>
-                  <option>Access control</option>
-                </select>
-                <input type="datetime-local" value={jobForm.scheduledStart} onChange={(event) => setJobForm({ ...jobForm, scheduledStart: event.target.value })} />
-                <input type="datetime-local" value={jobForm.scheduledEnd} onChange={(event) => setJobForm({ ...jobForm, scheduledEnd: event.target.value })} />
-                <input placeholder="Description" value={jobForm.description} onChange={(event) => setJobForm({ ...jobForm, description: event.target.value })} />
-                <button className="primary" type="submit">Create job</button>
-              </form>
-            </section>
-            <section className="panel wide">
-              <div className="panel-header"><h2>All Jobs</h2><CalendarDays size={18} /></div>
-              <div className="job-list">
-                {jobs.map((job) => (
-                  <article className="job-row" key={job.id}>
-                    <div className="job-time"><strong>#{job.jobNumber}</strong><span>{job.status}</span></div>
-                    <div><h3>{job.title}</h3><p>{job.customer.firstName} {job.customer.lastName} / {job.jobType}</p></div>
-                    <span className="status-pill">{job.scheduledStart ? new Date(job.scheduledStart).toLocaleDateString() : "Unscheduled"}</span>
-                  </article>
-                ))}
+          jobPageMode === "list" ? (
+            <section className="jobs-page">
+              <div className="section-actions">
+                <div className="breadcrumb"><Wrench size={17} /> Jobs</div>
+                <div className="action-buttons">
+                  <button className="outline-button"><Upload size={17} /> Import Jobs</button>
+                  <button className="primary" onClick={() => setJobPageMode("create")}><Plus size={18} /> Create Job</button>
+                </div>
+              </div>
+
+              <div className="job-summary-panel">
+                <button onClick={() => setJobStatusFilter("open")} className={jobStatusFilter === "open" ? "selected" : ""}>
+                  <FolderOpen size={21} />
+                  <strong>{jobCounts.open}</strong>
+                  <span>Open</span>
+                </button>
+                <button onClick={() => setJobStatusFilter("DISPATCHED")} className={jobStatusFilter === "DISPATCHED" ? "selected" : ""}>
+                  <Navigation size={21} />
+                  <strong>{jobCounts.dispatched}</strong>
+                  <span>On My Way</span>
+                </button>
+                <button onClick={() => setJobStatusFilter("IN_PROGRESS")} className={jobStatusFilter === "IN_PROGRESS" ? "selected" : ""}>
+                  <Clock3 size={21} />
+                  <strong>{jobCounts.inProgress}</strong>
+                  <span>In Progress</span>
+                </button>
+                <button onClick={() => setJobStatusFilter("COMPLETED")} className={jobStatusFilter === "COMPLETED" ? "selected" : ""}>
+                  <CheckCheck size={21} />
+                  <strong>{jobCounts.completed}</strong>
+                  <span>Completed</span>
+                </button>
+                <button onClick={() => setJobStatusFilter("CANCELED")} className={jobStatusFilter === "CANCELED" ? "selected" : ""}>
+                  <Trash2 size={21} />
+                  <strong>{jobCounts.canceled}</strong>
+                  <span>Canceled</span>
+                </button>
+              </div>
+
+              <div className="jobs-table-panel">
+                <div className="jobs-tools">
+                  <div className="search-box table-search">
+                    <Search size={18} />
+                    <input placeholder="Search jobs, clients, addresses" value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} />
+                  </div>
+                  <select aria-label="Tags">
+                    <option>Tags</option>
+                  </select>
+                  <select aria-label="Page size">
+                    <option>10</option>
+                    <option>25</option>
+                    <option>50</option>
+                  </select>
+                  <button className="icon-button" aria-label="More actions"><MoreHorizontal size={18} /></button>
+                </div>
+
+                <div className="job-tabs">
+                  {[
+                    ["all", "All"],
+                    ["open", "Open"],
+                    ["DISPATCHED", "On My Way"],
+                    ["IN_PROGRESS", "In Progress"],
+                    ["COMPLETED", "Completed"],
+                    ["CANCELED", "Canceled"]
+                  ].map(([value, label]) => (
+                    <button key={value} className={jobStatusFilter === value ? "active" : ""} onClick={() => setJobStatusFilter(value)}>{label}</button>
+                  ))}
+                </div>
+
+                <div className="jobs-table">
+                  <div className="jobs-table-row jobs-table-head">
+                    <span><input type="checkbox" aria-label="Select all jobs" /></span>
+                    <span>ID</span>
+                    <span>Client</span>
+                    <span>Scheduled</span>
+                    <span>Address</span>
+                    <span>Status</span>
+                    <span>Payment Status</span>
+                    <span>Total</span>
+                    <span>Actions</span>
+                  </div>
+                  {filteredJobs.map((job) => {
+                    const paymentStatus = jobPaymentStatus(job);
+                    return (
+                      <div className="jobs-table-row" key={job.id}>
+                        <span><input type="checkbox" aria-label={`Select job ${job.jobNumber}`} /></span>
+                        <strong>{job.jobNumber}</strong>
+                        <span>{job.customer.firstName} {job.customer.lastName}</span>
+                        <span>{job.scheduledStart ? new Date(job.scheduledStart).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Unscheduled"}</span>
+                        <span>{addressLine(job.address ?? job.customer.addresses?.[0])}</span>
+                        <span className={`status-pill job-status-${job.status.toLowerCase()}`}>{job.status === "DISPATCHED" ? "On My Way" : statusLabel(job.status)}</span>
+                        <span className={`payment-pill ${paymentStatus.toLowerCase()}`}>{statusLabel(paymentStatus.toUpperCase())}</span>
+                        <strong>{money.format(jobInvoiceTotal(job) / 100)}</strong>
+                        <button className="text-button" aria-label={`Delete job ${job.jobNumber}`}><Trash2 size={16} /></button>
+                      </div>
+                    );
+                  })}
+                  {filteredJobs.length === 0 && <p className="empty table-empty">No jobs match this search.</p>}
+                </div>
               </div>
             </section>
-          </div>
+          ) : (
+            <section className="jobs-page">
+              <div className="section-actions">
+                <div className="breadcrumb"><Wrench size={17} /> Jobs / New Job</div>
+                <div className="action-buttons">
+                  <button className="outline-button" type="button" onClick={() => setJobPageMode("list")}>Back to Jobs</button>
+                  <button className="primary" type="submit" form="create-job-form"><Plus size={18} /> Create Job</button>
+                </div>
+              </div>
+
+              <form id="create-job-form" className="job-create-layout" onSubmit={createJob}>
+                <div className="job-create-column">
+                  <section className="panel sms-toggle">
+                    <strong>Send "Scheduled" SMS</strong>
+                    <label className="switch">
+                      <input type="checkbox" defaultChecked />
+                      <span />
+                    </label>
+                  </section>
+
+                  <section className="panel">
+                    <div className="panel-header"><h2>Client</h2></div>
+                    {!createClientInline && (
+                      <div className="record-form">
+                        <select value={jobForm.customerId} onChange={(event) => setJobForm({ ...jobForm, customerId: event.target.value, addressId: "" })}>
+                          <option value="">Search or select client</option>
+                          {customers.map((customer) => (
+                            <option key={customer.id} value={customer.id}>{customer.firstName} {customer.lastName} / {customer.phone}</option>
+                          ))}
+                        </select>
+                        <select value={jobForm.addressId} onChange={(event) => setJobForm({ ...jobForm, addressId: event.target.value })} disabled={!selectedJobAddresses.length}>
+                          <option value="">Select address details</option>
+                          {selectedJobAddresses.map((address) => <option key={address.id} value={address.id}>{addressLine(address)}</option>)}
+                        </select>
+                      </div>
+                    )}
+
+                    {createClientInline && (
+                      <div className="new-client-grid">
+                        <input placeholder="First name" value={jobClientForm.firstName} onChange={(event) => setJobClientForm({ ...jobClientForm, firstName: event.target.value })} required />
+                        <input placeholder="Last name" value={jobClientForm.lastName} onChange={(event) => setJobClientForm({ ...jobClientForm, lastName: event.target.value })} required />
+                        <input placeholder="Phone" value={jobClientForm.phone} onChange={(event) => setJobClientForm({ ...jobClientForm, phone: event.target.value })} required />
+                        <input placeholder="Email" value={jobClientForm.email} onChange={(event) => setJobClientForm({ ...jobClientForm, email: event.target.value })} />
+                        <input className="span-2" placeholder="Street address" value={jobClientForm.street1} onChange={(event) => setJobClientForm({ ...jobClientForm, street1: event.target.value })} required />
+                        <input placeholder="City" value={jobClientForm.city} onChange={(event) => setJobClientForm({ ...jobClientForm, city: event.target.value })} required />
+                        <input placeholder="State" value={jobClientForm.state} onChange={(event) => setJobClientForm({ ...jobClientForm, state: event.target.value })} required />
+                        <input placeholder="Postal code" value={jobClientForm.postalCode} onChange={(event) => setJobClientForm({ ...jobClientForm, postalCode: event.target.value })} required />
+                      </div>
+                    )}
+                    <div className="or-divider">OR</div>
+                    <button className="primary centered-action" type="button" onClick={() => {
+                      setCreateClientInline((current) => !current);
+                      setJobForm((current) => ({ ...current, customerId: "", addressId: "" }));
+                    }}>
+                      <Plus size={18} /> {createClientInline ? "Select Existing Client" : "Create New Client"}
+                    </button>
+                  </section>
+
+                  <section className="panel">
+                    <div className="panel-header"><h2>Private Notes</h2></div>
+                    <textarea placeholder="Enter notes (internal only)" value={jobForm.internalNotes} onChange={(event) => setJobForm({ ...jobForm, internalNotes: event.target.value })} />
+                  </section>
+                </div>
+
+                <div className="job-create-column">
+                  <section className="panel">
+                    <div className="panel-header"><h2><CalendarDays size={20} /> Schedule</h2></div>
+                    <div className="schedule-form-grid">
+                      <label>Date <input type="date" value={jobForm.scheduledStart.slice(0, 10)} onChange={(event) => {
+                        const time = jobForm.scheduledStart.slice(11) || "10:00";
+                        setJobForm({ ...jobForm, scheduledStart: `${event.target.value}T${time}`, scheduledEnd: jobForm.scheduledEnd || `${event.target.value}T11:00` });
+                      }} /></label>
+                      <label>Start <input type="time" value={jobForm.scheduledStart.slice(11) || "10:00"} onChange={(event) => {
+                        const date = jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
+                        setJobForm({ ...jobForm, scheduledStart: `${date}T${event.target.value}` });
+                      }} /></label>
+                      <label>End <input type="time" value={jobForm.scheduledEnd.slice(11) || "11:00"} onChange={(event) => {
+                        const date = jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
+                        setJobForm({ ...jobForm, scheduledEnd: `${date}T${event.target.value}` });
+                      }} /></label>
+                      <label className="span-2">Field Techs
+                        <select value={jobForm.technicianId} onChange={(event) => setJobForm({ ...jobForm, technicianId: event.target.value })}>
+                          <option value="">Unassigned</option>
+                          {technicians.map((tech) => <option key={tech.id} value={tech.id}>{tech.name}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="panel">
+                    <div className="panel-header"><h2>More</h2></div>
+                    <div className="record-form">
+                      <label>Job Title
+                        <input value={jobForm.title} onChange={(event) => setJobForm({ ...jobForm, title: event.target.value })} placeholder="Car lockout, Rekey, Install" required />
+                      </label>
+                      <label>Lead Source
+                        <select value={jobForm.leadSource} onChange={(event) => setJobForm({ ...jobForm, leadSource: event.target.value })}>
+                          <option>Unknown</option>
+                          <option>Online Booking</option>
+                          <option>Google Ads</option>
+                          <option>Facebook Ads</option>
+                          <option>Yelp Ads</option>
+                          <option>Referral</option>
+                          <option>Phone Call</option>
+                        </select>
+                      </label>
+                      <label>Tags
+                        <input placeholder="urgent, warranty, commercial" value={jobForm.tags} onChange={(event) => setJobForm({ ...jobForm, tags: event.target.value })} />
+                      </label>
+                      <label>Job Type
+                        <select value={jobForm.jobType} onChange={(event) => setJobForm({ ...jobForm, jobType: event.target.value })}>
+                          <option>Car Lockout Service</option>
+                          <option>House Lockout Service</option>
+                          <option>Rekey</option>
+                          <option>Lock Install</option>
+                          <option>Car Key</option>
+                          <option>Ignition</option>
+                          <option>Safe</option>
+                          <option>Access Control</option>
+                        </select>
+                      </label>
+                      <label>Description
+                        <input placeholder="Visible job description" value={jobForm.description} onChange={(event) => setJobForm({ ...jobForm, description: event.target.value })} />
+                      </label>
+                    </div>
+                  </section>
+                </div>
+              </form>
+            </section>
+          )
         )}
 
         {activeView === "invoices" && (
