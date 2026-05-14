@@ -1160,7 +1160,7 @@ textarea {
 
 .job-create-layout {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 360px) minmax(0, 1fr);
   gap: 20px;
 }
 
@@ -1298,6 +1298,7 @@ textarea {
 }
 
 .job-customer-card {
+  min-width: 0;
   overflow: hidden;
   border: 1px solid #e6e9f1;
   border-radius: 8px;
@@ -1323,28 +1324,38 @@ textarea {
 }
 
 .job-customer-body {
+  min-width: 0;
   display: grid;
   gap: 10px;
   padding: 16px;
 }
 
 .job-customer-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
+  align-items: center;
+}
+
+.job-customer-title strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .job-customer-title .outline-button {
   padding: 8px 12px;
+  white-space: nowrap;
 }
 
 .job-customer-body p {
+  min-width: 0;
   margin: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   color: #272d3d;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .notification-chip {
@@ -1359,7 +1370,7 @@ textarea {
 
 .payment-card-mini {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   border-radius: 8px;
@@ -1375,6 +1386,7 @@ textarea {
   font-weight: 900;
   padding: 0;
   text-align: left;
+  white-space: nowrap;
 }
 
 .address-picker {
@@ -1388,6 +1400,25 @@ textarea {
   color: #006bcf;
   padding: 0;
   font-weight: 900;
+  text-align: left;
+}
+
+@media (max-width: 1320px) {
+  .job-create-layout {
+    grid-template-columns: minmax(300px, 330px) minmax(0, 1fr);
+  }
+
+  .job-customer-title {
+    grid-template-columns: 1fr;
+  }
+
+  .job-customer-title .outline-button {
+    justify-self: start;
+  }
+
+  .payment-card-mini {
+    grid-template-columns: 1fr;
+  }
 }
 
 .tag-editor {
