@@ -7,7 +7,8 @@ import { createInvoicePaymentIntent } from "./stripe.service.js";
 export const paymentsRouter = Router();
 
 paymentsRouter.post("/invoices/:invoiceId/payment-intent", asyncHandler(async (req, res) => {
-  const invoice = await prisma.invoice.findFirst({ where: { id: req.params.invoiceId, locationId: activeLocationId(req) } });
+  const invoiceId = String(req.params.invoiceId);
+  const invoice = await prisma.invoice.findFirst({ where: { id: invoiceId, locationId: activeLocationId(req) } });
   if (!invoice) return res.status(404).json({ error: "Invoice not found" });
   if (invoice.total <= 0) return res.status(422).json({ error: "Invoice total must be greater than zero" });
 

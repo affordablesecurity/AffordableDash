@@ -69,8 +69,9 @@ customersRouter.post("/", asyncHandler(async (req, res) => {
 }));
 
 customersRouter.get("/:id", asyncHandler(async (req, res) => {
+  const customerId = String(req.params.id);
   const customer = await prisma.customer.findFirst({
-    where: { id: req.params.id, locationId: activeLocationId(req) },
+    where: { id: customerId, locationId: activeLocationId(req) },
     include: { addresses: true, jobs: true, invoices: true, messages: { orderBy: { createdAt: "desc" } } }
   });
 
@@ -79,8 +80,9 @@ customersRouter.get("/:id", asyncHandler(async (req, res) => {
 }));
 
 customersRouter.delete("/:id", asyncHandler(async (req, res) => {
+  const customerId = String(req.params.id);
   const customer = await prisma.customer.findFirst({
-    where: { id: req.params.id, locationId: activeLocationId(req) },
+    where: { id: customerId, locationId: activeLocationId(req) },
     include: { jobs: true, invoices: true }
   });
 

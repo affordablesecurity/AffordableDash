@@ -54,8 +54,9 @@ invoicesRouter.post("/", asyncHandler(async (req, res) => {
 }));
 
 invoicesRouter.get("/:id", asyncHandler(async (req, res) => {
+  const invoiceId = String(req.params.id);
   const invoice = await prisma.invoice.findFirst({
-    where: { id: req.params.id, locationId: activeLocationId(req) },
+    where: { id: invoiceId, locationId: activeLocationId(req) },
     include: { customer: true, job: true, items: true, payments: true }
   });
   if (!invoice) return res.status(404).json({ error: "Invoice not found" });

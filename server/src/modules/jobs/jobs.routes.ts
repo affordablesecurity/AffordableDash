@@ -49,8 +49,9 @@ jobsRouter.post("/", asyncHandler(async (req, res) => {
 }));
 
 jobsRouter.get("/:id", asyncHandler(async (req, res) => {
+  const jobId = String(req.params.id);
   const job = await prisma.job.findFirst({
-    where: { id: req.params.id, locationId: activeLocationId(req) },
+    where: { id: jobId, locationId: activeLocationId(req) },
     include: { customer: true, address: true, technician: true, notes: true, lineItems: true, invoices: true }
   });
   if (!job) return res.status(404).json({ error: "Job not found" });
@@ -58,11 +59,12 @@ jobsRouter.get("/:id", asyncHandler(async (req, res) => {
 }));
 
 jobsRouter.patch("/:id", asyncHandler(async (req, res) => {
+  const jobId = String(req.params.id);
   const input = jobSchema.partial().parse(req.body);
-  const existing = await prisma.job.findFirst({ where: { id: req.params.id, locationId: activeLocationId(req) } });
+  const existing = await prisma.job.findFirst({ where: { id: jobId, locationId: activeLocationId(req) } });
   if (!existing) return res.status(404).json({ error: "Job not found" });
   const job = await prisma.job.update({
-    where: { id: req.params.id },
+    where: { id: jobId },
     data: {
       ...input,
       scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
@@ -74,14 +76,16 @@ jobsRouter.patch("/:id", asyncHandler(async (req, res) => {
 }));
 
 jobsRouter.post("/:id/notes", asyncHandler(async (req, res) => {
+  const jobId = String(req.params.id);
   const input = z.object({ author: z.string().default("Office"), content: z.string().min(1) }).parse(req.body);
-  const job = await prisma.job.findFirst({ where: { id: req.params.id, locationId: activeLocationId(req) } });
+  const job = await prisma.job.findFirst({ where: { id: jobId, locationId: activeLocationId(req) } });
   if (!job) return res.status(404).json({ error: "Job not found" });
-  const note = await prisma.jobNote.create({ data: { jobId: req.params.id, ...input } });
+  const note = await prisma.jobNote.create({ data: { jobId, ...input } });
   res.status(201).json({ note });
 }));
 
 jobsRouter.post("/:id/line-items", asyncHandler(async (req, res) => {
+  const jobId = String(req.params.id);
   const input = z.object({
     name: z.string().min(1),
     description: z.string().optional(),
@@ -90,8 +94,8 @@ jobsRouter.post("/:id/line-items", asyncHandler(async (req, res) => {
     unitCost: z.number().int().default(0),
     taxable: z.boolean().default(true)
   }).parse(req.body);
-  const job = await prisma.job.findFirst({ where: { id: req.params.id, locationId: activeLocationId(req) } });
+  const job = await prisma.job.findFirst({ where: { id: jobId, locationId: activeLocationId(req) } });
   if (!job) return res.status(404).json({ error: "Job not found" });
-  const lineItem = await prisma.jobLineItem.create({ data: { jobId: req.params.id, ...input } });
+  const lineItem = await prisma.jobLineItem.create({ data: { jobId, ...input } });
   res.status(201).json({ lineItem });
 }));

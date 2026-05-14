@@ -77,8 +77,9 @@ apiKeysRouter.post("/:id/revoke", asyncHandler(async (req, res) => {
     return res.status(403).json({ error: "Only owners and admins can manage API access" });
   }
 
+  const apiKeyId = String(req.params.id);
   const apiKey = await prisma.locationApiKey.findFirst({
-    where: { id: req.params.id, locationId: activeLocationId(req) }
+    where: { id: apiKeyId, locationId: activeLocationId(req) }
   });
 
   if (!apiKey) return res.status(404).json({ error: "API key not found" });
