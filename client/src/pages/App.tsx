@@ -174,7 +174,19 @@ type Invoice = {
 type LocationAccess = {
   role: string;
   organization: { id: string; name: string };
-  location: { id: string; name: string };
+  location: {
+    id: string;
+    organizationId: string;
+    name: string;
+    slug: string;
+    phone?: string;
+    street1?: string;
+    street2?: string;
+    city?: string;
+    state?: string;
+    postalCode?: string;
+    timezone?: string;
+  };
 };
 
 type ApiKey = {
@@ -193,7 +205,7 @@ type View = "dispatch" | "schedule" | "customers" | "jobs" | "invoices" | "repor
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
-type SettingsSection = "overview" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans";
+type SettingsSection = "overview" | "company" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans";
 type CrmOptions = {
   leadSources: string[];
   tags: string[];
@@ -575,6 +587,7 @@ export function App() {
   }, [priceBookItems, priceBookSearch]);
   const selectedSettings = settingsSections.find((section) => section.id === settingsSection);
   const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
+  const activeLocationAccess = locations.find((item) => item.location.id === activeLocationId) ?? locations[0];
   const reportItems = reports?.sections.flatMap((section) => section.items) ?? [];
   const selectedReport = reportItems.find((item) => item.id === selectedReportId) ?? reportItems[0];
   const activeCharts = reportDashboard === "leads"
@@ -1816,7 +1829,7 @@ export function App() {
             {settingsSection === "overview" ? (
               <>
                 <div className="settings-grid">
-                  <button type="button" className="settings-card" onClick={() => setSettingsSection("overview")}>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("company")}>
                     <span className="settings-icon purple"><Settings size={22} /></span>
                     <strong>Company Settings</strong>
                   </button>
@@ -1875,11 +1888,70 @@ export function App() {
                   </div>
                 </div>
               </>
+            ) : settingsSection === "company" ? (
+              <div className="settings-layout">
+                <aside className="settings-menu">
+                  <span>Global Settings</span>
+                  <button className="active" onClick={() => setSettingsSection("company")}>Company</button>
+                  <button onClick={() => setActiveView("api")}>API Access</button>
+                  <span>Feature Configurations</span>
+                  <button onClick={() => setSettingsSection("jobTypes")}>Job Types</button>
+                  <button onClick={() => setActiveView("pricebook")}>Price Book</button>
+                  <button onClick={() => setSettingsSection("servicePlans")}>Service Plans</button>
+                  <span>Tags & Tools</span>
+                  <button onClick={() => setSettingsSection("checklists")}>Checklists</button>
+                  <button onClick={() => setSettingsSection("jobFields")}>Job Fields</button>
+                  <button onClick={() => setSettingsSection("leadSources")}>Lead Sources</button>
+                  <button onClick={() => setSettingsSection("tags")}>Tags</button>
+                </aside>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <p className="settings-kicker">Location separated account</p>
+                      <h2>Company Settings</h2>
+                      <p>These IDs are generated automatically and keep every location's records separated.</p>
+                    </div>
+                    <span>{activeLocationAccess?.role ?? "Owner"}</span>
+                  </div>
+
+                  <div className="company-settings-grid">
+                    <article>
+                      <span>Organization ID</span>
+                      <code>{activeLocationAccess?.organization.id ?? "Not loaded"}</code>
+                    </article>
+                    <article>
+                      <span>Location ID</span>
+                      <code>{activeLocationAccess?.location.id ?? "Not loaded"}</code>
+                    </article>
+                    <article>
+                      <span>Organization Name</span>
+                      <strong>{activeLocationAccess?.organization.name ?? "Not loaded"}</strong>
+                    </article>
+                    <article>
+                      <span>Location Name</span>
+                      <strong>{activeLocationAccess?.location.name ?? "Not loaded"}</strong>
+                    </article>
+                    <article>
+                      <span>Location Slug</span>
+                      <strong>{activeLocationAccess?.location.slug ?? "Not loaded"}</strong>
+                    </article>
+                    <article>
+                      <span>Timezone</span>
+                      <strong>{activeLocationAccess?.location.timezone ?? "America/Phoenix"}</strong>
+                    </article>
+                  </div>
+
+                  <div className="settings-note">
+                    Price book items, categories, job types, tags, lead sources, job fields, checklists, service plans, customers, jobs, invoices, technicians, API keys, messages, and reports are scoped to the active Location ID.
+                  </div>
+                </section>
+              </div>
             ) : selectedSettings && (
               <div className="settings-layout">
                 <aside className="settings-menu">
                   <span>Global Settings</span>
-                  <button onClick={() => setSettingsSection("overview")}>Company</button>
+                  <button onClick={() => setSettingsSection("company")}>Company</button>
                   <button onClick={() => setActiveView("api")}>API Access</button>
                   <span>Feature Configurations</span>
                   <button className={settingsSection === "jobTypes" ? "active" : ""} onClick={() => setSettingsSection("jobTypes")}>Job Types</button>

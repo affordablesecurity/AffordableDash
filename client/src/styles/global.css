@@ -1929,6 +1929,43 @@ textarea {
   border-bottom: 0;
 }
 
+.company-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.company-settings-grid article {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #eef1f6;
+  border-radius: 12px;
+  background: #fafbfe;
+  padding: 14px;
+}
+
+.company-settings-grid span {
+  color: #7e8aac;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.company-settings-grid code {
+  overflow-wrap: anywhere;
+  color: #3733ff;
+  font-weight: 900;
+}
+
+.settings-note {
+  border: 1px solid #d7dbff;
+  border-radius: 12px;
+  background: #f5f4ff;
+  color: #3f4770;
+  padding: 14px;
+  line-height: 1.5;
+}
+
 .api-key-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2271,6 +2308,7 @@ textarea {
   .schedule-form-grid,
   .line-item-row,
   .pricebook-form-grid,
+  .company-settings-grid,
   .category-grid {
     grid-template-columns: 1fr;
   }
