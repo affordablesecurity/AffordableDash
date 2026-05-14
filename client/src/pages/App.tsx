@@ -1,4 +1,35 @@
-import { CalendarDays, CreditCard, KeyRound, LogOut, MessageSquareText, PhoneCall, Plus, Users, Wrench } from "lucide-react";
+import {
+  BadgeDollarSign,
+  Bell,
+  BookOpen,
+  CalendarDays,
+  CheckCheck,
+  ChevronDown,
+  CircleDollarSign,
+  Clock3,
+  CreditCard,
+  FileText,
+  Headphones,
+  Home,
+  KeyRound,
+  Laptop,
+  ListChecks,
+  LogOut,
+  Map,
+  MessageSquareText,
+  Percent,
+  Phone,
+  Plus,
+  ReceiptText,
+  Search,
+  Settings,
+  Tag,
+  TrendingUp,
+  UserPlus,
+  Users,
+  WalletCards,
+  Wrench
+} from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, clearToken, getToken, login, setToken, signup } from "../api/client";
 import { StatCard } from "../components/StatCard";
@@ -321,19 +352,41 @@ export function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark"><Wrench size={22} /></div>
+          <div className="brand-mark">A</div>
           <div>
-            <strong>Locksmith CRM</strong>
-            <span>Operations</span>
+            <strong>affordable</strong>
+            <span>service CRM</span>
           </div>
         </div>
         <nav>
-          <button className={activeView === "dispatch" ? "active" : ""} onClick={() => setActiveView("dispatch")}><CalendarDays size={18} /> Dispatch</button>
-          <button className={activeView === "customers" ? "active" : ""} onClick={() => setActiveView("customers")}><Users size={18} /> Customers</button>
-          <button className={activeView === "jobs" ? "active" : ""} onClick={() => setActiveView("jobs")}><Wrench size={18} /> Jobs</button>
-          <button className={activeView === "invoices" ? "active" : ""} onClick={() => setActiveView("invoices")}><CreditCard size={18} /> Invoices</button>
+          <span className="nav-section">Main Menu</span>
+          <button className={activeView === "dispatch" ? "active" : ""} onClick={() => setActiveView("dispatch")}><Home size={18} /> Dashboard</button>
+          <button onClick={() => setActiveView("jobs")}><CalendarDays size={18} /> Schedule</button>
+          <button><Map size={18} /> Map</button>
+
+          <span className="nav-section">Communication</span>
           <button><MessageSquareText size={18} /> Messages</button>
+          <button><Phone size={18} /> Phone</button>
+          <button><TrendingUp size={18} /> Marketing</button>
+
+          <span className="nav-section">Operations</span>
+          <button className={activeView === "jobs" ? "active" : ""} onClick={() => setActiveView("jobs")}><Wrench size={18} /> Jobs</button>
+          <button className={activeView === "customers" ? "active" : ""} onClick={() => setActiveView("customers")}><Users size={18} /> Clients & Leads</button>
+          <button><UserPlus size={18} /> Employees</button>
+          <button className={activeView === "invoices" ? "active" : ""} onClick={() => setActiveView("invoices")}><ReceiptText size={18} /> Invoices</button>
+          <button><FileText size={18} /> Estimates</button>
+          <button><WalletCards size={18} /> Payments</button>
+          <button><CalendarDays size={18} /> Events</button>
+          <button><Clock3 size={18} /> Time Clock</button>
+          <button><Laptop size={18} /> Online Booking</button>
+          <button><Tag size={18} /> Pricebook</button>
+
+          <span className="nav-section">More</span>
+          <button><ListChecks size={18} /> Reports</button>
+          <button><Settings size={18} /> Settings</button>
           <button className={activeView === "api" ? "active" : ""} onClick={() => setActiveView("api")}><KeyRound size={18} /> API Access</button>
+          <button><Headphones size={18} /> Support</button>
+          <button><BookOpen size={18} /> Training</button>
         </nav>
         <button className="ghost" onClick={() => { clearToken(); updateToken(null); }}>
           <LogOut size={18} /> Sign out
@@ -342,10 +395,29 @@ export function App() {
 
       <section className="workspace">
         <header className="topbar">
-          <div>
-            <h1>{activeView === "dispatch" ? "Dispatch Board" : activeView[0].toUpperCase() + activeView.slice(1)}</h1>
-            <p>Protected CRM workspace for the selected location.</p>
+          <div className="search-box">
+            <Search size={18} />
+            <input aria-label="Search" placeholder="Type to search" />
           </div>
+          <div className="add-menu-wrap">
+            <button className="primary add-button" onClick={() => setActiveView("jobs")}><Plus size={18} /> Add New</button>
+            <div className="quick-add-menu">
+              <button><MessageSquareText size={16} /> Message</button>
+              <button onClick={() => setActiveView("customers")}><Users size={16} /> Client or Lead</button>
+              <button><UserPlus size={16} /> Employee</button>
+              <button onClick={() => setActiveView("jobs")}><Wrench size={16} /> Job</button>
+              <button onClick={() => setActiveView("invoices")}><ReceiptText size={16} /> Invoice</button>
+              <button><FileText size={16} /> Estimate</button>
+              <button><CalendarDays size={16} /> Event</button>
+            </div>
+          </div>
+          <div className="topbar-spacer" />
+          <button className="icon-button" aria-label="Notifications"><Bell size={18} /></button>
+          <button className="profile-button" aria-label="Profile"><span>BW</span><ChevronDown size={16} /></button>
+        </header>
+
+        <div className="page-titlebar">
+          <div className="breadcrumb"><Home size={17} /> {activeView === "dispatch" ? "Dashboard" : activeView[0].toUpperCase() + activeView.slice(1)}</div>
           <div className="topbar-actions">
             <select value={activeLocationId} onChange={(event) => switchLocation(event.target.value)}>
               {locations.map((item) => (
@@ -354,17 +426,21 @@ export function App() {
                 </option>
               ))}
             </select>
-            <button className="primary" onClick={() => setActiveView("jobs")}><Plus size={18} /> New job</button>
+            <div className="date-pill">05/13/2026 <CalendarDays size={16} /></div>
           </div>
-        </header>
+        </div>
 
         {error && <div className="error">{error}</div>}
 
         <div className="stats-grid">
-          <StatCard label="Customers" value={String(summary?.customers ?? 0)} icon={Users} />
-          <StatCard label="Open jobs" value={String(summary?.openJobs ?? 0)} icon={PhoneCall} />
-          <StatCard label="Invoices" value={String(summary?.invoices ?? 0)} icon={CreditCard} />
-          <StatCard label="Collected" value={money.format((summary?.revenueCents ?? 0) / 100)} icon={Wrench} />
+          <StatCard label="Sales" value={money.format((summary?.revenueCents ?? 0) / 100)} icon={CircleDollarSign} />
+          <StatCard label="Collected Payments" value={money.format((summary?.revenueCents ?? 0) / 100)} icon={BadgeDollarSign} />
+          <StatCard label="Jobs Completed" value="0" icon={CheckCheck} />
+          <StatCard label="Cancellation Rate" value="0%" icon={Percent} />
+          <StatCard label="Average Job Size" value={money.format((summary?.revenueCents ?? 0) / Math.max(summary?.openJobs ?? 1, 1) / 100)} icon={TrendingUp} />
+          <StatCard label="New Clients" value={String(summary?.customers ?? 0)} icon={Users} />
+          <StatCard label="New Leads" value="0" icon={UserPlus} />
+          <StatCard label="Booking Rate" value="0.00%" icon={Percent} />
         </div>
 
         {activeView === "dispatch" && <div className="content-grid">
@@ -391,32 +467,27 @@ export function App() {
             </div>
           </section>
 
-          <section className="panel">
+          <section className="panel chart-panel">
             <div className="panel-header">
-              <h2>Recent Customers</h2>
+              <h2>Jobs by Type</h2>
             </div>
-            <div className="compact-list">
-              {customers.slice(0, 6).map((customer) => (
-                <article key={customer.id}>
-                  <strong>{customer.firstName} {customer.lastName}</strong>
-                  <span>{customer.phone}</span>
-                </article>
-              ))}
-            </div>
+            <div className="empty-chart"><span>!</span> No data available</div>
           </section>
 
-          <section className="panel">
+          <section className="panel chart-panel">
             <div className="panel-header">
-              <h2>Invoices</h2>
+              <h2>Jobs by Source</h2>
+              <button className="link-button">View All</button>
             </div>
-            <div className="compact-list">
-              {invoices.slice(0, 6).map((invoice) => (
-                <article key={invoice.id}>
-                  <strong>#{invoice.invoiceNumber} / {money.format(invoice.total / 100)}</strong>
-                  <span>{invoice.customer.firstName} {invoice.customer.lastName} / {invoice.status}</span>
-                </article>
-              ))}
-              {invoices.length === 0 && <p className="empty">No invoices yet.</p>}
+            <div className="source-chart">
+              <div className="pie-chart" />
+              <div className="legend-list">
+                <span><i className="green" /> Online Booking <b>{jobs.length || 1} (100%)</b></span>
+                <span><i className="navy" /> Google Ads <b>0 (0%)</b></span>
+                <span><i className="purple" /> Facebook Ads <b>0 (0%)</b></span>
+                <span><i className="yellow" /> Bing Ads <b>0 (0%)</b></span>
+                <span><i className="red" /> Yelp Ads <b>0 (0%)</b></span>
+              </div>
             </div>
           </section>
         </div>}
