@@ -1205,6 +1205,18 @@ export function App() {
     setJobAddressSearch(customer.addresses?.[0] ? addressLine(customer.addresses[0]) : "");
   }
 
+  function clearJobCustomer() {
+    setJobForm((current) => ({ ...current, customerId: "", addressId: "" }));
+    setJobClientSearch("");
+    setJobAddressSearch("");
+  }
+
+  function openCustomerProfile(customer: Customer) {
+    setSelectedCustomerId(customer.id);
+    setCustomerProfileTab("profile");
+    setActiveView("customers");
+  }
+
   function selectJobAddress(address: Address) {
     setJobForm((current) => ({ ...current, addressId: address.id }));
     setJobAddressSearch(addressLine(address));
@@ -2036,8 +2048,8 @@ export function App() {
                   </section>
 
                   <section className="panel">
-                    <div className="panel-header"><h2>Client</h2></div>
-                    {!createClientInline && (
+                    <div className="panel-header"><h2><Users size={18} /> Customer</h2>{selectedJobCustomer && <button className="text-button" type="button" onClick={clearJobCustomer}>Clear</button>}</div>
+                    {!createClientInline && !selectedJobCustomer && (
                       <div className="record-form">
                         <div className="typeahead">
                           <input
@@ -2055,32 +2067,60 @@ export function App() {
                                 <button type="button" key={customer.id} onClick={() => selectJobCustomer(customer)}>
                                   <strong>{customer.firstName} {customer.lastName}</strong>
                                   <span>{customer.phone}{customer.email ? ` / ${customer.email}` : ""}</span>
+                                  <small>{addressLine(customer.addresses?.[0])}</small>
                                 </button>
                               ))}
                               {clientMatches.length === 0 && <span className="typeahead-empty">No matching clients yet.</span>}
                             </div>
                           )}
                         </div>
-                        <div className="typeahead">
-                          <input
-                            placeholder="Select address details"
-                            value={jobAddressSearch}
-                            disabled={!selectedJobAddresses.length}
-                            onChange={(event) => {
-                              setJobAddressSearch(event.target.value);
-                              setJobForm({ ...jobForm, addressId: "" });
-                            }}
-                          />
-                          {jobAddressSearch && selectedJobAddresses.length > 0 && !jobForm.addressId && (
-                            <div className="typeahead-results">
-                              {addressMatches.map((address) => (
-                                <button type="button" key={address.id} onClick={() => selectJobAddress(address)}>
-                                  <strong>{addressLine(address)}</strong>
-                                </button>
-                              ))}
-                              {addressMatches.length === 0 && <span className="typeahead-empty">No matching addresses.</span>}
+                      </div>
+                    )}
+
+                    {!createClientInline && selectedJobCustomer && (
+                      <div className="job-customer-card">
+                        <div className="job-customer-map">
+                          <span>Street view</span>
+                          <strong>{selectedJobCustomer.addresses?.[0]?.city || "Service address"}</strong>
+                        </div>
+                        <div className="job-customer-body">
+                          <div className="job-customer-title">
+                            <strong>{customerName(selectedJobCustomer)}</strong>
+                            <button className="outline-button" type="button" onClick={() => openCustomerProfile(selectedJobCustomer)}>View details</button>
+                          </div>
+                          <p>{addressLine(selectedJobCustomer.addresses?.find((address) => address.id === jobForm.addressId) ?? selectedJobCustomer.addresses?.[0])}</p>
+                          <p><Phone size={16} /> {selectedJobCustomer.phone}</p>
+                          {selectedJobCustomer.email && <p><Mail size={16} /> {selectedJobCustomer.email}</p>}
+                          <span className="notification-chip">{selectedJobCustomer.communicationPrefs?.sms === false ? "Notifications off" : "Notifications on"}</span>
+                          <div className="payment-card-mini">
+                            <CreditCard size={18} />
+                            <span>No payment method</span>
+                            <button type="button">Add card</button>
+                            <button type="button">Request card</button>
+                          </div>
+                          {selectedJobAddresses.length > 1 && (
+                            <div className="typeahead address-picker">
+                              <input
+                                placeholder="Select address details"
+                                value={jobAddressSearch}
+                                onChange={(event) => {
+                                  setJobAddressSearch(event.target.value);
+                                  setJobForm({ ...jobForm, addressId: "" });
+                                }}
+                              />
+                              {jobAddressSearch && !jobForm.addressId && (
+                                <div className="typeahead-results">
+                                  {addressMatches.map((address) => (
+                                    <button type="button" key={address.id} onClick={() => selectJobAddress(address)}>
+                                      <strong>{addressLine(address)}</strong>
+                                    </button>
+                                  ))}
+                                  {addressMatches.length === 0 && <span className="typeahead-empty">No matching addresses.</span>}
+                                </div>
+                              )}
                             </div>
                           )}
+                          <button className="customer-profile-link" type="button" onClick={() => openCustomerProfile(selectedJobCustomer)}>Customer profile</button>
                         </div>
                       </div>
                     )}
