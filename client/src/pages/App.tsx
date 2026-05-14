@@ -256,7 +256,7 @@ type Invoice = {
   paidAt?: string;
   customer: Customer;
   job?: Job;
-  items?: Array<{ id: string; name: string; description?: string; quantity: number | string; unitPrice: number; taxable?: boolean }>;
+  items?: Array<{ id: string; category?: string; name: string; description?: string; quantity: number | string; unitPrice: number; taxable?: boolean }>;
 };
 
 type LocationAccess = {
@@ -313,6 +313,7 @@ type CrmOptions = {
 type InvoiceSettings = {
   tab: "configuration" | "automation" | "customerView" | "delivery";
   logoName: string;
+  logoDataUrl: string;
   invoiceMessage: string;
   defaultTermsType: "uponReceipt" | "net";
   defaultTermsDays: number;
@@ -656,6 +657,7 @@ const settingsSections: Array<{
 const defaultInvoiceSettings: InvoiceSettings = {
   tab: "configuration",
   logoName: "",
+  logoDataUrl: "",
   invoiceMessage: "",
   defaultTermsType: "uponReceipt",
   defaultTermsDays: 30,
@@ -1481,6 +1483,27 @@ export function App() {
     setInvoiceSettingsMessage("");
   }
 
+  function handleInvoiceLogoUpload(file?: File) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("Invoice logo must be an image file.");
+      return;
+    }
+    if (file.size > 2_000_000) {
+      setError("Invoice logo must be 2MB or smaller.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setInvoiceSettings((current) => ({ ...current, logoName: file.name, logoDataUrl: reader.result as string }));
+        setInvoiceSettingsMessage("");
+      }
+    };
+    reader.onerror = () => setError("Unable to read invoice logo file.");
+    reader.readAsDataURL(file);
+  }
+
   async function saveInlineJobClient() {
     setError("");
     const customerResult = await api<{ customer: Customer }>("/api/customers", {
@@ -2034,7 +2057,7 @@ export function App() {
 
   async function createInvoiceFromJob(job: Job) {
     const existingInvoice = job.invoices?.[0];
-    if (existingInvoice) {
+    if (existingInvoice && !invoiceSettings.progressiveInvoicing) {
       setDetailSavedMessage(`Invoice #${existingInvoice.invoiceNumber} opened`);
       return existingInvoice;
     }
@@ -2055,7 +2078,9 @@ export function App() {
         status: "DRAFT",
         tax: calculateJobLineTax(job),
         items: lineItems.map((item) => ({
+          category: item.category,
           name: item.name,
+          description: item.name,
           quantity: Number(item.quantity || "1"),
           unitPrice: item.unitPrice,
           taxable: item.category === "material" && item.taxable !== false
@@ -2089,6 +2114,12 @@ export function App() {
 
   async function openInvoicePayment(invoice: Invoice) {
     try {
+      if (!invoiceSettings.acceptCreditCard) {
+        setSelectedInvoiceId(invoice.id);
+        setActiveView("invoices");
+        setInvoiceActionMessage("Credit card payments are disabled in invoice settings for this location.");
+        return;
+      }
       const result = await api<{ url?: string }>(`/api/payments/invoices/${invoice.id}/checkout-session`, { method: "POST" });
       if (result.url) {
         window.location.assign(result.url);
@@ -2105,12 +2136,20 @@ export function App() {
     if (invoice.items?.length) return invoice.items;
     return (invoice.job?.lineItems ?? []).map((item) => ({
       id: item.id,
+      category: item.category,
       name: item.name,
       description: item.name,
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       taxable: item.taxable
     }));
+  }
+
+  function renderInvoiceLogo() {
+    if (invoiceSettings.logoDataUrl) {
+      return <img className="invoice-logo-image" src={invoiceSettings.logoDataUrl} alt={`${activeLocationAccess?.organization.name || "Company"} logo`} />;
+    }
+    return <div className="invoice-logo">Affordable<br /><span>Security</span></div>;
   }
 
   function invoiceCustomerAddress(customer: Customer) {
@@ -2167,11 +2206,39 @@ export function App() {
     }
   }
 
-  function confirmInvoiceSend() {
+  async function confirmInvoiceSend() {
     if (!selectedInvoice) return;
-    const methodLabel = invoiceSendMethod === "both" ? "email and text" : invoiceSendMethod;
-    setInvoiceActionMessage(`Invoice #${selectedInvoice.invoiceNumber} queued for ${methodLabel} to ${invoiceSendTo || "the customer"}.`);
-    setInvoiceSendDialogOpen(false);
+    setError("");
+    const wantsEmail = invoiceSendMethod === "email" || invoiceSendMethod === "both";
+    const wantsText = invoiceSendMethod === "text" || invoiceSendMethod === "both";
+    if (wantsEmail && !wantsText) {
+      setError("Email sending is not connected yet. Add an email provider before sending invoices by email.");
+      return;
+    }
+    if (wantsText) {
+      const textNumber = invoiceSendMethod === "text" ? invoiceSendTo.trim() : selectedInvoice.customer.phone ?? selectedInvoice.customer.alternatePhone ?? "";
+      if (!textNumber) {
+        setError("This customer does not have a phone number for invoice text messages.");
+        return;
+      }
+      const companyName = activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security";
+      try {
+        await api("/api/messages/sms", {
+          method: "POST",
+          body: JSON.stringify({
+            customerId: selectedInvoice.customer.id,
+            to: textNumber,
+            body: renderInvoiceTemplate(invoiceSettings.smsTemplate, selectedInvoice, companyName)
+          })
+        });
+        setInvoiceActionMessage(wantsEmail
+          ? `Invoice #${selectedInvoice.invoiceNumber} text sent to ${textNumber}. Email was not sent because an email provider is not connected yet.`
+          : `Invoice #${selectedInvoice.invoiceNumber} text sent to ${textNumber}.`);
+        setInvoiceSendDialogOpen(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unable to send invoice text message.");
+      }
+    }
   }
 
   function openJobFromSlot(slot: { date: Date; hour: number }) {
@@ -2210,6 +2277,8 @@ export function App() {
 
   function renderInvoiceSendPage(invoice: Invoice) {
     const items = invoiceLineItems(invoice);
+    const serviceItems = items.filter((item) => (item.category ?? "service") !== "material");
+    const materialItems = items.filter((item) => (item.category ?? "service") === "material");
     const subtotal = invoice.subtotal ?? items.reduce((sum, item) => sum + Number(item.quantity || "1") * item.unitPrice, 0);
     const tax = invoice.tax ?? Math.max(invoice.total - subtotal, 0);
     const companyName = activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security Locksmith";
@@ -2228,7 +2297,7 @@ export function App() {
           <h1>Send invoice</h1>
           <div className="invoice-top-actions">
             <button className="icon-button" type="button" onClick={() => window.print()} aria-label="Print invoice"><Printer size={20} /></button>
-            <button className="icon-button" type="button" onClick={() => setInvoiceActionMessage(`Invoice #${invoice.invoiceNumber} PDF is ready to generate once PDF export is connected.`)} aria-label="Download invoice"><Download size={20} /></button>
+            <button className="icon-button" type="button" onClick={() => setError("PDF download is not connected yet. Use Print for now, or connect PDF generation before using downloads.")} aria-label="Download invoice"><Download size={20} /></button>
             <button className="primary" type="button" onClick={() => openInvoiceSendDialog(invoice)}>Send</button>
           </div>
         </header>
@@ -2243,14 +2312,18 @@ export function App() {
                 <dt>Amount due</dt><dd className="amount">{money.format(invoice.total / 100)}</dd>
               </dl>
             </section>
-            <section>
-              <div className="panel-header"><h2>Attachments</h2><Pencil size={18} /></div>
-              <p className="muted">invoice-{invoice.invoiceNumber}.pdf</p>
-            </section>
-            <section>
-              <div className="panel-header"><h2>Invoice message</h2><Pencil size={18} /></div>
-              <p>{invoiceMessage}</p>
-            </section>
+            {invoiceSettings.includeImages && (
+              <section>
+                <div className="panel-header"><h2>Attachments</h2><Pencil size={18} /></div>
+                <p className="muted">invoice-{invoice.invoiceNumber}.pdf</p>
+              </section>
+            )}
+            {invoiceSettings.showSummaryOfWork && (
+              <section>
+                <div className="panel-header"><h2>Invoice message</h2><Pencil size={18} /></div>
+                <p>{invoiceMessage}</p>
+              </section>
+            )}
             <section>
               <h2>Payment options</h2>
               <label><input type="checkbox" checked={invoiceSettings.acceptCreditCard} readOnly /> Accept credit card</label>
@@ -2260,6 +2333,8 @@ export function App() {
             <section>
               <h2>Job and invoice</h2>
               <label><input type="checkbox" checked={invoiceSettings.showJobNumber} readOnly /> Job number</label>
+              <label><input type="checkbox" checked={invoiceSettings.showInvoiceNumber} readOnly /> Invoice number</label>
+              <label><input type="checkbox" checked={invoiceSettings.showServiceDate} readOnly /> Service date</label>
               <label><input type="checkbox" checked={invoiceSettings.showInvoiceDate} readOnly /> Invoice date</label>
               <label><input type="checkbox" checked={invoiceSettings.showSummaryOfWork} readOnly /> Summary of work</label>
             </section>
@@ -2267,11 +2342,12 @@ export function App() {
           <section className="invoice-preview-paper">
             <div className="invoice-preview-head">
               <div>
-                <div className="invoice-logo">{invoiceSettings.logoName || activeLocationAccess?.location.logoName ? "Logo" : "Affordable"}<br /><span>{invoiceSettings.logoName || activeLocationAccess?.location.logoName || "Security"}</span></div>
-                <h2>{companyName}</h2>
+                {renderInvoiceLogo()}
+                {invoiceSettings.showBusinessName && <h2>{companyName}</h2>}
               </div>
               <dl className="invoice-amount-box">
                 {invoice.job && invoiceSettings.showJobNumber && <><dt>Job</dt><dd>#{invoice.job.jobNumber}</dd></>}
+                {invoiceSettings.showInvoiceNumber && <><dt>Invoice</dt><dd>#{invoice.invoiceNumber}</dd></>}
                 {invoiceSettings.showServiceDate && <><dt>Service date</dt><dd>{formatDate(serviceDate)}</dd></>}
                 {invoiceSettings.showInvoiceDate && <><dt>Invoice date</dt><dd>{formatDate(invoice.createdAt)}</dd></>}
                 <dt>Payment terms</dt><dd>{invoiceSettings.defaultTermsType === "uponReceipt" ? "Upon receipt" : `Net ${invoiceSettings.defaultTermsDays}`}</dd>
@@ -2280,7 +2356,8 @@ export function App() {
             </div>
             <div className="invoice-parties">
               <div>
-                <strong>{customerName(invoice.customer)}</strong>
+                {invoiceSettings.showCustomerDisplayName && <strong>{customerName(invoice.customer)}</strong>}
+                {invoiceSettings.showCustomerCompanyName && invoice.customer.companyName && <strong>{invoice.customer.companyName}</strong>}
                 {customerAddress && <span>{customerAddress}</span>}
                 <span>{invoice.customer.phone}</span>
               </div>
@@ -2296,7 +2373,7 @@ export function App() {
             {invoiceSettings.showServiceLineItems && <table className="invoice-preview-table">
               <thead><tr><th>Services</th><th>{invoiceSettings.showServiceQuantity ? "Qty" : ""}</th><th>{invoiceSettings.showServiceUnitPrice ? "Unit price" : ""}</th><th>{invoiceSettings.showServiceAmount ? "Amount" : ""}</th></tr></thead>
               <tbody>
-                {items.map((item) => (
+                {serviceItems.map((item) => (
                   <tr key={item.id}>
                     <td>{invoiceSettings.showServiceName && <strong>{item.name}</strong>}{invoiceSettings.showServiceDescription && item.description && <span>{item.description}</span>}</td>
                     <td>{invoiceSettings.showServiceQuantity ? Number(item.quantity || "1") : ""}</td>
@@ -2304,7 +2381,21 @@ export function App() {
                     <td>{invoiceSettings.showServiceAmount ? money.format((Number(item.quantity || "1") * item.unitPrice) / 100) : ""}</td>
                   </tr>
                 ))}
-                {items.length === 0 && <tr><td colSpan={4}>No line items added yet.</td></tr>}
+                {serviceItems.length === 0 && <tr><td colSpan={4}>No services added yet.</td></tr>}
+              </tbody>
+            </table>}
+            {invoiceSettings.showMaterialLineItems && <table className="invoice-preview-table">
+              <thead><tr><th>Materials</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
+              <tbody>
+                {materialItems.map((item) => (
+                  <tr key={item.id}>
+                    <td>{invoiceSettings.showMaterialName && <strong>{item.name}</strong>}{invoiceSettings.showMaterialDescription && item.description && <span>{item.description}</span>}</td>
+                    <td>{Number(item.quantity || "1")}</td>
+                    <td>{money.format(item.unitPrice / 100)}</td>
+                    <td>{money.format((Number(item.quantity || "1") * item.unitPrice) / 100)}</td>
+                  </tr>
+                ))}
+                {materialItems.length === 0 && <tr><td colSpan={4}>No materials added yet.</td></tr>}
               </tbody>
             </table>}
             <div className="invoice-preview-totals">
@@ -2314,7 +2405,7 @@ export function App() {
               <span>Amount due</span><strong>{money.format(invoice.total / 100)}</strong>
             </div>
             <footer>
-              <p>{invoiceMessage}</p>
+              {invoiceSettings.showSummaryOfWork && <p>{invoiceMessage}</p>}
               <div><span>{companyName}</span><span>{companyWebsite}</span></div>
             </footer>
           </section>
@@ -4333,13 +4424,13 @@ export function App() {
                       <section className="invoice-settings-card span-2">
                         <h3>Brand and message</h3>
                         <div className="logo-row compact-logo-row">
-                          <div className="logo-preview">{invoiceSettings.logoName ? "IMG" : "A"}</div>
+                          <div className="logo-preview">{invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="Invoice logo preview" /> : "A"}</div>
                           <div>
                             <strong>Invoice logo</strong>
-                            <span>Use the location logo name now; file storage can be connected later.</span>
+                            <span>Uploads are saved into this location's invoice settings.</span>
                           </div>
                           <label className="outline-button file-button">Choose logo
-                            <input type="file" onChange={(event) => updateInvoiceSetting("logoName", event.currentTarget.files?.[0]?.name ?? "")} />
+                            <input type="file" accept="image/*" onChange={(event) => handleInvoiceLogoUpload(event.currentTarget.files?.[0])} />
                           </label>
                         </div>
                         <label>Invoice message
@@ -4373,7 +4464,8 @@ export function App() {
                     <div className="invoice-settings-grid">
                       <section className="invoice-settings-card">
                         <h3>Invoice reminders</h3>
-                        <label className="setting-toggle-row"><span><strong>Send unpaid invoice reminders</strong><small>Queue reminders after the due date passes.</small></span><input type="checkbox" checked={invoiceSettings.autoReminders} onChange={(event) => updateInvoiceSetting("autoReminders", event.target.checked)} /></label>
+                        <p className="muted">Reminder settings are saved for this location. Delivery starts once an email provider is connected.</p>
+                        <label className="setting-toggle-row"><span><strong>Send unpaid invoice reminders</strong><small>Use these rules when invoice email delivery is connected.</small></span><input type="checkbox" checked={invoiceSettings.autoReminders} onChange={(event) => updateInvoiceSetting("autoReminders", event.target.checked)} /></label>
                         <div className="inline-input-grid">
                           <label>Every
                             <input type="number" min="1" max="30" value={invoiceSettings.reminderCadenceDays} onChange={(event) => updateInvoiceSetting("reminderCadenceDays", Number(event.target.value))} />
@@ -4385,7 +4477,7 @@ export function App() {
                       </section>
                       <section className="invoice-settings-card">
                         <h3>Automatic payments</h3>
-                        <label className="setting-toggle-row"><span><strong>Auto charge card on due date</strong><small>Use a saved card for unpaid balances when Stripe is connected.</small></span><input type="checkbox" checked={invoiceSettings.autoChargeCard} onChange={(event) => updateInvoiceSetting("autoChargeCard", event.target.checked)} /></label>
+                        <label className="setting-toggle-row"><span><strong>Auto charge card on due date</strong><small>Uses saved Stripe cards once customer card storage is connected.</small></span><input type="checkbox" checked={invoiceSettings.autoChargeCard} onChange={(event) => updateInvoiceSetting("autoChargeCard", event.target.checked)} /></label>
                       </section>
                       <section className="invoice-settings-card span-2">
                         <h3>Reminder message</h3>
@@ -4468,16 +4560,39 @@ export function App() {
                         <h3>Customer preview</h3>
                         <div className="invoice-setting-preview">
                           <div>
-                            <div className="invoice-logo">{invoiceSettings.logoName ? "Logo" : "Affordable"}<br /><span>{invoiceSettings.logoName || "Security"}</span></div>
+                            {renderInvoiceLogo()}
                             {invoiceSettings.showBusinessName && <strong>{activeLocationAccess?.organization.name || "Affordable Security Locksmith"}</strong>}
-                            <p>John Doe<br />456 State St<br />California, CA 90265</p>
+                            <p>{invoiceSettings.showCustomerDisplayName ? "John Doe" : ""}{invoiceSettings.showCustomerCompanyName ? "\nJohn's Company" : ""}<br />456 State St<br />California, CA 90265</p>
                           </div>
                           <dl>
                             {invoiceSettings.showJobNumber && <><dt>Job</dt><dd>#12</dd></>}
+                            {invoiceSettings.showInvoiceNumber && <><dt>Invoice</dt><dd>#1012</dd></>}
+                            {invoiceSettings.showServiceDate && <><dt>Service date</dt><dd>{formatDate(new Date().toISOString())}</dd></>}
                             {invoiceSettings.showInvoiceDate && <><dt>Invoice date</dt><dd>{formatDate(new Date().toISOString())}</dd></>}
                             <dt>Payment terms</dt><dd>{invoiceSettings.defaultTermsType === "uponReceipt" ? "Upon receipt" : `Net ${invoiceSettings.defaultTermsDays}`}</dd>
                             <dt>Amount due</dt><dd>$401.00</dd>
                           </dl>
+                          <div className="invoice-setting-preview-lines">
+                            {invoiceSettings.showServiceLineItems && (
+                              <div>
+                                <strong>Services</strong>
+                                <span>{invoiceSettings.showServiceName ? "Sample service" : ""}</span>
+                                <span>{invoiceSettings.showServiceDescription ? "In this sample service..." : ""}</span>
+                                <span>{invoiceSettings.showServiceQuantity ? "Qty 1" : ""}</span>
+                                <span>{invoiceSettings.showServiceUnitPrice ? "$390.00" : ""}</span>
+                              </div>
+                            )}
+                            {invoiceSettings.showMaterialLineItems && (
+                              <div>
+                                <strong>Materials</strong>
+                                <span>{invoiceSettings.showMaterialName ? "Material item" : ""}</span>
+                                <span>{invoiceSettings.showMaterialDescription ? "Sample material" : ""}</span>
+                                <span>Qty 2</span>
+                                <span>$10.00</span>
+                              </div>
+                            )}
+                            <div className="invoice-setting-preview-total"><span>Amount due</span><strong>$401.00</strong></div>
+                          </div>
                         </div>
                       </section>
                     </div>

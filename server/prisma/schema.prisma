@@ -385,6 +385,7 @@ model Invoice {
 model InvoiceItem {
   id          String   @id @default(cuid())
   invoiceId   String
+  category    String   @default("service")
   name        String
   description String?
   quantity    Decimal  @default(1)

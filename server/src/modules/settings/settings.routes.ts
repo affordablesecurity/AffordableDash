@@ -104,6 +104,7 @@ const jobTemplateSchema = z.object({
 const invoiceSettingsSchema = z.object({
   tab: z.enum(["configuration", "automation", "customerView", "delivery"]).default("configuration"),
   logoName: z.string().optional().default(""),
+  logoDataUrl: z.string().optional().default(""),
   invoiceMessage: z.string().optional().default(""),
   defaultTermsType: z.enum(["uponReceipt", "net"]).default("uponReceipt"),
   defaultTermsDays: z.number().int().min(0).max(365).default(30),
