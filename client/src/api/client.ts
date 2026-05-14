@@ -33,7 +33,12 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(body.error ?? "Request failed");
+    const fieldErrors = body.details?.fieldErrors
+      ? Object.entries(body.details.fieldErrors)
+          .flatMap(([field, messages]) => Array.isArray(messages) ? messages.map((message) => `${field}: ${message}`) : [])
+          .join(" ")
+      : "";
+    throw new Error(fieldErrors || body.error || "Request failed");
   }
 
   if (response.status === 204) {
@@ -61,8 +66,9 @@ export function signup(input: {
   city?: string;
   state?: string;
 }) {
+  const username = input.username.trim().toLowerCase();
   return api<LoginResponse>("/api/auth/signup", {
     method: "POST",
-    body: JSON.stringify(input)
+    body: JSON.stringify({ ...input, username })
   });
 }

@@ -294,7 +294,7 @@ export function App() {
               </label>
               <label>
                 Username
-                <input value={username} onChange={(event) => setUsername(event.target.value)} />
+                <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="letters, numbers, dots, dashes, underscores" />
               </label>
               <label>
                 Company

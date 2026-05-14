@@ -15,12 +15,12 @@ const loginSchema = z.object({
 });
 
 const signupSchema = z.object({
-  name: z.string().min(1),
-  email: z.string().email(),
-  username: z.string().min(3).regex(/^[a-zA-Z0-9._-]+$/),
-  password: z.string().min(8),
-  companyName: z.string().min(1),
-  locationName: z.string().min(1),
+  name: z.string().trim().min(1, "Your name is required"),
+  email: z.string().trim().email("Enter a valid email address"),
+  username: z.string().trim().toLowerCase().min(3, "Username must be at least 3 characters").regex(/^[a-z0-9._-]+$/, "Username can only use letters, numbers, dots, dashes, and underscores"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  companyName: z.string().trim().min(1, "Company is required"),
+  locationName: z.string().trim().min(1, "First location is required"),
   locationSlug: z.string().min(2).regex(/^[a-z0-9-]+$/).optional(),
   phone: z.string().optional(),
   city: z.string().optional(),
