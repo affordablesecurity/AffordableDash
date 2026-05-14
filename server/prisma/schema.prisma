@@ -179,6 +179,10 @@ model Technician {
   email          String?
   phone          String
   color          String   @default("#2563eb")
+  employmentType String   @default("employee")
+  role           String   @default("OUTSIDE_FIELD_TECH")
+  fieldTech      Boolean  @default(true)
+  permissions    String[] @default(["jobs:write", "customers:write", "invoices:write"])
   active         Boolean  @default(true)
   housecallProId String?  @unique
   createdAt      DateTime @default(now())

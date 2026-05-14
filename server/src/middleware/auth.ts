@@ -42,3 +42,12 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     res.status(401).json({ error: "Invalid authorization token" });
   }
 }
+
+export function requireRoles(roles: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: "You do not have access to this area" });
+    }
+    next();
+  };
+}

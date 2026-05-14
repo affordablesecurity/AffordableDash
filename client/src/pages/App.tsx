@@ -88,6 +88,11 @@ type Technician = {
   email?: string;
   phone: string;
   color: string;
+  employmentType: "employee" | "subcontractor";
+  role: "OWNER" | "ADMIN" | "INSIDE_SALES" | "OUTSIDE_FIELD_TECH";
+  fieldTech: boolean;
+  permissions: string[];
+  active: boolean;
 };
 
 type JobLineDraft = {
@@ -207,7 +212,7 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "customers" | "jobs" | "invoices" | "reports" | "pricebook" | "settings" | "api";
+type View = "dispatch" | "schedule" | "customers" | "jobs" | "employees" | "invoices" | "reports" | "pricebook" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
@@ -396,6 +401,16 @@ function shortLabel(value: string) {
   return value.length > 18 ? `${value.slice(0, 16)}...` : value;
 }
 
+function employeeRoleLabel(role: Technician["role"]) {
+  const labels: Record<Technician["role"], string> = {
+    OWNER: "Owner",
+    ADMIN: "Admin",
+    INSIDE_SALES: "Inside Sales",
+    OUTSIDE_FIELD_TECH: "Outside Field Tech"
+  };
+  return labels[role];
+}
+
 const optionKeyByKind: Record<CrmOptionKind, keyof CrmOptions> = {
   leadSource: "leadSources",
   tag: "tags",
@@ -440,6 +455,18 @@ export function App() {
   const [jobPageMode, setJobPageMode] = useState<"list" | "create">("list");
   const [jobSearch, setJobSearch] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState("all");
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [employeeModal, setEmployeeModal] = useState<"employee" | "subcontractor" | null>(null);
+  const [employeeForm, setEmployeeForm] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    employmentType: "employee" as "employee" | "subcontractor",
+    role: "OUTSIDE_FIELD_TECH" as "OWNER" | "ADMIN" | "INSIDE_SALES" | "OUTSIDE_FIELD_TECH",
+    fieldTech: true,
+    color: "#2563eb",
+    active: true
+  });
   const [createClientInline, setCreateClientInline] = useState(false);
   const [jobClientSearch, setJobClientSearch] = useState("");
   const [jobAddressSearch, setJobAddressSearch] = useState("");
@@ -491,6 +518,7 @@ export function App() {
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [apiKeyName, setApiKeyName] = useState("Partner API");
   const [newApiToken, setNewApiToken] = useState("");
+  const [currentRole, setCurrentRole] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -586,6 +614,17 @@ export function App() {
       return matchesStatus && matchesQuery;
     });
   }, [jobSearch, jobStatusFilter, jobs]);
+  const filteredEmployees = useMemo(() => {
+    const query = employeeSearch.trim().toLowerCase();
+    if (!query) return technicians;
+    return technicians.filter((employee) => [
+      employee.name,
+      employee.email ?? "",
+      employee.phone,
+      employee.employmentType,
+      employee.role
+    ].some((value) => value.toLowerCase().includes(query)));
+  }, [employeeSearch, technicians]);
   const jobCounts = useMemo(() => ({
     open: jobs.filter((job) => job.status === "LEAD" || job.status === "SCHEDULED").length,
     dispatched: jobs.filter((job) => job.status === "DISPATCHED").length,
@@ -643,13 +682,15 @@ export function App() {
     setPriceBookCategories(priceBookResult.categories);
     setPriceBookItems(priceBookResult.items);
 
-    const [locationResult, apiKeyResult] = await Promise.all([
+    const [locationResult, apiKeyResult, meResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
-      api<{ apiKeys: ApiKey[] }>("/api/location-api-keys")
+      api<{ apiKeys: ApiKey[] }>("/api/location-api-keys"),
+      api<{ user: { memberships: Array<{ role: string; locationId: string | null }> }; activeLocationId: string }>("/api/auth/me")
     ]);
     setLocations(locationResult.locations);
     setActiveLocationId(locationResult.activeLocationId);
     setApiKeys(apiKeyResult.apiKeys);
+    setCurrentRole(meResult.user.memberships.find((item) => item.locationId === meResult.activeLocationId)?.role ?? "");
   }
 
   async function loadReports() {
@@ -665,8 +706,12 @@ export function App() {
 
   useEffect(() => {
     if (!token) return;
+    if (!["OWNER", "ADMIN"].includes(currentRole)) {
+      setReports(null);
+      return;
+    }
     loadReports().catch((err: Error) => setError(err.message));
-  }, [token, reportDateRange, reportShowBy]);
+  }, [token, currentRole, reportDateRange, reportShowBy]);
 
   useEffect(() => {
     if (!activeLocationAccess) return;
@@ -697,6 +742,7 @@ export function App() {
         : await signup({ name, email, username, password, companyName, locationName });
       setToken(result.token);
       updateToken(result.token);
+      setCurrentRole(result.user.role);
       if (result.location) setActiveLocationId(result.location.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -712,6 +758,7 @@ export function App() {
     setToken(result.token);
     updateToken(result.token);
     setActiveLocationId(result.location.id);
+    setCurrentRole("");
     await loadDashboard();
   }
 
@@ -726,6 +773,31 @@ export function App() {
     });
     setApiKeys((current) => [result.apiKey, ...current]);
     setNewApiToken(result.token);
+  }
+
+  function openEmployeeModal(type: "employee" | "subcontractor") {
+    setEmployeeForm({
+      name: "",
+      email: "",
+      phone: "",
+      employmentType: type,
+      role: type === "subcontractor" ? "OUTSIDE_FIELD_TECH" : "INSIDE_SALES",
+      fieldTech: type === "subcontractor",
+      color: "#2563eb",
+      active: true
+    });
+    setEmployeeModal(type);
+  }
+
+  async function createEmployee(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    const result = await api<{ technician: Technician }>("/api/technicians", {
+      method: "POST",
+      body: JSON.stringify(employeeForm)
+    });
+    setTechnicians((current) => [...current, result.technician].sort((a, b) => a.name.localeCompare(b.name)));
+    setEmployeeModal(null);
   }
 
   async function revokeApiKey(id: string) {
@@ -1130,7 +1202,7 @@ export function App() {
           <span className="nav-section">Operations</span>
           <button className={activeView === "jobs" ? "active" : ""} onClick={() => setActiveView("jobs")}><Wrench size={18} /> Jobs</button>
           <button className={activeView === "customers" ? "active" : ""} onClick={() => setActiveView("customers")}><Users size={18} /> Clients & Leads</button>
-          <button><UserPlus size={18} /> Employees</button>
+          <button className={activeView === "employees" ? "active" : ""} onClick={() => setActiveView("employees")}><UserPlus size={18} /> Employees</button>
           <button className={activeView === "invoices" ? "active" : ""} onClick={() => setActiveView("invoices")}><ReceiptText size={18} /> Invoices</button>
           <button><FileText size={18} /> Estimates</button>
           <button><WalletCards size={18} /> Payments</button>
@@ -1162,7 +1234,7 @@ export function App() {
             <div className={`quick-add-menu ${addMenuOpen ? "open" : ""}`}>
               <button onClick={() => setAddMenuOpen(false)}><MessageSquareText size={16} /> Message</button>
               <button onClick={() => { setActiveView("customers"); setAddMenuOpen(false); }}><Users size={16} /> Client or Lead</button>
-              <button><UserPlus size={16} /> Employee</button>
+              <button onClick={() => { setAddMenuOpen(false); setActiveView("employees"); openEmployeeModal("employee"); }}><UserPlus size={16} /> Employee</button>
               <button onClick={() => { setActiveView("jobs"); setJobPageMode("create"); setAddMenuOpen(false); }}><Wrench size={16} /> Job</button>
               <button onClick={() => { setActiveView("invoices"); setAddMenuOpen(false); }}><ReceiptText size={16} /> Invoice</button>
               <button><FileText size={16} /> Estimate</button>
@@ -1717,6 +1789,109 @@ export function App() {
               </form>
             </section>
           )
+        )}
+
+        {activeView === "employees" && (
+          <section className="employees-page">
+            <div className="section-actions">
+              <div className="breadcrumb"><UserPlus size={17} /> Employees</div>
+              <div className="action-buttons">
+                <button className="outline-button" type="button" onClick={() => openEmployeeModal("subcontractor")}><Plus size={17} /> Create Subcontractor</button>
+                <button className="primary" type="button" onClick={() => openEmployeeModal("employee")}><Plus size={17} /> Create Employee</button>
+              </div>
+            </div>
+
+            <div className="employees-panel">
+              <div className="jobs-tools">
+                <div className="search-box table-search">
+                  <Search size={18} />
+                  <input placeholder="Search employees" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} />
+                </div>
+                <select aria-label="Page size">
+                  <option>10</option>
+                  <option>25</option>
+                  <option>50</option>
+                </select>
+              </div>
+
+              <div className="employees-table">
+                <div className="employees-row employees-head">
+                  <span>Name</span>
+                  <span>Email</span>
+                  <span>Phone</span>
+                  <span>Type</span>
+                  <span>Role</span>
+                  <span>Field Tech</span>
+                  <span>Status</span>
+                  <span>Access</span>
+                </div>
+                {filteredEmployees.map((employee) => (
+                  <div className="employees-row" key={employee.id}>
+                    <strong>{employee.name}</strong>
+                    <span>{employee.email || "-"}</span>
+                    <span>{employee.phone}</span>
+                    <span>{statusLabel(employee.employmentType.toUpperCase())}</span>
+                    <span>{employeeRoleLabel(employee.role)}</span>
+                    <span>{employee.fieldTech ? "Yes" : "No"}</span>
+                    <span className={`payment-pill ${employee.active ? "paid" : "unpaid"}`}>{employee.active ? "Active" : "Inactive"}</span>
+                    <small>{employee.permissions.includes("*") ? "Full access" : employee.permissions.join(", ")}</small>
+                  </div>
+                ))}
+                {filteredEmployees.length === 0 && <p className="empty table-empty">No employees yet.</p>}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {employeeModal && (
+          <div className="modal-backdrop" onClick={() => setEmployeeModal(null)}>
+            <form className="employee-modal record-form" onSubmit={createEmployee} onClick={(event) => event.stopPropagation()}>
+              <h2>{employeeModal === "subcontractor" ? "Create Subcontractor" : "Create Employee"}</h2>
+              <div className="employee-form-grid">
+                <label>Name
+                  <input value={employeeForm.name} onChange={(event) => setEmployeeForm({ ...employeeForm, name: event.target.value })} required />
+                </label>
+                <label>Email
+                  <input type="email" value={employeeForm.email} onChange={(event) => setEmployeeForm({ ...employeeForm, email: event.target.value })} />
+                </label>
+                <label>Phone Number
+                  <input value={employeeForm.phone} onChange={(event) => setEmployeeForm({ ...employeeForm, phone: event.target.value })} required />
+                </label>
+                <label>Type
+                  <select value={employeeForm.employmentType} onChange={(event) => setEmployeeForm({ ...employeeForm, employmentType: event.target.value as "employee" | "subcontractor" })}>
+                    <option value="employee">Employee</option>
+                    <option value="subcontractor">Subcontractor</option>
+                  </select>
+                </label>
+                <label>Role
+                  <select
+                    value={employeeForm.role}
+                    onChange={(event) => {
+                      const role = event.target.value as Technician["role"];
+                      setEmployeeForm({ ...employeeForm, role, fieldTech: role === "OUTSIDE_FIELD_TECH" });
+                    }}
+                  >
+                    <option value="OWNER">Owner</option>
+                    <option value="ADMIN">Admin</option>
+                    <option value="INSIDE_SALES">Inside Sales</option>
+                    <option value="OUTSIDE_FIELD_TECH">Outside Field Tech</option>
+                  </select>
+                </label>
+                <label>Color
+                  <input type="color" value={employeeForm.color} onChange={(event) => setEmployeeForm({ ...employeeForm, color: event.target.value })} />
+                </label>
+              </div>
+              <label className="check-row"><input type="checkbox" checked={employeeForm.fieldTech} onChange={(event) => setEmployeeForm({ ...employeeForm, fieldTech: event.target.checked })} /> Field tech</label>
+              <label className="check-row"><input type="checkbox" checked={employeeForm.active} onChange={(event) => setEmployeeForm({ ...employeeForm, active: event.target.checked })} /> Active</label>
+              <div className="settings-note">
+                Owners and admins can manage price book, reports, payments, employees, jobs, customers, and invoices. Outside field techs are limited to jobs, job invoices, and customer details tied to their work.
+              </div>
+              <div className="modal-actions">
+                <button className="outline-button" type="button" onClick={() => setEmployeeModal(null)}>Cancel</button>
+                <button className="primary" type="submit">Create</button>
+              </div>
+            </form>
+          </div>
         )}
 
         {activeView === "reports" && (

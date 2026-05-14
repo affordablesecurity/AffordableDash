@@ -49,6 +49,9 @@ priceBookRouter.get("/", asyncHandler(async (req, res) => {
 }));
 
 priceBookRouter.post("/categories", asyncHandler(async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user!.role)) {
+    return res.status(403).json({ error: "Only owners and admins can manage the price book" });
+  }
   const input = categorySchema.parse(req.body);
   const locationId = activeLocationId(req);
   const category = await prisma.priceBookCategory.upsert({
@@ -60,6 +63,9 @@ priceBookRouter.post("/categories", asyncHandler(async (req, res) => {
 }));
 
 priceBookRouter.post("/items", asyncHandler(async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user!.role)) {
+    return res.status(403).json({ error: "Only owners and admins can manage the price book" });
+  }
   const input = itemSchema.parse(req.body);
   const locationId = activeLocationId(req);
   const item = await prisma.priceBookItem.create({
@@ -70,6 +76,9 @@ priceBookRouter.post("/items", asyncHandler(async (req, res) => {
 }));
 
 priceBookRouter.patch("/items/:id", asyncHandler(async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user!.role)) {
+    return res.status(403).json({ error: "Only owners and admins can manage the price book" });
+  }
   const input = itemSchema.partial().parse(req.body);
   const existing = await prisma.priceBookItem.findFirst({ where: { id: String(req.params.id), locationId: activeLocationId(req) } });
   if (!existing) return res.status(404).json({ error: "Price book item not found" });
@@ -82,6 +91,9 @@ priceBookRouter.patch("/items/:id", asyncHandler(async (req, res) => {
 }));
 
 priceBookRouter.delete("/items/:id", asyncHandler(async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user!.role)) {
+    return res.status(403).json({ error: "Only owners and admins can manage the price book" });
+  }
   const existing = await prisma.priceBookItem.findFirst({ where: { id: String(req.params.id), locationId: activeLocationId(req) } });
   if (!existing) return res.status(404).json({ error: "Price book item not found" });
   await prisma.priceBookItem.update({ where: { id: existing.id }, data: { active: false } });

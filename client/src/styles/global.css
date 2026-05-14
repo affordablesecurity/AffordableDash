@@ -1165,7 +1165,19 @@ textarea {
   gap: 20px;
 }
 
+.employees-page {
+  display: grid;
+  gap: 20px;
+}
+
 .pricebook-panel {
+  background: #ffffff;
+  border: 1px solid #e6e9f1;
+  border-radius: 18px;
+  padding: 24px;
+}
+
+.employees-panel {
   background: #ffffff;
   border: 1px solid #e6e9f1;
   border-radius: 18px;
@@ -1180,6 +1192,12 @@ textarea {
   overflow-x: auto;
 }
 
+.employees-table {
+  overflow-x: auto;
+  border-top: 1px solid #eef1f6;
+  margin-top: 22px;
+}
+
 .pricebook-row {
   min-width: 1180px;
   display: grid;
@@ -1191,6 +1209,55 @@ textarea {
   border-bottom: 1px solid #eef1f6;
   color: #272d3d;
   font-size: 14px;
+}
+
+.employees-row {
+  min-width: 1080px;
+  display: grid;
+  grid-template-columns: 170px 190px 150px 130px 170px 110px 120px minmax(180px, 1fr);
+  gap: 14px;
+  align-items: center;
+  min-height: 64px;
+  padding: 0 16px;
+  border-bottom: 1px solid #eef1f6;
+  color: #272d3d;
+  font-size: 14px;
+}
+
+.employees-row:nth-child(odd):not(.employees-head) {
+  background: #fafbfe;
+}
+
+.employees-head {
+  min-height: 54px;
+  background: #fafbfe;
+  color: #101421;
+  font-weight: 900;
+}
+
+.employees-row small {
+  color: #7e8aac;
+  line-height: 1.4;
+}
+
+.employee-modal {
+  width: min(680px, 96vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 24px 70px rgba(28, 33, 47, 0.22);
+}
+
+.employee-modal h2 {
+  margin: 0;
+}
+
+.employee-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .pricebook-row:nth-child(odd):not(.pricebook-head) {
@@ -2325,6 +2392,7 @@ textarea {
   .reports-page,
   .reports-layout,
   .company-settings-page,
+  .employee-form-grid,
   .report-overview {
     grid-template-columns: 1fr;
   }
