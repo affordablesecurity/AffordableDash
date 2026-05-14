@@ -41,6 +41,20 @@ type Summary = {
   openJobs: number;
   invoices: number;
   revenueCents: number;
+  totalJobs: number;
+  completedJobs: number;
+  canceledJobs: number;
+  leadJobs: number;
+  bookedJobs: number;
+  salesCents: number;
+  collectedCents: number;
+  averageJobSizeCents: number;
+  cancellationRate: number;
+  bookingRate: number;
+  closeRate: number;
+  estimateWinRatio: { won: number; total: number };
+  jobsByType: Array<{ label: string; count: number; percent: number }>;
+  jobsBySource: Array<{ label: string; count: number; percent: number }>;
 };
 
 type Customer = {
@@ -106,6 +120,7 @@ type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const percent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const dayLabels = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const calendarHours = Array.from({ length: 24 }, (_item, hour) => hour);
 
@@ -140,6 +155,10 @@ function toDateTimeLocal(date: Date) {
 
 function sameCalendarDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function sourceColor(index: number) {
+  return ["green", "navy", "purple", "yellow", "red"][index % 5];
 }
 
 export function App() {
@@ -200,7 +219,7 @@ export function App() {
 
   async function loadDashboard() {
     const [summaryResult, customersResult, jobsResult, invoicesResult] = await Promise.all([
-      api<{ customers: number; openJobs: number; invoices: number; revenueCents: number }>("/api/settings/summary"),
+      api<Summary>("/api/settings/summary"),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
       api<{ invoices: Invoice[] }>("/api/invoices")
@@ -491,14 +510,14 @@ export function App() {
         {error && <div className="error">{error}</div>}
 
         {activeView !== "schedule" && <div className="stats-grid">
-          <StatCard label="Sales" value={money.format((summary?.revenueCents ?? 0) / 100)} icon={CircleDollarSign} />
-          <StatCard label="Collected Payments" value={money.format((summary?.revenueCents ?? 0) / 100)} icon={BadgeDollarSign} />
-          <StatCard label="Jobs Completed" value="0" icon={CheckCheck} />
-          <StatCard label="Cancellation Rate" value="0%" icon={Percent} />
-          <StatCard label="Average Job Size" value={money.format((summary?.revenueCents ?? 0) / Math.max(summary?.openJobs ?? 1, 1) / 100)} icon={TrendingUp} />
+          <StatCard label="Sales" value={money.format((summary?.salesCents ?? 0) / 100)} icon={CircleDollarSign} />
+          <StatCard label="Collected Payments" value={money.format((summary?.collectedCents ?? 0) / 100)} icon={BadgeDollarSign} />
+          <StatCard label="Jobs Completed" value={String(summary?.completedJobs ?? 0)} icon={CheckCheck} />
+          <StatCard label="Cancellation Rate" value={percent.format(summary?.cancellationRate ?? 0)} icon={Percent} />
+          <StatCard label="Average Job Size" value={money.format((summary?.averageJobSizeCents ?? 0) / 100)} icon={TrendingUp} />
           <StatCard label="New Clients" value={String(summary?.customers ?? 0)} icon={Users} />
-          <StatCard label="New Leads" value="0" icon={UserPlus} />
-          <StatCard label="Booking Rate" value="0.00%" icon={Percent} />
+          <StatCard label="New Leads" value={String(summary?.leadJobs ?? 0)} icon={UserPlus} />
+          <StatCard label="Booking Rate" value={percent.format(summary?.bookingRate ?? 0)} icon={Percent} />
         </div>}
 
         {activeView === "dispatch" && <div className="content-grid">
@@ -529,7 +548,17 @@ export function App() {
             <div className="panel-header">
               <h2>Jobs by Type</h2>
             </div>
-            <div className="empty-chart"><span>!</span> No data available</div>
+            {summary?.jobsByType.length ? (
+              <div className="metric-list">
+                {summary.jobsByType.map((item) => (
+                  <div className="metric-row" key={item.label}>
+                    <span>{item.label}</span>
+                    <strong>{item.count}</strong>
+                    <em>{percent.format(item.percent)}</em>
+                  </div>
+                ))}
+              </div>
+            ) : <div className="empty-chart"><span>!</span> No data available</div>}
           </section>
 
           <section className="panel chart-panel">
@@ -540,11 +569,9 @@ export function App() {
             <div className="source-chart">
               <div className="pie-chart" />
               <div className="legend-list">
-                <span><i className="green" /> Online Booking <b>{jobs.length || 1} (100%)</b></span>
-                <span><i className="navy" /> Google Ads <b>0 (0%)</b></span>
-                <span><i className="purple" /> Facebook Ads <b>0 (0%)</b></span>
-                <span><i className="yellow" /> Bing Ads <b>0 (0%)</b></span>
-                <span><i className="red" /> Yelp Ads <b>0 (0%)</b></span>
+                {(summary?.jobsBySource.length ? summary.jobsBySource : [{ label: "Unknown", count: 0, percent: 0 }]).map((item, index) => (
+                  <span key={item.label}><i className={sourceColor(index)} /> {item.label} <b>{item.count} ({percent.format(item.percent)})</b></span>
+                ))}
               </div>
             </div>
           </section>

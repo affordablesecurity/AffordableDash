@@ -586,6 +586,36 @@ select:focus {
   font-weight: 500;
 }
 
+.metric-list {
+  display: grid;
+  gap: 12px;
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid #eef1f6;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.metric-row span {
+  color: #272d3d;
+}
+
+.metric-row strong {
+  font-size: 18px;
+}
+
+.metric-row em {
+  min-width: 56px;
+  color: #7e8aac;
+  font-style: normal;
+  text-align: right;
+}
+
 .green { background: #39b54a; }
 .navy { background: #08077d; }
 .purple { background: #9829c9; }
