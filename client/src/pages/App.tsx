@@ -487,6 +487,18 @@ function dollarsToCents(value: string) {
   return Math.round(Number(value || "0") * 100);
 }
 
+function currencyToCents(value: string) {
+  const normalized = value.replace(/[$,\s]/g, "");
+  const amount = Number(normalized || "0");
+  return Number.isFinite(amount) ? Math.round(amount * 100) : 0;
+}
+
+function percentToNumber(value: string) {
+  const normalized = value.replace(/[%\s]/g, "");
+  const amount = Number(normalized || "0");
+  return normalized && Number.isFinite(amount) ? amount : undefined;
+}
+
 function lineDraft(category: "service" | "material", name = "", unitPrice = ""): JobLineDraft {
   return {
     id: `${category}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -1386,28 +1398,32 @@ export function App() {
   async function createServicePlanTemplate(event: FormEvent) {
     event.preventDefault();
     setError("");
-    const result = await api<{ template: ServicePlanTemplate }>("/api/service-plans/templates", {
-      method: "POST",
-      body: JSON.stringify({
-        name: servicePlanForm.name,
-        description: servicePlanForm.description,
-        businessUnit: servicePlanForm.businessUnit,
-        visitsPerYear: Number(servicePlanForm.visitsPerYear || "0"),
-        durationType: servicePlanForm.durationType,
-        billingInterval: servicePlanForm.billingInterval,
-        recurringAmount: dollarsToCents(servicePlanForm.recurringAmount),
-        cashAllowed: servicePlanForm.cashAllowed,
-        discountDescription: servicePlanForm.discountDescription,
-        discountPercent: servicePlanForm.discountPercent ? Number(servicePlanForm.discountPercent) : undefined,
-        addOns: servicePlanForm.addOns
-          .filter((addOn) => addOn.item.trim())
-          .map((addOn) => ({ item: addOn.item, unitPrice: dollarsToCents(addOn.unitPrice), description: addOn.description }))
-      })
-    });
-    setServicePlanTemplates((current) => [result.template, ...current.filter((template) => template.id !== result.template.id)]);
-    await loadDashboard();
-    resetServicePlanForm();
-    setServicePlanMode("dashboard");
+    try {
+      const result = await api<{ template: ServicePlanTemplate }>("/api/service-plans/templates", {
+        method: "POST",
+        body: JSON.stringify({
+          name: servicePlanForm.name,
+          description: servicePlanForm.description,
+          businessUnit: servicePlanForm.businessUnit,
+          visitsPerYear: Number(servicePlanForm.visitsPerYear || "0"),
+          durationType: servicePlanForm.durationType,
+          billingInterval: servicePlanForm.billingInterval,
+          recurringAmount: currencyToCents(servicePlanForm.recurringAmount),
+          cashAllowed: servicePlanForm.cashAllowed,
+          discountDescription: servicePlanForm.discountDescription,
+          discountPercent: percentToNumber(servicePlanForm.discountPercent),
+          addOns: servicePlanForm.addOns
+            .filter((addOn) => addOn.item.trim())
+            .map((addOn) => ({ item: addOn.item, unitPrice: currencyToCents(addOn.unitPrice), description: addOn.description }))
+        })
+      });
+      setServicePlanTemplates((current) => [result.template, ...current.filter((template) => template.id !== result.template.id)]);
+      await loadDashboard();
+      resetServicePlanForm();
+      setServicePlanMode("dashboard");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create service plan");
+    }
   }
 
   async function deleteServicePlanTemplate(id: string) {
@@ -2969,6 +2985,7 @@ export function App() {
                 <div className="plan-stepper">
                   {[1, 2, 3].map((step) => <span key={step} className={servicePlanStep >= step ? "active" : ""}>{servicePlanStep > step ? "✓" : step}</span>)}
                 </div>
+                {error && <div className="error">{error}</div>}
 
                 {servicePlanStep === 1 && (
                   <div className="service-plan-form-stack">
