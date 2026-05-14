@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
@@ -100,6 +101,56 @@ const jobTemplateSchema = z.object({
   lineItems: z.array(templateLineItemSchema).default([])
 });
 
+const invoiceSettingsSchema = z.object({
+  tab: z.enum(["configuration", "automation", "customerView", "delivery"]).default("configuration"),
+  logoName: z.string().optional().default(""),
+  invoiceMessage: z.string().optional().default(""),
+  defaultTermsType: z.enum(["uponReceipt", "net"]).default("uponReceipt"),
+  defaultTermsDays: z.number().int().min(0).max(365).default(30),
+  progressiveInvoicing: z.boolean().default(false),
+  matchInvoiceAndJobNumber: z.boolean().default(false),
+  includeImages: z.boolean().default(true),
+  acceptCreditCard: z.boolean().default(true),
+  saveCardOnFile: z.boolean().default(true),
+  acceptAch: z.boolean().default(true),
+  acceptTips: z.boolean().default(true),
+  separateTippingScreen: z.boolean().default(true),
+  autoReminders: z.boolean().default(false),
+  reminderCadenceDays: z.number().int().min(1).max(30).default(1),
+  maxReminders: z.number().int().min(1).max(30).default(10),
+  autoChargeCard: z.boolean().default(false),
+  showJobNumber: z.boolean().default(true),
+  showInvoiceNumber: z.boolean().default(false),
+  showServiceDate: z.boolean().default(true),
+  showInvoiceDate: z.boolean().default(true),
+  showSummaryOfWork: z.boolean().default(true),
+  showBusinessName: z.boolean().default(true),
+  showTechnicianName: z.boolean().default(true),
+  showCustomerDisplayName: z.boolean().default(true),
+  showCustomerCompanyName: z.boolean().default(true),
+  showServiceLineItems: z.boolean().default(true),
+  showServiceName: z.boolean().default(true),
+  showServiceDescription: z.boolean().default(true),
+  showServiceQuantity: z.boolean().default(true),
+  showServiceUnitPrice: z.boolean().default(true),
+  showServiceAmount: z.boolean().default(true),
+  showMaterialLineItems: z.boolean().default(true),
+  showMaterialName: z.boolean().default(true),
+  showMaterialDescription: z.boolean().default(true),
+  customerViewFormat: z.enum(["email", "envelope"]).default("email"),
+  emailSubjectTemplate: z.string().default("Invoice {{invoiceNumber}} due from {{companyName}} - {{invoiceTotal}}"),
+  emailBodyTemplate: z.string().default("Hi {{customerFirstName}},\n\nThank you for choosing {{companyName}}. Please see attached invoice due {{invoiceDueTerms}}."),
+  smsTemplate: z.string().default("Invoice due from {{companyName}}"),
+  reminderSubjectTemplate: z.string().default("Reminder: Invoice {{invoiceNumber}} is due from {{companyName}} - {{invoiceTotal}}"),
+  reminderBodyTemplate: z.string().default("Hi {{customerFirstName}},\n\nThis is a friendly reminder from {{companyName}} that invoice {{invoiceNumber}} for {{invoiceTotal}} is due. Please see the attached invoice to review and pay.")
+});
+
+type InvoiceSettings = z.infer<typeof invoiceSettingsSchema>;
+
+function defaultInvoiceSettings(existing?: unknown): InvoiceSettings {
+  return invoiceSettingsSchema.parse(existing ?? {});
+}
+
 async function saveTemplateOptions(locationId: string, input: z.infer<typeof jobTemplateSchema>) {
   const optionWrites = [
     prisma.crmOption.upsert({
@@ -181,6 +232,37 @@ settingsRouter.delete("/options", asyncHandler(async (req, res) => {
     where: { locationId, kind: input.kind, name: input.name }
   });
   res.status(204).send();
+}));
+
+settingsRouter.get("/invoice-settings", asyncHandler(async (req, res) => {
+  const location = await prisma.location.findUniqueOrThrow({
+    where: { id: activeLocationId(req) },
+    select: { invoiceSettings: true, logoName: true, termsOfService: true }
+  });
+  const settings = defaultInvoiceSettings(location.invoiceSettings);
+  if (!settings.logoName && location.logoName) settings.logoName = location.logoName;
+  if (!settings.invoiceMessage && location.termsOfService) settings.invoiceMessage = location.termsOfService;
+  res.json({ settings });
+}));
+
+settingsRouter.patch("/invoice-settings", asyncHandler(async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user!.role)) {
+    return res.status(403).json({ error: "Only owners and admins can update invoice settings" });
+  }
+  const current = await prisma.location.findUniqueOrThrow({
+    where: { id: activeLocationId(req) },
+    select: { invoiceSettings: true }
+  });
+  const settings = invoiceSettingsSchema.parse({
+    ...defaultInvoiceSettings(current.invoiceSettings),
+    ...req.body
+  });
+  const location = await prisma.location.update({
+    where: { id: activeLocationId(req) },
+    data: { invoiceSettings: settings as Prisma.InputJsonValue },
+    select: { invoiceSettings: true }
+  });
+  res.json({ settings: defaultInvoiceSettings(location.invoiceSettings) });
 }));
 
 settingsRouter.get("/job-templates", asyncHandler(async (req, res) => {

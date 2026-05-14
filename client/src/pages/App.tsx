@@ -300,7 +300,7 @@ type View = "dispatch" | "schedule" | "customers" | "jobs" | "employees" | "invo
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
-type SettingsSection = "overview" | "company" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans" | "jobTemplates";
+type SettingsSection = "overview" | "company" | "invoiceSettings" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans" | "jobTemplates";
 type CrmOptions = {
   leadSources: string[];
   tags: string[];
@@ -308,6 +308,50 @@ type CrmOptions = {
   jobFields: string[];
   checklists: string[];
   servicePlans: string[];
+};
+
+type InvoiceSettings = {
+  tab: "configuration" | "automation" | "customerView" | "delivery";
+  logoName: string;
+  invoiceMessage: string;
+  defaultTermsType: "uponReceipt" | "net";
+  defaultTermsDays: number;
+  progressiveInvoicing: boolean;
+  matchInvoiceAndJobNumber: boolean;
+  includeImages: boolean;
+  acceptCreditCard: boolean;
+  saveCardOnFile: boolean;
+  acceptAch: boolean;
+  acceptTips: boolean;
+  separateTippingScreen: boolean;
+  autoReminders: boolean;
+  reminderCadenceDays: number;
+  maxReminders: number;
+  autoChargeCard: boolean;
+  showJobNumber: boolean;
+  showInvoiceNumber: boolean;
+  showServiceDate: boolean;
+  showInvoiceDate: boolean;
+  showSummaryOfWork: boolean;
+  showBusinessName: boolean;
+  showTechnicianName: boolean;
+  showCustomerDisplayName: boolean;
+  showCustomerCompanyName: boolean;
+  showServiceLineItems: boolean;
+  showServiceName: boolean;
+  showServiceDescription: boolean;
+  showServiceQuantity: boolean;
+  showServiceUnitPrice: boolean;
+  showServiceAmount: boolean;
+  showMaterialLineItems: boolean;
+  showMaterialName: boolean;
+  showMaterialDescription: boolean;
+  customerViewFormat: "email" | "envelope";
+  emailSubjectTemplate: string;
+  emailBodyTemplate: string;
+  smsTemplate: string;
+  reminderSubjectTemplate: string;
+  reminderBodyTemplate: string;
 };
 
 type ReportRow = { label: string; value: string; detail?: string };
@@ -595,7 +639,7 @@ const optionKeyByKind: Record<CrmOptionKind, keyof CrmOptions> = {
 };
 
 const settingsSections: Array<{
-  id: Exclude<SettingsSection, "overview" | "company" | "jobTemplates">;
+  id: Exclude<SettingsSection, "overview" | "company" | "invoiceSettings" | "jobTemplates">;
   kind: CrmOptionKind;
   title: string;
   description: string;
@@ -608,6 +652,50 @@ const settingsSections: Array<{
   { id: "checklists", kind: "checklist", title: "Checklists", description: "Reusable task lists for technicians and office workflows.", placeholder: "Arrival checklist" },
   { id: "servicePlans", kind: "servicePlan", title: "Service Plans", description: "Plans for recurring maintenance, priority customers, and contract work.", placeholder: "Commercial priority" }
 ];
+
+const defaultInvoiceSettings: InvoiceSettings = {
+  tab: "configuration",
+  logoName: "",
+  invoiceMessage: "",
+  defaultTermsType: "uponReceipt",
+  defaultTermsDays: 30,
+  progressiveInvoicing: false,
+  matchInvoiceAndJobNumber: false,
+  includeImages: true,
+  acceptCreditCard: true,
+  saveCardOnFile: true,
+  acceptAch: true,
+  acceptTips: true,
+  separateTippingScreen: true,
+  autoReminders: false,
+  reminderCadenceDays: 1,
+  maxReminders: 10,
+  autoChargeCard: false,
+  showJobNumber: true,
+  showInvoiceNumber: false,
+  showServiceDate: true,
+  showInvoiceDate: true,
+  showSummaryOfWork: true,
+  showBusinessName: true,
+  showTechnicianName: true,
+  showCustomerDisplayName: true,
+  showCustomerCompanyName: true,
+  showServiceLineItems: true,
+  showServiceName: true,
+  showServiceDescription: true,
+  showServiceQuantity: true,
+  showServiceUnitPrice: true,
+  showServiceAmount: true,
+  showMaterialLineItems: true,
+  showMaterialName: true,
+  showMaterialDescription: true,
+  customerViewFormat: "email",
+  emailSubjectTemplate: "Invoice {{invoiceNumber}} due from {{companyName}} - {{invoiceTotal}}",
+  emailBodyTemplate: "Hi {{customerFirstName}},\n\nThank you for choosing {{companyName}}. Please see attached invoice due {{invoiceDueTerms}}.",
+  smsTemplate: "Invoice due from {{companyName}}",
+  reminderSubjectTemplate: "Reminder: Invoice {{invoiceNumber}} is due from {{companyName}} - {{invoiceTotal}}",
+  reminderBodyTemplate: "Hi {{customerFirstName}},\n\nThis is a friendly reminder from {{companyName}} that invoice {{invoiceNumber}} for {{invoiceTotal}} is due. Please see the attached invoice to review and pay."
+};
 
 export function App() {
   const [token, updateToken] = useState(getToken());
@@ -714,6 +802,8 @@ export function App() {
   });
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("overview");
   const [settingsDraft, setSettingsDraft] = useState("");
+  const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings>(defaultInvoiceSettings);
+  const [invoiceSettingsMessage, setInvoiceSettingsMessage] = useState("");
   const [companySettingsForm, setCompanySettingsForm] = useState({
     companyName: "",
     phone: "",
@@ -960,7 +1050,7 @@ export function App() {
   ].filter(Boolean).join(", ") || "No company address saved yet";
 
   async function loadDashboard() {
-    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult] = await Promise.all([
       api<Summary>("/api/settings/summary"),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
@@ -969,7 +1059,8 @@ export function App() {
       api<CrmOptions>("/api/settings/options"),
       api<{ categories: PriceBookCategory[]; items: PriceBookItem[] }>("/api/pricebook"),
       api<{ templates: JobTemplate[] }>("/api/settings/job-templates"),
-      api<{ templates: ServicePlanTemplate[]; summary: ServicePlanSummary }>("/api/service-plans")
+      api<{ templates: ServicePlanTemplate[]; summary: ServicePlanSummary }>("/api/service-plans"),
+      api<{ settings: InvoiceSettings }>("/api/settings/invoice-settings")
     ]);
 
     setSummary(summaryResult);
@@ -987,6 +1078,7 @@ export function App() {
     ]);
     setServicePlanTemplates(servicePlanResult.templates);
     setServicePlanSummary(servicePlanResult.summary);
+    setInvoiceSettings({ ...defaultInvoiceSettings, ...invoiceSettingsResult.settings });
 
     const [locationResult, apiKeyResult, meResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
@@ -1370,6 +1462,23 @@ export function App() {
     setLocations((current) => current.map((item) => item.location.id === result.location.id
       ? { ...item, organization: result.organization, location: result.location }
       : item));
+  }
+
+  async function saveInvoiceSettings(event?: FormEvent) {
+    event?.preventDefault();
+    setError("");
+    setInvoiceSettingsMessage("");
+    const result = await api<{ settings: InvoiceSettings }>("/api/settings/invoice-settings", {
+      method: "PATCH",
+      body: JSON.stringify(invoiceSettings)
+    });
+    setInvoiceSettings({ ...defaultInvoiceSettings, ...result.settings });
+    setInvoiceSettingsMessage("Invoice settings saved");
+  }
+
+  function updateInvoiceSetting<K extends keyof InvoiceSettings>(key: K, value: InvoiceSettings[K]) {
+    setInvoiceSettings((current) => ({ ...current, [key]: value }));
+    setInvoiceSettingsMessage("");
   }
 
   async function saveInlineJobClient() {
@@ -2020,11 +2129,24 @@ export function App() {
 
   function invoiceDefaultSubject(invoice: Invoice) {
     const companyName = activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security";
-    return `Invoice ${invoice.invoiceNumber} due from ${companyName} - ${money.format(invoice.total / 100)}`;
+    return renderInvoiceTemplate(invoiceSettings.emailSubjectTemplate, invoice, companyName);
   }
 
   function invoiceDefaultMessage(invoice: Invoice) {
-    return `Hi ${customerName(invoice.customer)},\n\nThank you for choosing ${activeLocationAccess?.organization.name || "Affordable Security"}. Please see the attached invoice due upon receipt.`;
+    const companyName = activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security";
+    return renderInvoiceTemplate(invoiceSettings.emailBodyTemplate, invoice, companyName);
+  }
+
+  function renderInvoiceTemplate(template: string, invoice: Invoice, companyName: string) {
+    const firstName = invoice.customer.firstName || customerName(invoice.customer).split(" ")[0] || "there";
+    const dueTerms = invoiceSettings.defaultTermsType === "uponReceipt" ? "upon receipt" : `net ${invoiceSettings.defaultTermsDays}`;
+    return [
+      ["{{invoiceNumber}}", String(invoice.invoiceNumber)],
+      ["{{companyName}}", companyName],
+      ["{{invoiceTotal}}", money.format(invoice.total / 100)],
+      ["{{customerFirstName}}", firstName],
+      ["{{invoiceDueTerms}}", dueTerms]
+    ].reduce((text, [tokenValue, replacement]) => text.split(tokenValue).join(replacement), template);
   }
 
   function openInvoiceSendDialog(invoice: Invoice) {
@@ -2038,7 +2160,11 @@ export function App() {
 
   function changeInvoiceSendMethod(method: "email" | "text" | "both") {
     setInvoiceSendMethod(method);
-    if (selectedInvoice) setInvoiceSendTo(invoiceRecipient(selectedInvoice, method));
+    if (selectedInvoice) {
+      const companyName = activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security";
+      setInvoiceSendTo(invoiceRecipient(selectedInvoice, method));
+      setInvoiceSendMessage(method === "text" ? renderInvoiceTemplate(invoiceSettings.smsTemplate, selectedInvoice, companyName) : invoiceDefaultMessage(selectedInvoice));
+    }
   }
 
   function confirmInvoiceSend() {
@@ -2093,7 +2219,7 @@ export function App() {
     const companyAddress = [activeLocationAccess?.location.street1, activeLocationAccess?.location.city, activeLocationAccess?.location.state, activeLocationAccess?.location.postalCode].filter(Boolean).join(", ");
     const customerAddress = invoiceCustomerAddress(invoice.customer) || (invoice.job?.address ? [invoice.job.address.street1, invoice.job.address.city, invoice.job.address.state, invoice.job.address.postalCode].filter(Boolean).join(", ") : "");
     const serviceDate = invoice.job?.scheduledStart ?? invoice.createdAt;
-    const invoiceMessage = activeLocationAccess?.location.termsOfService || "Thank you for choosing Affordable Security Locksmith and Alarm. We stand behind our work with a 6-month warranty. If you experience any issues related to the service provided, please contact us for assistance. Your satisfaction is our priority!";
+    const invoiceMessage = invoiceSettings.invoiceMessage || activeLocationAccess?.location.termsOfService || "Thank you for choosing Affordable Security Locksmith and Alarm. We stand behind our work with a 6-month warranty. If you experience any issues related to the service provided, please contact us for assistance. Your satisfaction is our priority!";
 
     return (
       <div className="invoice-send-page">
@@ -2113,7 +2239,7 @@ export function App() {
               <dl className="invoice-detail-list">
                 <dt>Invoice #</dt><dd>{invoice.invoiceNumber}</dd>
                 <dt>Invoice date</dt><dd>{formatDate(invoice.createdAt)}</dd>
-                <dt>Invoice due</dt><dd>Upon receipt</dd>
+                <dt>Invoice due</dt><dd>{invoiceSettings.defaultTermsType === "uponReceipt" ? "Upon receipt" : `Net ${invoiceSettings.defaultTermsDays}`}</dd>
                 <dt>Amount due</dt><dd className="amount">{money.format(invoice.total / 100)}</dd>
               </dl>
             </section>
@@ -2127,28 +2253,28 @@ export function App() {
             </section>
             <section>
               <h2>Payment options</h2>
-              <label><input type="checkbox" checked readOnly /> Accept credit card</label>
-              <label><input type="checkbox" checked readOnly /> Customer can save card on file</label>
-              <label><input type="checkbox" checked readOnly /> Accept ACH</label>
+              <label><input type="checkbox" checked={invoiceSettings.acceptCreditCard} readOnly /> Accept credit card</label>
+              <label><input type="checkbox" checked={invoiceSettings.saveCardOnFile} readOnly /> Customer can save card on file</label>
+              <label><input type="checkbox" checked={invoiceSettings.acceptAch} readOnly /> Accept ACH</label>
             </section>
             <section>
               <h2>Job and invoice</h2>
-              <label><input type="checkbox" checked readOnly /> Job number</label>
-              <label><input type="checkbox" checked readOnly /> Invoice date</label>
-              <label><input type="checkbox" checked readOnly /> Summary of work</label>
+              <label><input type="checkbox" checked={invoiceSettings.showJobNumber} readOnly /> Job number</label>
+              <label><input type="checkbox" checked={invoiceSettings.showInvoiceDate} readOnly /> Invoice date</label>
+              <label><input type="checkbox" checked={invoiceSettings.showSummaryOfWork} readOnly /> Summary of work</label>
             </section>
           </aside>
           <section className="invoice-preview-paper">
             <div className="invoice-preview-head">
               <div>
-                <div className="invoice-logo">Affordable<br /><span>Security</span></div>
+                <div className="invoice-logo">{invoiceSettings.logoName || activeLocationAccess?.location.logoName ? "Logo" : "Affordable"}<br /><span>{invoiceSettings.logoName || activeLocationAccess?.location.logoName || "Security"}</span></div>
                 <h2>{companyName}</h2>
               </div>
               <dl className="invoice-amount-box">
-                {invoice.job && <><dt>Job</dt><dd>#{invoice.job.jobNumber}</dd></>}
-                <dt>Service date</dt><dd>{formatDate(serviceDate)}</dd>
-                <dt>Invoice date</dt><dd>{formatDate(invoice.createdAt)}</dd>
-                <dt>Payment terms</dt><dd>Upon receipt</dd>
+                {invoice.job && invoiceSettings.showJobNumber && <><dt>Job</dt><dd>#{invoice.job.jobNumber}</dd></>}
+                {invoiceSettings.showServiceDate && <><dt>Service date</dt><dd>{formatDate(serviceDate)}</dd></>}
+                {invoiceSettings.showInvoiceDate && <><dt>Invoice date</dt><dd>{formatDate(invoice.createdAt)}</dd></>}
+                <dt>Payment terms</dt><dd>{invoiceSettings.defaultTermsType === "uponReceipt" ? "Upon receipt" : `Net ${invoiceSettings.defaultTermsDays}`}</dd>
                 <dt>Amount due</dt><dd>{money.format(invoice.total / 100)}</dd>
               </dl>
             </div>
@@ -2163,24 +2289,24 @@ export function App() {
                 <span>{companyAddress}</span>
                 <span>{companyPhone}</span>
                 <span>{companyEmail}</span>
-                {invoice.job?.technician && <span>Service completed by: {invoice.job.technician.name}</span>}
+                {invoice.job?.technician && invoiceSettings.showTechnicianName && <span>Service completed by: {invoice.job.technician.name}</span>}
               </div>
             </div>
             <h3>Invoice</h3>
-            <table className="invoice-preview-table">
-              <thead><tr><th>Services</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
+            {invoiceSettings.showServiceLineItems && <table className="invoice-preview-table">
+              <thead><tr><th>Services</th><th>{invoiceSettings.showServiceQuantity ? "Qty" : ""}</th><th>{invoiceSettings.showServiceUnitPrice ? "Unit price" : ""}</th><th>{invoiceSettings.showServiceAmount ? "Amount" : ""}</th></tr></thead>
               <tbody>
                 {items.map((item) => (
                   <tr key={item.id}>
-                    <td><strong>{item.name}</strong>{item.description && <span>{item.description}</span>}</td>
-                    <td>{Number(item.quantity || "1")}</td>
-                    <td>{money.format(item.unitPrice / 100)}</td>
-                    <td>{money.format((Number(item.quantity || "1") * item.unitPrice) / 100)}</td>
+                    <td>{invoiceSettings.showServiceName && <strong>{item.name}</strong>}{invoiceSettings.showServiceDescription && item.description && <span>{item.description}</span>}</td>
+                    <td>{invoiceSettings.showServiceQuantity ? Number(item.quantity || "1") : ""}</td>
+                    <td>{invoiceSettings.showServiceUnitPrice ? money.format(item.unitPrice / 100) : ""}</td>
+                    <td>{invoiceSettings.showServiceAmount ? money.format((Number(item.quantity || "1") * item.unitPrice) / 100) : ""}</td>
                   </tr>
                 ))}
                 {items.length === 0 && <tr><td colSpan={4}>No line items added yet.</td></tr>}
               </tbody>
-            </table>
+            </table>}
             <div className="invoice-preview-totals">
               <span>Subtotal</span><strong>{money.format(subtotal / 100)}</strong>
               <span>Total tax</span><strong>{money.format(tax / 100)}</strong>
@@ -4008,7 +4134,7 @@ export function App() {
                     <span className="settings-icon pink"><MessageSquareText size={22} /></span>
                     <strong>SMS Notifications</strong>
                   </button>
-                  <button type="button" className="settings-card" onClick={() => setSettingsSection("overview")}>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("invoiceSettings")}>
                     <span className="settings-icon red"><CreditCard size={22} /></span>
                     <strong>Invoice Settings</strong>
                   </button>
@@ -4151,6 +4277,232 @@ export function App() {
                     </div>
                     <textarea value={companySettingsForm.termsOfService} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, termsOfService: event.target.value })} placeholder="Warranty, payment, and service terms..." />
                   </section>
+                </form>
+              </div>
+            ) : settingsSection === "invoiceSettings" ? (
+              <div className="settings-layout">
+                <aside className="settings-menu">
+                  <span>Global Settings</span>
+                  <button onClick={() => setSettingsSection("company")}>Company</button>
+                  <button onClick={() => setActiveView("api")}>API Access</button>
+                  <button className="active" onClick={() => setSettingsSection("invoiceSettings")}>Invoices</button>
+                  <span>Feature Configurations</span>
+                  <button onClick={() => setSettingsSection("jobTemplates")}>Job Templates</button>
+                  <button onClick={() => setSettingsSection("jobTypes")}>Job Types</button>
+                  <button onClick={() => setActiveView("pricebook")}>Price Book</button>
+                  <button onClick={() => setActiveView("servicePlans")}>Service Plans</button>
+                  <span>Tags & Tools</span>
+                  <button onClick={() => setSettingsSection("checklists")}>Checklists</button>
+                  <button onClick={() => setSettingsSection("jobFields")}>Job Fields</button>
+                  <button onClick={() => setSettingsSection("leadSources")}>Lead Sources</button>
+                  <button onClick={() => setSettingsSection("tags")}>Tags</button>
+                </aside>
+
+                <form className="invoice-settings-page settings-panel" onSubmit={saveInvoiceSettings}>
+                  <div className="settings-panel-head">
+                    <div>
+                      <p className="settings-kicker">Invoices</p>
+                      <h2>Invoice Settings</h2>
+                      <p>Control how invoices look, what customers see, and the default email and SMS messages for this location.</p>
+                    </div>
+                    <button className="primary" type="submit">Save</button>
+                  </div>
+
+                  <div className="invoice-settings-tabs" role="tablist" aria-label="Invoice settings tabs">
+                    {([
+                      ["configuration", "Configuration"],
+                      ["automation", "Automations"],
+                      ["customerView", "Customer view"],
+                      ["delivery", "Email and SMS"]
+                    ] as const).map(([tab, label]) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        className={invoiceSettings.tab === tab ? "active" : ""}
+                        onClick={() => updateInvoiceSetting("tab", tab)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {invoiceSettingsMessage && <p className="inline-confirm">{invoiceSettingsMessage}</p>}
+
+                  {invoiceSettings.tab === "configuration" && (
+                    <div className="invoice-settings-grid">
+                      <section className="invoice-settings-card span-2">
+                        <h3>Brand and message</h3>
+                        <div className="logo-row compact-logo-row">
+                          <div className="logo-preview">{invoiceSettings.logoName ? "IMG" : "A"}</div>
+                          <div>
+                            <strong>Invoice logo</strong>
+                            <span>Use the location logo name now; file storage can be connected later.</span>
+                          </div>
+                          <label className="outline-button file-button">Choose logo
+                            <input type="file" onChange={(event) => updateInvoiceSetting("logoName", event.currentTarget.files?.[0]?.name ?? "")} />
+                          </label>
+                        </div>
+                        <label>Invoice message
+                          <textarea value={invoiceSettings.invoiceMessage} onChange={(event) => updateInvoiceSetting("invoiceMessage", event.target.value)} placeholder="Warranty, payment, and thank-you message printed on invoices." />
+                        </label>
+                      </section>
+
+                      <section className="invoice-settings-card">
+                        <h3>Preferences</h3>
+                        <label className="setting-toggle-row"><span><strong>Progressive invoicing</strong><small>Allow multiple invoices on one job.</small></span><input type="checkbox" checked={invoiceSettings.progressiveInvoicing} onChange={(event) => updateInvoiceSetting("progressiveInvoicing", event.target.checked)} /></label>
+                        <label className="setting-toggle-row"><span><strong>Match invoice and job number</strong><small>Use the job number for future invoices.</small></span><input type="checkbox" checked={invoiceSettings.matchInvoiceAndJobNumber} onChange={(event) => updateInvoiceSetting("matchInvoiceAndJobNumber", event.target.checked)} /></label>
+                        <label className="setting-toggle-row"><span><strong>Include images</strong><small>Show job photos on printed/downloaded invoices.</small></span><input type="checkbox" checked={invoiceSettings.includeImages} onChange={(event) => updateInvoiceSetting("includeImages", event.target.checked)} /></label>
+                      </section>
+
+                      <section className="invoice-settings-card">
+                        <h3>Payment options</h3>
+                        <label className="setting-toggle-row"><span><strong>Accept credit card</strong><small>Show card payment as an option.</small></span><input type="checkbox" checked={invoiceSettings.acceptCreditCard} onChange={(event) => updateInvoiceSetting("acceptCreditCard", event.target.checked)} /></label>
+                        <label className="setting-toggle-row"><span><strong>Save card on file</strong><small>Allow customers to keep a card for later.</small></span><input type="checkbox" checked={invoiceSettings.saveCardOnFile} onChange={(event) => updateInvoiceSetting("saveCardOnFile", event.target.checked)} /></label>
+                        <label className="setting-toggle-row"><span><strong>Accept ACH</strong><small>Show bank payment as an option.</small></span><input type="checkbox" checked={invoiceSettings.acceptAch} onChange={(event) => updateInvoiceSetting("acceptAch", event.target.checked)} /></label>
+                      </section>
+
+                      <section className="invoice-settings-card">
+                        <h3>Tipping</h3>
+                        <label className="setting-toggle-row"><span><strong>Accept tips</strong><small>Let customers add tips to online payments.</small></span><input type="checkbox" checked={invoiceSettings.acceptTips} onChange={(event) => updateInvoiceSetting("acceptTips", event.target.checked)} /></label>
+                        <label className="setting-toggle-row"><span><strong>Separate tipping screen</strong><small>Ask for tips as a separate checkout step.</small></span><input type="checkbox" checked={invoiceSettings.separateTippingScreen} onChange={(event) => updateInvoiceSetting("separateTippingScreen", event.target.checked)} /></label>
+                      </section>
+                    </div>
+                  )}
+
+                  {invoiceSettings.tab === "automation" && (
+                    <div className="invoice-settings-grid">
+                      <section className="invoice-settings-card">
+                        <h3>Invoice reminders</h3>
+                        <label className="setting-toggle-row"><span><strong>Send unpaid invoice reminders</strong><small>Queue reminders after the due date passes.</small></span><input type="checkbox" checked={invoiceSettings.autoReminders} onChange={(event) => updateInvoiceSetting("autoReminders", event.target.checked)} /></label>
+                        <div className="inline-input-grid">
+                          <label>Every
+                            <input type="number" min="1" max="30" value={invoiceSettings.reminderCadenceDays} onChange={(event) => updateInvoiceSetting("reminderCadenceDays", Number(event.target.value))} />
+                          </label>
+                          <label>Max reminders
+                            <input type="number" min="1" max="30" value={invoiceSettings.maxReminders} onChange={(event) => updateInvoiceSetting("maxReminders", Number(event.target.value))} />
+                          </label>
+                        </div>
+                      </section>
+                      <section className="invoice-settings-card">
+                        <h3>Automatic payments</h3>
+                        <label className="setting-toggle-row"><span><strong>Auto charge card on due date</strong><small>Use a saved card for unpaid balances when Stripe is connected.</small></span><input type="checkbox" checked={invoiceSettings.autoChargeCard} onChange={(event) => updateInvoiceSetting("autoChargeCard", event.target.checked)} /></label>
+                      </section>
+                      <section className="invoice-settings-card span-2">
+                        <h3>Reminder message</h3>
+                        <label>Subject
+                          <input value={invoiceSettings.reminderSubjectTemplate} onChange={(event) => updateInvoiceSetting("reminderSubjectTemplate", event.target.value)} />
+                        </label>
+                        <label>Body
+                          <textarea value={invoiceSettings.reminderBodyTemplate} onChange={(event) => updateInvoiceSetting("reminderBodyTemplate", event.target.value)} />
+                        </label>
+                      </section>
+                    </div>
+                  )}
+
+                  {invoiceSettings.tab === "customerView" && (
+                    <div className="invoice-settings-grid">
+                      <section className="invoice-settings-card">
+                        <h3>Default terms</h3>
+                        <label className="radio-row"><input type="radio" checked={invoiceSettings.defaultTermsType === "uponReceipt"} onChange={() => updateInvoiceSetting("defaultTermsType", "uponReceipt")} /> Upon receipt</label>
+                        <label className="radio-row"><input type="radio" checked={invoiceSettings.defaultTermsType === "net"} onChange={() => updateInvoiceSetting("defaultTermsType", "net")} /> Net</label>
+                        <input type="number" min="0" max="365" disabled={invoiceSettings.defaultTermsType !== "net"} value={invoiceSettings.defaultTermsDays} onChange={(event) => updateInvoiceSetting("defaultTermsDays", Number(event.target.value))} />
+                      </section>
+
+                      <section className="invoice-settings-card">
+                        <h3>Job and invoice</h3>
+                        {([
+                          ["showJobNumber", "Job number"],
+                          ["showInvoiceNumber", "Invoice number"],
+                          ["showServiceDate", "Service date"],
+                          ["showInvoiceDate", "Invoice date"],
+                          ["showSummaryOfWork", "Summary of work"]
+                        ] as const).map(([key, label]) => (
+                          <label className="check-row" key={key}><input type="checkbox" checked={invoiceSettings[key]} onChange={(event) => updateInvoiceSetting(key, event.target.checked)} /> {label}</label>
+                        ))}
+                      </section>
+
+                      <section className="invoice-settings-card">
+                        <h3>Business and customer</h3>
+                        {([
+                          ["showBusinessName", "Business name"],
+                          ["showTechnicianName", "Technician name"],
+                          ["showCustomerDisplayName", "Customer display name"],
+                          ["showCustomerCompanyName", "Customer company name"]
+                        ] as const).map(([key, label]) => (
+                          <label className="check-row" key={key}><input type="checkbox" checked={invoiceSettings[key]} onChange={(event) => updateInvoiceSetting(key, event.target.checked)} /> {label}</label>
+                        ))}
+                      </section>
+
+                      <section className="invoice-settings-card">
+                        <h3>Services</h3>
+                        {([
+                          ["showServiceLineItems", "Line items"],
+                          ["showServiceName", "Service name"],
+                          ["showServiceDescription", "Description"],
+                          ["showServiceQuantity", "Quantity"],
+                          ["showServiceUnitPrice", "Unit price"],
+                          ["showServiceAmount", "Line item amount"]
+                        ] as const).map(([key, label]) => (
+                          <label className="check-row" key={key}><input type="checkbox" checked={invoiceSettings[key]} onChange={(event) => updateInvoiceSetting(key, event.target.checked)} /> {label}</label>
+                        ))}
+                      </section>
+
+                      <section className="invoice-settings-card">
+                        <h3>Materials</h3>
+                        {([
+                          ["showMaterialLineItems", "Line items"],
+                          ["showMaterialName", "Material name"],
+                          ["showMaterialDescription", "Description"]
+                        ] as const).map(([key, label]) => (
+                          <label className="check-row" key={key}><input type="checkbox" checked={invoiceSettings[key]} onChange={(event) => updateInvoiceSetting(key, event.target.checked)} /> {label}</label>
+                        ))}
+                      </section>
+
+                      <section className="invoice-settings-card">
+                        <h3>View format</h3>
+                        <label className="radio-row"><input type="radio" checked={invoiceSettings.customerViewFormat === "email"} onChange={() => updateInvoiceSetting("customerViewFormat", "email")} /> Email optimized</label>
+                        <label className="radio-row"><input type="radio" checked={invoiceSettings.customerViewFormat === "envelope"} onChange={() => updateInvoiceSetting("customerViewFormat", "envelope")} /> Envelope optimized</label>
+                      </section>
+
+                      <section className="invoice-settings-card span-2">
+                        <h3>Customer preview</h3>
+                        <div className="invoice-setting-preview">
+                          <div>
+                            <div className="invoice-logo">{invoiceSettings.logoName ? "Logo" : "Affordable"}<br /><span>{invoiceSettings.logoName || "Security"}</span></div>
+                            {invoiceSettings.showBusinessName && <strong>{activeLocationAccess?.organization.name || "Affordable Security Locksmith"}</strong>}
+                            <p>John Doe<br />456 State St<br />California, CA 90265</p>
+                          </div>
+                          <dl>
+                            {invoiceSettings.showJobNumber && <><dt>Job</dt><dd>#12</dd></>}
+                            {invoiceSettings.showInvoiceDate && <><dt>Invoice date</dt><dd>{formatDate(new Date().toISOString())}</dd></>}
+                            <dt>Payment terms</dt><dd>{invoiceSettings.defaultTermsType === "uponReceipt" ? "Upon receipt" : `Net ${invoiceSettings.defaultTermsDays}`}</dd>
+                            <dt>Amount due</dt><dd>$401.00</dd>
+                          </dl>
+                        </div>
+                      </section>
+                    </div>
+                  )}
+
+                  {invoiceSettings.tab === "delivery" && (
+                    <div className="invoice-settings-grid">
+                      <section className="invoice-settings-card span-2">
+                        <h3>Email preview</h3>
+                        <label>Subject
+                          <input value={invoiceSettings.emailSubjectTemplate} onChange={(event) => updateInvoiceSetting("emailSubjectTemplate", event.target.value)} />
+                        </label>
+                        <label>Body
+                          <textarea value={invoiceSettings.emailBodyTemplate} onChange={(event) => updateInvoiceSetting("emailBodyTemplate", event.target.value)} />
+                        </label>
+                        <div className="template-token-row">
+                          {["{{invoiceNumber}}", "{{companyName}}", "{{invoiceTotal}}", "{{customerFirstName}}", "{{invoiceDueTerms}}"].map((tokenValue) => <span className="template-token" key={tokenValue}>{tokenValue}</span>)}
+                        </div>
+                      </section>
+                      <section className="invoice-settings-card span-2">
+                        <h3>SMS preview</h3>
+                        <textarea value={invoiceSettings.smsTemplate} onChange={(event) => updateInvoiceSetting("smsTemplate", event.target.value)} />
+                      </section>
+                    </div>
+                  )}
                 </form>
               </div>
             ) : settingsSection === "jobTemplates" ? (

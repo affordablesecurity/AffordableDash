@@ -86,6 +86,7 @@ model Location {
   description    String?
   termsOfService String?
   logoName       String?
+  invoiceSettings Json?
   active         Boolean          @default(true)
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
