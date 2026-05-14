@@ -131,6 +131,7 @@ type JobLineDraft = {
   description: string;
   quantity: string;
   unitPrice: string;
+  taxable?: boolean;
 };
 
 type JobTemplate = {
@@ -507,7 +508,8 @@ function lineDraft(category: "service" | "material", name = "", unitPrice = ""):
     name,
     description: "",
     quantity: "1",
-    unitPrice
+    unitPrice,
+    taxable: category === "material"
   };
 }
 
@@ -610,6 +612,9 @@ export function App() {
   const [jobClientSearch, setJobClientSearch] = useState("");
   const [jobAddressSearch, setJobAddressSearch] = useState("");
   const [tagDraft, setTagDraft] = useState("");
+  const [tagFocused, setTagFocused] = useState(false);
+  const [leadSourceFocused, setLeadSourceFocused] = useState(false);
+  const [jobNoteTarget, setJobNoteTarget] = useState<"job" | "customer">("job");
   const [jobTemplateId, setJobTemplateId] = useState("");
   const [jobTemplates, setJobTemplates] = useState<JobTemplate[]>(defaultJobTemplates);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
@@ -758,6 +763,21 @@ export function App() {
     if (!query) return selectedJobAddresses;
     return selectedJobAddresses.filter((address) => addressLine(address).toLowerCase().includes(query));
   }, [jobAddressSearch, selectedJobAddresses]);
+  const selectedJobTags = useMemo(() => splitTags(jobForm.tags), [jobForm.tags]);
+  const tagSuggestions = useMemo(() => {
+    const query = tagDraft.trim().toLowerCase();
+    if (!query) return [];
+    return crmOptions.tags
+      .filter((tag) => !selectedJobTags.includes(tag) && tag.toLowerCase().includes(query))
+      .slice(0, 8);
+  }, [crmOptions.tags, selectedJobTags, tagDraft]);
+  const leadSourceSuggestions = useMemo(() => {
+    const query = jobForm.leadSource.trim().toLowerCase();
+    if (!query) return [];
+    return crmOptions.leadSources
+      .filter((source) => source.toLowerCase().includes(query) && source !== jobForm.leadSource)
+      .slice(0, 8);
+  }, [crmOptions.leadSources, jobForm.leadSource]);
   const filteredJobs = useMemo(() => {
     const query = jobSearch.trim().toLowerCase();
     return jobs.filter((job) => {
@@ -824,7 +844,11 @@ export function App() {
     canceled: jobs.filter((job) => job.status === "CANCELED").length
   }), [jobs]);
   const jobLineSubtotal = useMemo(() => jobLines.reduce((sum, item) => sum + (Number(item.quantity || "0") * dollarsToCents(item.unitPrice)), 0), [jobLines]);
-  const jobLineTax = Math.round(jobLineSubtotal * 0.094);
+  const jobTaxableSubtotal = useMemo(() => jobLines.reduce((sum, item) => {
+    if (item.category !== "material" || item.taxable === false) return sum;
+    return sum + (Number(item.quantity || "0") * dollarsToCents(item.unitPrice));
+  }, 0), [jobLines]);
+  const jobLineTax = Math.round(jobTaxableSubtotal * 0.094);
   const jobLineTotal = jobLineSubtotal + jobLineTax;
   const filteredPriceBookItems = useMemo(() => {
     const query = priceBookSearch.trim().toLowerCase();
@@ -1337,7 +1361,8 @@ export function App() {
       name: item.name,
       description: item.description ?? "",
       quantity: "1",
-      unitPrice: String((item.price / 100).toFixed(2))
+      unitPrice: String((item.price / 100).toFixed(2)),
+      taxable: item.itemType === "material" && item.taxable
     }]);
   }
 
@@ -1590,7 +1615,7 @@ export function App() {
     }
 
     const tagText = splitTags(jobForm.tags).length ? `Tags: ${splitTags(jobForm.tags).join(", ")}` : "";
-    const noteText = [jobForm.internalNotes, tagText].filter(Boolean).join("\n");
+    const noteText = [jobNoteTarget === "job" ? jobForm.internalNotes : "", tagText].filter(Boolean).join("\n");
 
     await api("/api/jobs", {
       method: "POST",
@@ -1614,10 +1639,16 @@ export function App() {
           description: item.description || undefined,
           quantity: Number(item.quantity || "1"),
           unitPrice: dollarsToCents(item.unitPrice),
-          taxable: true
+          taxable: item.category === "material" && item.taxable !== false
         }))
       })
     });
+    if (jobNoteTarget === "customer" && jobForm.internalNotes.trim()) {
+      await api(`/api/customers/${customerId}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ content: jobForm.internalNotes.trim() })
+      });
+    }
     setJobForm({
       customerId: "",
       addressId: "",
@@ -1631,6 +1662,7 @@ export function App() {
       leadSource: "Unknown",
       tags: ""
     });
+    setJobNoteTarget("job");
     setJobClientForm(blankCustomerForm());
     setCreateClientInline(false);
     setJobClientSearch("");
@@ -2274,7 +2306,7 @@ export function App() {
               </div>
             </section>
           ) : (
-            <section className="jobs-page">
+            <section className="jobs-page job-create-page">
               <div className="section-actions">
                 <div className="breadcrumb"><Wrench size={17} /> Jobs / New Job</div>
                 <div className="action-buttons">
@@ -2492,6 +2524,11 @@ export function App() {
                         list="tag-options"
                         placeholder="Tags (press enter)"
                         value={tagDraft}
+                        onFocus={() => setTagFocused(true)}
+                        onBlur={() => {
+                          window.setTimeout(() => setTagFocused(false), 120);
+                          addJobTag(tagDraft).catch(() => undefined);
+                        }}
                         onChange={(event) => setTagDraft(event.target.value)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === ",") {
@@ -2499,16 +2536,17 @@ export function App() {
                             addJobTag(tagDraft).catch((err: Error) => setError(err.message));
                           }
                         }}
-                        onBlur={() => addJobTag(tagDraft).catch(() => undefined)}
                       />
                       <datalist id="tag-options">
                         {crmOptions.tags.map((tag) => <option key={tag} value={tag} />)}
                       </datalist>
-                      <div className="option-chip-list">
-                        {crmOptions.tags.filter((tag) => !splitTags(jobForm.tags).includes(tag)).slice(0, 10).map((tag) => (
-                          <button className="option-chip" type="button" key={tag} onClick={() => addJobTag(tag).catch((err: Error) => setError(err.message))}>{tag}</button>
-                        ))}
-                      </div>
+                      {tagFocused && tagSuggestions.length > 0 && (
+                        <div className="option-typeahead">
+                          {tagSuggestions.map((tag) => (
+                            <button type="button" key={tag} onMouseDown={(event) => event.preventDefault()} onClick={() => addJobTag(tag).catch((err: Error) => setError(err.message))}>{tag}</button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </section>
 
@@ -2518,23 +2556,29 @@ export function App() {
                       list="lead-source-options"
                       value={jobForm.leadSource}
                       onChange={(event) => setJobForm({ ...jobForm, leadSource: event.target.value })}
+                      onFocus={() => setLeadSourceFocused(true)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
                           addJobLeadSource(jobForm.leadSource).catch((err: Error) => setError(err.message));
                         }
                       }}
-                      onBlur={() => addJobLeadSource(jobForm.leadSource).catch(() => undefined)}
+                      onBlur={() => {
+                        window.setTimeout(() => setLeadSourceFocused(false), 120);
+                        addJobLeadSource(jobForm.leadSource).catch(() => undefined);
+                      }}
                       placeholder="Lead source (press enter)"
                     />
                     <datalist id="lead-source-options">
                       {crmOptions.leadSources.map((source) => <option key={source} value={source} />)}
                     </datalist>
-                    <div className="option-chip-list">
-                      {crmOptions.leadSources.map((source) => (
-                        <button className={source === jobForm.leadSource ? "option-chip selected" : "option-chip"} type="button" key={source} onClick={() => addJobLeadSource(source).catch((err: Error) => setError(err.message))}>{source}</button>
-                      ))}
-                    </div>
+                    {leadSourceFocused && leadSourceSuggestions.length > 0 && (
+                      <div className="option-typeahead">
+                        {leadSourceSuggestions.map((source) => (
+                          <button type="button" key={source} onMouseDown={(event) => event.preventDefault()} onClick={() => addJobLeadSource(source).catch((err: Error) => setError(err.message))}>{source}</button>
+                        ))}
+                      </div>
+                    )}
                   </section>
                 </div>
 
@@ -2542,9 +2586,16 @@ export function App() {
                   <section className="panel private-note-panel">
                     <div className="panel-header">
                       <h2><StickyNote size={18} /> Private notes</h2>
-                      <div className="mini-segment"><button type="button" className="selected">This job</button><button type="button">Customer</button></div>
+                      <div className="mini-segment">
+                        <button type="button" className={jobNoteTarget === "job" ? "selected" : ""} onClick={() => setJobNoteTarget("job")}>This job</button>
+                        <button type="button" className={jobNoteTarget === "customer" ? "selected" : ""} onClick={() => setJobNoteTarget("customer")}>Customer</button>
+                      </div>
                     </div>
-                    <textarea placeholder="Add a private note here" value={jobForm.internalNotes} onChange={(event) => setJobForm({ ...jobForm, internalNotes: event.target.value })} />
+                    <textarea
+                      placeholder={jobNoteTarget === "job" ? "Add an internal note for this job" : "Add a private customer profile note"}
+                      value={jobForm.internalNotes}
+                      onChange={(event) => setJobForm({ ...jobForm, internalNotes: event.target.value })}
+                    />
                   </section>
 
                   <section className="panel line-items-panel">
@@ -2575,6 +2626,10 @@ export function App() {
                             <input placeholder="Description" value={item.description} onChange={(event) => updateJobLine(item.id, { description: event.target.value })} />
                             <input placeholder="Qty" value={item.quantity} onChange={(event) => updateJobLine(item.id, { quantity: event.target.value })} />
                             <input placeholder="Price" value={item.unitPrice} onChange={(event) => updateJobLine(item.id, { unitPrice: event.target.value })} />
+                            <label className="line-tax-toggle">
+                              <input type="checkbox" checked={item.category === "material" && item.taxable !== false} disabled={item.category !== "material"} onChange={(event) => updateJobLine(item.id, { taxable: event.target.checked })} />
+                              Taxable
+                            </label>
                             <button type="button" className="text-button" onClick={() => setJobLines((current) => current.filter((line) => line.id !== item.id))}><Trash2 size={16} /></button>
                           </div>
                         ))}
@@ -2582,7 +2637,7 @@ export function App() {
                     ))}
                     <div className="totals-box">
                       <span>Subtotal <strong>{money.format(jobLineSubtotal / 100)}</strong></span>
-                      <span>Tax rate <em>AZ Taxes (9.4%)</em> <strong>{money.format(jobLineTax / 100)}</strong></span>
+                      <span>Tax rate <em>Taxable materials (9.4%)</em> <strong>{money.format(jobLineTax / 100)}</strong></span>
                       <span className="grand-total">Total <strong>{money.format(jobLineTotal / 100)}</strong></span>
                     </div>
                   </section>
