@@ -11,6 +11,7 @@ import {
   Clock3,
   Copy,
   CreditCard,
+  Download,
   FileText,
   FolderOpen,
   Headphones,
@@ -30,6 +31,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  Printer,
   ReceiptText,
   Search,
   Settings,
@@ -42,7 +44,8 @@ import {
   UserPlus,
   Users,
   WalletCards,
-  Wrench
+  Wrench,
+  X
 } from "lucide-react";
 import { Fragment, FormEvent, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
@@ -245,11 +248,15 @@ type Invoice = {
   id: string;
   invoiceNumber: number;
   status: string;
+  subtotal?: number;
+  tax?: number;
   total: number;
   createdAt?: string;
+  dueAt?: string;
   paidAt?: string;
   customer: Customer;
   job?: Job;
+  items?: Array<{ id: string; name: string; description?: string; quantity: number | string; unitPrice: number; taxable?: boolean }>;
 };
 
 type LocationAccess = {
@@ -663,6 +670,11 @@ export function App() {
   const [detailSavedMessage, setDetailSavedMessage] = useState("");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
   const [invoiceActionMessage, setInvoiceActionMessage] = useState("");
+  const [invoiceSendDialogOpen, setInvoiceSendDialogOpen] = useState(false);
+  const [invoiceSendMethod, setInvoiceSendMethod] = useState<"email" | "text" | "both">("email");
+  const [invoiceSendTo, setInvoiceSendTo] = useState("");
+  const [invoiceSendSubject, setInvoiceSendSubject] = useState("");
+  const [invoiceSendMessage, setInvoiceSendMessage] = useState("");
   const [jobTemplateId, setJobTemplateId] = useState("");
   const [jobTemplates, setJobTemplates] = useState<JobTemplate[]>(defaultJobTemplates);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
@@ -1980,6 +1992,62 @@ export function App() {
     }
   }
 
+  function invoiceLineItems(invoice: Invoice) {
+    if (invoice.items?.length) return invoice.items;
+    return (invoice.job?.lineItems ?? []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      description: item.name,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      taxable: item.taxable
+    }));
+  }
+
+  function invoiceCustomerAddress(customer: Customer) {
+    const primaryAddress = customer.addresses?.[0];
+    if (!primaryAddress) return "";
+    return [primaryAddress.street1, primaryAddress.street2, primaryAddress.city, primaryAddress.state, primaryAddress.postalCode].filter(Boolean).join(", ");
+  }
+
+  function invoiceRecipient(invoice: Invoice, method: "email" | "text" | "both") {
+    const email = invoice.customer.email ?? "";
+    const textNumber = invoice.customer.phone ?? invoice.customer.alternatePhone ?? "";
+    if (method === "email") return email;
+    if (method === "text") return textNumber;
+    return [email, textNumber].filter(Boolean).join(", ");
+  }
+
+  function invoiceDefaultSubject(invoice: Invoice) {
+    const companyName = activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security";
+    return `Invoice ${invoice.invoiceNumber} due from ${companyName} - ${money.format(invoice.total / 100)}`;
+  }
+
+  function invoiceDefaultMessage(invoice: Invoice) {
+    return `Hi ${customerName(invoice.customer)},\n\nThank you for choosing ${activeLocationAccess?.organization.name || "Affordable Security"}. Please see the attached invoice due upon receipt.`;
+  }
+
+  function openInvoiceSendDialog(invoice: Invoice) {
+    setInvoiceSendMethod("email");
+    setInvoiceSendTo(invoiceRecipient(invoice, "email"));
+    setInvoiceSendSubject(invoiceDefaultSubject(invoice));
+    setInvoiceSendMessage(invoiceDefaultMessage(invoice));
+    setInvoiceActionMessage("");
+    setInvoiceSendDialogOpen(true);
+  }
+
+  function changeInvoiceSendMethod(method: "email" | "text" | "both") {
+    setInvoiceSendMethod(method);
+    if (selectedInvoice) setInvoiceSendTo(invoiceRecipient(selectedInvoice, method));
+  }
+
+  function confirmInvoiceSend() {
+    if (!selectedInvoice) return;
+    const methodLabel = invoiceSendMethod === "both" ? "email and text" : invoiceSendMethod;
+    setInvoiceActionMessage(`Invoice #${selectedInvoice.invoiceNumber} queued for ${methodLabel} to ${invoiceSendTo || "the customer"}.`);
+    setInvoiceSendDialogOpen(false);
+  }
+
   function openJobFromSlot(slot: { date: Date; hour: number }) {
     const start = new Date(slot.date);
     start.setHours(slot.hour, 0, 0, 0);
@@ -2012,6 +2080,122 @@ export function App() {
     setSelectedScheduleJob(null);
     setJobPageMode("list");
     setActiveView("jobs");
+  }
+
+  function renderInvoiceSendPage(invoice: Invoice) {
+    const items = invoiceLineItems(invoice);
+    const subtotal = invoice.subtotal ?? items.reduce((sum, item) => sum + Number(item.quantity || "1") * item.unitPrice, 0);
+    const tax = invoice.tax ?? Math.max(invoice.total - subtotal, 0);
+    const companyName = activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security Locksmith";
+    const companyPhone = activeLocationAccess?.location.phone || "(928) 580-2775";
+    const companyEmail = "service@5802775.com";
+    const companyWebsite = activeLocationAccess?.location.website || "https://www.affordablesecurity1.com";
+    const companyAddress = [activeLocationAccess?.location.street1, activeLocationAccess?.location.city, activeLocationAccess?.location.state, activeLocationAccess?.location.postalCode].filter(Boolean).join(", ");
+    const customerAddress = invoiceCustomerAddress(invoice.customer) || (invoice.job?.address ? [invoice.job.address.street1, invoice.job.address.city, invoice.job.address.state, invoice.job.address.postalCode].filter(Boolean).join(", ") : "");
+    const serviceDate = invoice.job?.scheduledStart ?? invoice.createdAt;
+    const invoiceMessage = activeLocationAccess?.location.termsOfService || "Thank you for choosing Affordable Security Locksmith and Alarm. We stand behind our work with a 6-month warranty. If you experience any issues related to the service provided, please contact us for assistance. Your satisfaction is our priority!";
+
+    return (
+      <div className="invoice-send-page">
+        <header className="invoice-send-topbar">
+          <button className="icon-button" type="button" onClick={() => setSelectedInvoiceId("")} aria-label="Close invoice"><X size={22} /></button>
+          <h1>Send invoice</h1>
+          <div className="invoice-top-actions">
+            <button className="icon-button" type="button" onClick={() => window.print()} aria-label="Print invoice"><Printer size={20} /></button>
+            <button className="icon-button" type="button" onClick={() => setInvoiceActionMessage(`Invoice #${invoice.invoiceNumber} PDF is ready to generate once PDF export is connected.`)} aria-label="Download invoice"><Download size={20} /></button>
+            <button className="primary" type="button" onClick={() => openInvoiceSendDialog(invoice)}>Send</button>
+          </div>
+        </header>
+        <div className="invoice-send-body">
+          <aside className="invoice-settings-rail">
+            <section>
+              <div className="panel-header"><h2>Details</h2><Pencil size={18} /></div>
+              <dl className="invoice-detail-list">
+                <dt>Invoice #</dt><dd>{invoice.invoiceNumber}</dd>
+                <dt>Invoice date</dt><dd>{formatDate(invoice.createdAt)}</dd>
+                <dt>Invoice due</dt><dd>Upon receipt</dd>
+                <dt>Amount due</dt><dd className="amount">{money.format(invoice.total / 100)}</dd>
+              </dl>
+            </section>
+            <section>
+              <div className="panel-header"><h2>Attachments</h2><Pencil size={18} /></div>
+              <p className="muted">invoice-{invoice.invoiceNumber}.pdf</p>
+            </section>
+            <section>
+              <div className="panel-header"><h2>Invoice message</h2><Pencil size={18} /></div>
+              <p>{invoiceMessage}</p>
+            </section>
+            <section>
+              <h2>Payment options</h2>
+              <label><input type="checkbox" checked readOnly /> Accept credit card</label>
+              <label><input type="checkbox" checked readOnly /> Customer can save card on file</label>
+              <label><input type="checkbox" checked readOnly /> Accept ACH</label>
+            </section>
+            <section>
+              <h2>Job and invoice</h2>
+              <label><input type="checkbox" checked readOnly /> Job number</label>
+              <label><input type="checkbox" checked readOnly /> Invoice date</label>
+              <label><input type="checkbox" checked readOnly /> Summary of work</label>
+            </section>
+          </aside>
+          <section className="invoice-preview-paper">
+            <div className="invoice-preview-head">
+              <div>
+                <div className="invoice-logo">Affordable<br /><span>Security</span></div>
+                <h2>{companyName}</h2>
+              </div>
+              <dl className="invoice-amount-box">
+                {invoice.job && <><dt>Job</dt><dd>#{invoice.job.jobNumber}</dd></>}
+                <dt>Service date</dt><dd>{formatDate(serviceDate)}</dd>
+                <dt>Invoice date</dt><dd>{formatDate(invoice.createdAt)}</dd>
+                <dt>Payment terms</dt><dd>Upon receipt</dd>
+                <dt>Amount due</dt><dd>{money.format(invoice.total / 100)}</dd>
+              </dl>
+            </div>
+            <div className="invoice-parties">
+              <div>
+                <strong>{customerName(invoice.customer)}</strong>
+                {customerAddress && <span>{customerAddress}</span>}
+                <span>{invoice.customer.phone}</span>
+              </div>
+              <div>
+                <strong>Contact us</strong>
+                <span>{companyAddress}</span>
+                <span>{companyPhone}</span>
+                <span>{companyEmail}</span>
+                {invoice.job?.technician && <span>Service completed by: {invoice.job.technician.name}</span>}
+              </div>
+            </div>
+            <h3>Invoice</h3>
+            <table className="invoice-preview-table">
+              <thead><tr><th>Services</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.id}>
+                    <td><strong>{item.name}</strong>{item.description && <span>{item.description}</span>}</td>
+                    <td>{Number(item.quantity || "1")}</td>
+                    <td>{money.format(item.unitPrice / 100)}</td>
+                    <td>{money.format((Number(item.quantity || "1") * item.unitPrice) / 100)}</td>
+                  </tr>
+                ))}
+                {items.length === 0 && <tr><td colSpan={4}>No line items added yet.</td></tr>}
+              </tbody>
+            </table>
+            <div className="invoice-preview-totals">
+              <span>Subtotal</span><strong>{money.format(subtotal / 100)}</strong>
+              <span>Total tax</span><strong>{money.format(tax / 100)}</strong>
+              <span>Job total</span><strong>{money.format(invoice.total / 100)}</strong>
+              <span>Amount due</span><strong>{money.format(invoice.total / 100)}</strong>
+            </div>
+            <footer>
+              <p>{invoiceMessage}</p>
+              <div><span>{companyName}</span><span>{companyWebsite}</span></div>
+            </footer>
+          </section>
+        </div>
+        {invoiceActionMessage && <p className="inline-confirm">{invoiceActionMessage}</p>}
+      </div>
+    );
   }
 
   if (!token) {
@@ -4274,29 +4458,44 @@ export function App() {
           </div>
         )}
 
+        {invoiceSendDialogOpen && selectedInvoice && (
+          <div className="modal-backdrop">
+            <div className="send-invoice-modal">
+              <header>
+                <h2>Send invoice</h2>
+                <button className="icon-button" type="button" onClick={() => setInvoiceSendDialogOpen(false)} aria-label="Close send invoice"><X size={20} /></button>
+              </header>
+              <fieldset className="send-methods">
+                <legend>Send by</legend>
+                <label><input type="radio" name="invoice-send-method" checked={invoiceSendMethod === "email"} onChange={() => changeInvoiceSendMethod("email")} /> Email</label>
+                <label><input type="radio" name="invoice-send-method" checked={invoiceSendMethod === "text"} onChange={() => changeInvoiceSendMethod("text")} /> Text</label>
+                <label><input type="radio" name="invoice-send-method" checked={invoiceSendMethod === "both"} onChange={() => changeInvoiceSendMethod("both")} /> Email &amp; Text</label>
+              </fieldset>
+              <label>To
+                <input value={invoiceSendTo} onChange={(event) => setInvoiceSendTo(event.target.value)} placeholder={invoiceSendMethod === "text" ? "Customer mobile number" : "Customer email address"} />
+              </label>
+              <label>Subject
+                <input value={invoiceSendSubject} onChange={(event) => setInvoiceSendSubject(event.target.value)} />
+              </label>
+              <label>Message
+                <textarea value={invoiceSendMessage} onChange={(event) => setInvoiceSendMessage(event.target.value)} />
+              </label>
+              <div className="send-attachments">
+                <span>Attachments</span>
+                <strong>invoice-{selectedInvoice.invoiceNumber}.pdf</strong>
+              </div>
+              <div className="modal-actions">
+                <button className="outline-button" type="button" onClick={() => setInvoiceSendDialogOpen(false)}>Cancel</button>
+                <button className="primary" type="button" disabled={!invoiceSendTo.trim()} onClick={confirmInvoiceSend}>Send</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeView === "invoices" && (
-          <div className="content-grid">
-            <section className="panel">
-              {selectedInvoice ? (
-                <>
-                  <div className="panel-header"><h2>Invoice #{selectedInvoice.invoiceNumber}</h2><CreditCard size={18} /></div>
-                  <div className="invoice-detail-card">
-                    <dl>
-                      <dt>Customer</dt><dd>{customerName(selectedInvoice.customer)}</dd>
-                      <dt>Status</dt><dd>{statusLabel(selectedInvoice.status)}</dd>
-                      <dt>Created</dt><dd>{formatDateTime(selectedInvoice.createdAt)}</dd>
-                      <dt>Total</dt><dd>{money.format(selectedInvoice.total / 100)}</dd>
-                    </dl>
-                    <div className="action-buttons">
-                      <button className="outline-button" type="button" onClick={() => setInvoiceActionMessage(`Invoice #${selectedInvoice.invoiceNumber} is ready to email once email delivery is connected.`)}><Mail size={17} /> Email invoice</button>
-                      <button className="outline-button" type="button" onClick={() => setInvoiceActionMessage(`Invoice #${selectedInvoice.invoiceNumber} is ready to text once SMS delivery is connected.`)}><MessageSquareText size={17} /> Text invoice</button>
-                      <button className="primary" type="button" onClick={() => openInvoicePayment(selectedInvoice)}><WalletCards size={17} /> Pay</button>
-                    </div>
-                    {invoiceActionMessage && <p className="inline-confirm">{invoiceActionMessage}</p>}
-                  </div>
-                </>
-              ) : (
-                <>
+          selectedInvoice ? renderInvoiceSendPage(selectedInvoice) : (
+            <div className="content-grid">
+              <section className="panel">
                   <div className="panel-header"><h2>Create Invoice</h2><CreditCard size={18} /></div>
                   <form className="record-form" onSubmit={createInvoice}>
                     <select value={invoiceForm.customerId} onChange={(event) => setInvoiceForm({ ...invoiceForm, customerId: event.target.value })} required>
@@ -4313,24 +4512,23 @@ export function App() {
                     <input placeholder="Tax, dollars" value={invoiceForm.tax} onChange={(event) => setInvoiceForm({ ...invoiceForm, tax: event.target.value })} />
                     <button className="primary" type="submit">Create invoice</button>
                   </form>
-                </>
-              )}
-            </section>
-            <section className="panel wide">
-              <div className="panel-header"><h2>Invoices</h2><CreditCard size={18} /></div>
-              <div className="table-list">
-                {invoices.map((invoice) => (
-                  <article key={invoice.id} className="clickable-row" onClick={() => setSelectedInvoiceId(invoice.id)}>
-                    <div>
-                      <strong>Invoice #{invoice.invoiceNumber}</strong>
-                      <span>{invoice.customer.firstName} {invoice.customer.lastName} / {money.format(invoice.total / 100)} / {invoice.status}</span>
-                    </div>
-                  </article>
-                ))}
-                {invoices.length === 0 && <p className="empty">No invoices yet.</p>}
-              </div>
-            </section>
-          </div>
+              </section>
+              <section className="panel wide">
+                <div className="panel-header"><h2>Invoices</h2><CreditCard size={18} /></div>
+                <div className="table-list">
+                  {invoices.map((invoice) => (
+                    <article key={invoice.id} className="clickable-row" onClick={() => setSelectedInvoiceId(invoice.id)}>
+                      <div>
+                        <strong>Invoice #{invoice.invoiceNumber}</strong>
+                        <span>{invoice.customer.firstName} {invoice.customer.lastName} / {money.format(invoice.total / 100)} / {invoice.status}</span>
+                      </div>
+                    </article>
+                  ))}
+                  {invoices.length === 0 && <p className="empty">No invoices yet.</p>}
+                </div>
+              </section>
+            </div>
+          )
         )}
 
         {activeView === "api" && (
