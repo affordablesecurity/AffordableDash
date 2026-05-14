@@ -654,6 +654,7 @@ export function App() {
   const [detailLeadSource, setDetailLeadSource] = useState("");
   const [detailPrivateNote, setDetailPrivateNote] = useState("");
   const [detailSummary, setDetailSummary] = useState("");
+  const [detailSavedMessage, setDetailSavedMessage] = useState("");
   const [jobTemplateId, setJobTemplateId] = useState("");
   const [jobTemplates, setJobTemplates] = useState<JobTemplate[]>(defaultJobTemplates);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
@@ -988,6 +989,7 @@ export function App() {
     setDetailSummary(selectedJob.description || "");
     setDetailPrivateNote("");
     setDetailTagDraft("");
+    setDetailSavedMessage("");
   }, [selectedJob?.id, selectedJob?.leadSource, selectedJob?.description]);
 
   useEffect(() => {
@@ -1764,6 +1766,17 @@ export function App() {
 
   async function updateJobStatus(job: Job, status: string) {
     setError("");
+    const statusMessages: Record<string, string> = {
+      DISPATCHED: "Technician marked on the way.",
+      IN_PROGRESS: "Job marked started.",
+      COMPLETED: "Job marked finished."
+    };
+    if (statusMessages[status]) {
+      await api(`/api/jobs/${job.id}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ author: "System", content: statusMessages[status] })
+      });
+    }
     const result = await api<{ job: Job }>(`/api/jobs/${job.id}`, {
       method: "PATCH",
       body: JSON.stringify({ status })
@@ -1773,7 +1786,7 @@ export function App() {
     await loadDashboard();
   }
 
-  async function updateJobDetails(job: Job, payload: Partial<Pick<Job, "tags" | "leadSource" | "description" | "internalNotes">>) {
+  async function updateJobDetails(job: Job, payload: Partial<Pick<Job, "tags" | "leadSource" | "description" | "internalNotes">> & { technicianId?: string }) {
     setError("");
     const result = await api<{ job: Job }>(`/api/jobs/${job.id}`, {
       method: "PATCH",
@@ -1791,6 +1804,7 @@ export function App() {
     const tags = [...new Set([...(job.tags ?? []), cleanName])];
     await saveJobOption("tag", cleanName);
     await updateJobDetails(job, { tags });
+    setDetailSavedMessage(`Added tag ${cleanName}`);
     setDetailTagDraft("");
   }
 
@@ -1802,10 +1816,12 @@ export function App() {
     const cleanName = detailLeadSource.trim() || "Unknown";
     await saveJobOption("leadSource", cleanName);
     await updateJobDetails(job, { leadSource: cleanName });
+    setDetailSavedMessage(`Lead source saved as ${cleanName}`);
   }
 
   async function saveJobSummary(job: Job) {
     await updateJobDetails(job, { description: detailSummary.trim() });
+    setDetailSavedMessage("Summary of work saved");
   }
 
   async function addJobPrivateNote(job: Job) {
@@ -1818,6 +1834,18 @@ export function App() {
     const existingNotes = job.internalNotes?.trim();
     await updateJobDetails(job, { internalNotes: existingNotes ? `${existingNotes}\n\n${content}` : content });
     setDetailPrivateNote("");
+    setDetailSavedMessage("Private note added");
+  }
+
+  async function assignJobTechnician(job: Job, technicianId: string) {
+    await updateJobDetails(job, { technicianId });
+    const technicianName = technicians.find((technician) => technician.id === technicianId)?.name ?? "Unassigned";
+    await api(`/api/jobs/${job.id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ author: "System", content: `Assigned to ${technicianName}.` })
+    });
+    await loadDashboard();
+    setDetailSavedMessage(`Assigned to ${technicianName}`);
   }
 
   function addAppointmentForJob(job: Job) {
@@ -1882,8 +1910,18 @@ export function App() {
   }
 
   async function openJobPayment(job: Job) {
-    await createInvoiceFromJob(job);
-    setActiveView("invoices");
+    try {
+      const invoice = await createInvoiceFromJob(job);
+      if (!invoice) return;
+      const result = await api<{ url?: string }>(`/api/payments/invoices/${invoice.id}/checkout-session`, { method: "POST" });
+      if (result.url) {
+        window.location.assign(result.url);
+        return;
+      }
+      setActiveView("invoices");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to open Stripe payment checkout");
+    }
   }
 
   function openJobFromSlot(slot: { date: Date; hour: number }) {
@@ -2497,6 +2535,7 @@ export function App() {
                       <span className="breadcrumb">Customers / {customerName(selectedJob.customer)} / Jobs / Job #{selectedJob.jobNumber}</span>
                       <h1>Job #{selectedJob.jobNumber} • Job for {customerName(selectedJob.customer)}</h1>
                       <span className={`status-pill job-status-${selectedJob.status.toLowerCase()}`}>{selectedJob.status === "DISPATCHED" ? "On My Way" : statusLabel(selectedJob.status)}</span>
+                      {detailSavedMessage && <span className="saved-chip">{detailSavedMessage}</span>}
                     </div>
                     <div className="job-detail-actions">
                       <button className="outline-button" type="button" onClick={() => addAppointmentForJob(selectedJob)}><CalendarDays size={17} /> Add Appointment</button>
@@ -2535,14 +2574,22 @@ export function App() {
                         {!!selectedJob.tags?.length ? (
                           <div className="job-detail-tags">{selectedJob.tags.map((tag) => <span key={tag}>{tag}<button type="button" onClick={() => removeJobDetailTag(selectedJob, tag)}>x</button></span>)}</div>
                         ) : <p className="empty">No tags added.</p>}
-                        <form className="detail-inline-form" onSubmit={(event) => { event.preventDefault(); addJobDetailTag(selectedJob); }}>
+                        <form className="detail-inline-form single" onSubmit={(event) => { event.preventDefault(); addJobDetailTag(selectedJob); }}>
                           <input
                             list="job-detail-tags-list"
                             placeholder="Add tag and press Enter"
                             value={detailTagDraft}
                             onChange={(event) => setDetailTagDraft(event.target.value)}
+                            onBlur={() => {
+                              if (detailTagDraft.trim()) addJobDetailTag(selectedJob);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                addJobDetailTag(selectedJob);
+                              }
+                            }}
                           />
-                          <button className="outline-button" type="submit"><Plus size={16} /> Add</button>
                         </form>
                         <datalist id="job-detail-tags-list">
                           {crmOptions.tags.map((tag) => <option value={tag} key={tag} />)}
@@ -2551,14 +2598,22 @@ export function App() {
 
                       <section className="panel job-detail-meta">
                         <div className="panel-header"><h2><Navigation size={18} /> Lead source</h2></div>
-                        <form className="detail-inline-form" onSubmit={(event) => { event.preventDefault(); saveJobDetailLeadSource(selectedJob); }}>
+                        <form className="detail-inline-form single" onSubmit={(event) => { event.preventDefault(); saveJobDetailLeadSource(selectedJob); }}>
                           <input
                             list="job-detail-leads-list"
                             value={detailLeadSource}
                             onChange={(event) => setDetailLeadSource(event.target.value)}
+                            onBlur={() => {
+                              if (detailLeadSource.trim() !== (selectedJob.leadSource || "")) saveJobDetailLeadSource(selectedJob);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                saveJobDetailLeadSource(selectedJob);
+                              }
+                            }}
                             placeholder="Lead source"
                           />
-                          <button className="outline-button" type="submit">Save</button>
                         </form>
                         <datalist id="job-detail-leads-list">
                           {crmOptions.leadSources.map((source) => <option value={source} key={source} />)}
@@ -2587,6 +2642,9 @@ export function App() {
                           placeholder="Add the visible summary of work for this job"
                           value={detailSummary}
                           onChange={(event) => setDetailSummary(event.target.value)}
+                          onBlur={() => {
+                            if (detailSummary.trim() !== (selectedJob.description || "")) saveJobSummary(selectedJob);
+                          }}
                         />
                       </section>
 
@@ -2610,6 +2668,13 @@ export function App() {
                         <div className="panel-header"><h2>Field Tech Status</h2><UserPlus size={18} /></div>
                         <div className="field-tech-status">
                           <strong>{selectedJob.technician?.name ?? "Unassigned"}</strong>
+                          <label>
+                            Assign tech
+                            <select value={selectedJob.technician?.id ?? ""} onChange={(event) => assignJobTechnician(selectedJob, event.target.value)}>
+                              <option value="">Unassigned</option>
+                              {technicians.filter((tech) => tech.active && tech.fieldTech).map((tech) => <option value={tech.id} key={tech.id}>{tech.name}</option>)}
+                            </select>
+                          </label>
                           <span>{selectedJob.technician ? statusLabel(selectedJob.status) : "Needs assignment"}</span>
                           <span>Total labor cost</span>
                           <strong>$0.00</strong>
