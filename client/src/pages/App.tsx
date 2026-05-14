@@ -221,6 +221,7 @@ type CustomerForm = {
 type Job = {
   id: string;
   jobNumber: number;
+  createdAt?: string;
   title: string;
   jobType: string;
   leadSource?: string;
@@ -518,6 +519,10 @@ function formatDate(value?: string) {
   return value ? new Date(value).toLocaleDateString([], { month: "2-digit", day: "2-digit", year: "numeric" }) : "Not recorded";
 }
 
+function formatDateTime(value?: string) {
+  return value ? new Date(value).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Not recorded";
+}
+
 function dollarsToCents(value: string) {
   return Math.round(Number(value || "0") * 100);
 }
@@ -652,9 +657,12 @@ export function App() {
   const [jobNoteTarget, setJobNoteTarget] = useState<"job" | "customer">("job");
   const [detailTagDraft, setDetailTagDraft] = useState("");
   const [detailLeadSource, setDetailLeadSource] = useState("");
+  const [detailLeadFocused, setDetailLeadFocused] = useState(false);
   const [detailPrivateNote, setDetailPrivateNote] = useState("");
   const [detailSummary, setDetailSummary] = useState("");
   const [detailSavedMessage, setDetailSavedMessage] = useState("");
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
+  const [invoiceActionMessage, setInvoiceActionMessage] = useState("");
   const [jobTemplateId, setJobTemplateId] = useState("");
   const [jobTemplates, setJobTemplates] = useState<JobTemplate[]>(defaultJobTemplates);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
@@ -833,6 +841,13 @@ export function App() {
       .filter((source) => source.toLowerCase().includes(query) && source !== jobForm.leadSource)
       .slice(0, 8);
   }, [crmOptions.leadSources, jobForm.leadSource]);
+  const detailLeadSuggestions = useMemo(() => {
+    const query = detailLeadSource.trim().toLowerCase();
+    return crmOptions.leadSources
+      .filter((source) => (!query || source.toLowerCase().includes(query)) && source !== detailLeadSource)
+      .slice(0, 8);
+  }, [crmOptions.leadSources, detailLeadSource]);
+  const selectedInvoice = invoices.find((invoice) => invoice.id === selectedInvoiceId) ?? null;
   const filteredJobs = useMemo(() => {
     const query = jobSearch.trim().toLowerCase();
     return jobs.filter((job) => {
@@ -985,12 +1000,25 @@ export function App() {
 
   useEffect(() => {
     if (!selectedJob) return;
-    setDetailLeadSource(selectedJob.leadSource || "");
-    setDetailSummary(selectedJob.description || "");
     setDetailPrivateNote("");
     setDetailTagDraft("");
     setDetailSavedMessage("");
-  }, [selectedJob?.id, selectedJob?.leadSource, selectedJob?.description]);
+    setDetailLeadFocused(false);
+  }, [selectedJob?.id]);
+
+  useEffect(() => {
+    if (!selectedJob) return;
+    setDetailLeadSource(selectedJob.leadSource || "");
+  }, [selectedJob?.id, selectedJob?.leadSource]);
+
+  useEffect(() => {
+    if (!selectedJob) return;
+    setDetailSummary(selectedJob.description || "");
+  }, [selectedJob?.id, selectedJob?.description]);
+
+  useEffect(() => {
+    setInvoiceActionMessage("");
+  }, [selectedInvoiceId]);
 
   useEffect(() => {
     if (!token) return;
@@ -1817,6 +1845,15 @@ export function App() {
     await saveJobOption("leadSource", cleanName);
     await updateJobDetails(job, { leadSource: cleanName });
     setDetailSavedMessage(`Lead source saved as ${cleanName}`);
+    setDetailLeadFocused(false);
+  }
+
+  async function selectJobDetailLeadSource(job: Job, source: string) {
+    setDetailLeadSource(source);
+    setDetailLeadFocused(false);
+    await saveJobOption("leadSource", source);
+    await updateJobDetails(job, { leadSource: source });
+    setDetailSavedMessage(`Lead source saved as ${source}`);
   }
 
   async function saveJobSummary(job: Job) {
@@ -1829,10 +1866,9 @@ export function App() {
     if (!content) return;
     await api(`/api/jobs/${job.id}/notes`, {
       method: "POST",
-      body: JSON.stringify({ author: "Office", content })
+      body: JSON.stringify({ author: currentRole ? statusLabel(currentRole) : "Office", content })
     });
-    const existingNotes = job.internalNotes?.trim();
-    await updateJobDetails(job, { internalNotes: existingNotes ? `${existingNotes}\n\n${content}` : content });
+    await loadDashboard();
     setDetailPrivateNote("");
     setDetailSavedMessage("Private note added");
   }
@@ -1877,7 +1913,10 @@ export function App() {
 
   async function createInvoiceFromJob(job: Job) {
     const existingInvoice = job.invoices?.[0];
-    if (existingInvoice) return existingInvoice;
+    if (existingInvoice) {
+      setDetailSavedMessage(`Invoice #${existingInvoice.invoiceNumber} opened`);
+      return existingInvoice;
+    }
     const fallbackLineItem: NonNullable<Job["lineItems"]>[number] = {
       id: "fallback",
       category: "service",
@@ -1906,18 +1945,35 @@ export function App() {
     setJobs((current) => current.map((item) => item.id === job.id ? { ...item, invoices: [result.invoice, ...(item.invoices ?? [])] } : item));
     setSelectedJobId(job.id);
     await loadDashboard();
+    setDetailSavedMessage(`Invoice #${result.invoice.invoiceNumber} created`);
     return result.invoice;
+  }
+
+  async function openJobInvoice(job: Job) {
+    const invoice = await createInvoiceFromJob(job);
+    if (!invoice) return;
+    setSelectedInvoiceId(invoice.id);
+    setActiveView("invoices");
   }
 
   async function openJobPayment(job: Job) {
     try {
       const invoice = await createInvoiceFromJob(job);
       if (!invoice) return;
+      await openInvoicePayment(invoice);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to open Stripe payment checkout");
+    }
+  }
+
+  async function openInvoicePayment(invoice: Invoice) {
+    try {
       const result = await api<{ url?: string }>(`/api/payments/invoices/${invoice.id}/checkout-session`, { method: "POST" });
       if (result.url) {
         window.location.assign(result.url);
         return;
       }
+      setSelectedInvoiceId(invoice.id);
       setActiveView("invoices");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to open Stripe payment checkout");
@@ -2542,7 +2598,7 @@ export function App() {
                       <button className="outline-button" type="button" onClick={() => updateJobStatus(selectedJob, "DISPATCHED")}><Navigation size={17} /> On My Way</button>
                       <button className="outline-button" type="button" onClick={() => updateJobStatus(selectedJob, "IN_PROGRESS")}><Clock3 size={17} /> Start</button>
                       <button className="outline-button" type="button" onClick={() => updateJobStatus(selectedJob, "COMPLETED")}><CheckCheck size={17} /> Finish</button>
-                      <button className="primary" type="button" onClick={() => createInvoiceFromJob(selectedJob)}><ReceiptText size={17} /> Invoice</button>
+                      <button className="primary" type="button" onClick={() => openJobInvoice(selectedJob)}><ReceiptText size={17} /> Invoice</button>
                       <button className="primary" type="button" onClick={() => openJobPayment(selectedJob)}><WalletCards size={17} /> Pay</button>
                     </div>
                   </section>
@@ -2598,26 +2654,35 @@ export function App() {
 
                       <section className="panel job-detail-meta">
                         <div className="panel-header"><h2><Navigation size={18} /> Lead source</h2></div>
-                        <form className="detail-inline-form single" onSubmit={(event) => { event.preventDefault(); saveJobDetailLeadSource(selectedJob); }}>
-                          <input
-                            list="job-detail-leads-list"
-                            value={detailLeadSource}
-                            onChange={(event) => setDetailLeadSource(event.target.value)}
-                            onBlur={() => {
-                              if (detailLeadSource.trim() !== (selectedJob.leadSource || "")) saveJobDetailLeadSource(selectedJob);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                saveJobDetailLeadSource(selectedJob);
-                              }
-                            }}
-                            placeholder="Lead source"
-                          />
-                        </form>
-                        <datalist id="job-detail-leads-list">
-                          {crmOptions.leadSources.map((source) => <option value={source} key={source} />)}
-                        </datalist>
+                        <div className="typeahead detail-typeahead">
+                          <form className="detail-inline-form single" onSubmit={(event) => { event.preventDefault(); saveJobDetailLeadSource(selectedJob); }}>
+                            <input
+                              value={detailLeadSource}
+                              onFocus={() => setDetailLeadFocused(true)}
+                              onChange={(event) => { setDetailLeadSource(event.target.value); setDetailLeadFocused(true); }}
+                              onBlur={() => {
+                                window.setTimeout(() => setDetailLeadFocused(false), 150);
+                                if (detailLeadSource.trim() !== (selectedJob.leadSource || "")) saveJobDetailLeadSource(selectedJob);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  saveJobDetailLeadSource(selectedJob);
+                                }
+                              }}
+                              placeholder="Lead source"
+                            />
+                          </form>
+                          {detailLeadFocused && detailLeadSuggestions.length > 0 && (
+                            <div className="typeahead-results">
+                              {detailLeadSuggestions.map((source) => (
+                                <button type="button" key={source} onMouseDown={(event) => event.preventDefault()} onClick={() => selectJobDetailLeadSource(selectedJob, source)}>
+                                  <strong>{source}</strong>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </section>
                     </aside>
 
@@ -2631,7 +2696,7 @@ export function App() {
                         <button type="button" onClick={() => updateJobStatus(selectedJob, "DISPATCHED")}><Navigation size={22} /><strong>OMW</strong><span>Dispatch tech</span></button>
                         <button type="button" onClick={() => updateJobStatus(selectedJob, "IN_PROGRESS")}><Clock3 size={22} /><strong>Start</strong><span>Begin work</span></button>
                         <button type="button" onClick={() => updateJobStatus(selectedJob, "COMPLETED")}><CheckCheck size={22} /><strong>Finish</strong><span>Complete job</span></button>
-                        <button type="button" onClick={() => createInvoiceFromJob(selectedJob)}><ReceiptText size={22} /><strong>Invoice</strong><span>{selectedJobInvoice ? `#${selectedJobInvoice.invoiceNumber}` : "Create draft"}</span></button>
+                        <button type="button" onClick={() => openJobInvoice(selectedJob)}><ReceiptText size={22} /><strong>Invoice</strong><span>{selectedJobInvoice ? `#${selectedJobInvoice.invoiceNumber}` : "Create draft"}</span></button>
                         <button type="button" onClick={() => openJobPayment(selectedJob)}><WalletCards size={22} /><strong>Pay</strong><span>Take payment</span></button>
                       </section>
 
@@ -2646,6 +2711,7 @@ export function App() {
                             if (detailSummary.trim() !== (selectedJob.description || "")) saveJobSummary(selectedJob);
                           }}
                         />
+                        {detailSavedMessage === "Summary of work saved" && <p className="inline-confirm">Saved</p>}
                       </section>
 
                       <section className="panel">
@@ -2685,7 +2751,7 @@ export function App() {
                         <div className="panel-header">
                           <h2>Invoice</h2>
                           <div className="action-buttons">
-                            <button className="outline-button" type="button" onClick={() => createInvoiceFromJob(selectedJob)}>{selectedJobInvoice ? "Refresh invoice" : "Create invoice"}</button>
+                            <button className="outline-button" type="button" onClick={() => openJobInvoice(selectedJob)}>{selectedJobInvoice ? "View invoice" : "Create invoice"}</button>
                             <button className="primary" type="button" onClick={() => openJobPayment(selectedJob)}>Pay</button>
                           </div>
                         </div>
@@ -2720,20 +2786,34 @@ export function App() {
                           value={detailPrivateNote}
                           onChange={(event) => setDetailPrivateNote(event.target.value)}
                         />
-                        {selectedJob.internalNotes && <p className="job-detail-note">{selectedJob.internalNotes}</p>}
+                        {detailSavedMessage === "Private note added" && <p className="inline-confirm">Private note added</p>}
+                        <div className="job-note-list">
+                          {(selectedJob.notes ?? []).filter((note) => note.author !== "System").map((note) => (
+                            <article key={note.id}>
+                              <strong>{note.author}</strong>
+                              <span>{formatDateTime(note.createdAt)}</span>
+                              <p>{note.content}</p>
+                            </article>
+                          ))}
+                          {selectedJob.internalNotes && (
+                            <article>
+                              <strong>Legacy private notes</strong>
+                              <span>Imported note</span>
+                              <p>{selectedJob.internalNotes}</p>
+                            </article>
+                          )}
+                          {!selectedJob.internalNotes && !(selectedJob.notes ?? []).some((note) => note.author !== "System") && <p className="empty">No private notes yet.</p>}
+                        </div>
                       </section>
 
                       <section className="panel">
                         <div className="panel-header"><h2>Activity Feed</h2><MoreHorizontal size={18} /></div>
                         <div className="activity-feed">
-                          <p><Wrench size={17} /> Job #{selectedJob.jobNumber} created: total = {money.format(jobInvoiceTotal(selectedJob) / 100)}</p>
-                          {selectedJob.scheduledStart && <p><CalendarDays size={17} /> Job scheduled for {new Date(selectedJob.scheduledStart).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>}
-                          {selectedJob.status === "DISPATCHED" && <p><Navigation size={17} /> Technician marked on the way.</p>}
-                          {selectedJob.status === "IN_PROGRESS" && <p><Clock3 size={17} /> Job marked started.</p>}
-                          {selectedJob.status === "COMPLETED" && <p><CheckCheck size={17} /> Job marked finished.</p>}
-                          {selectedJob.technician && <p><UserPlus size={17} /> Assigned to {selectedJob.technician.name}</p>}
-                          {(selectedJob.notes ?? []).map((note) => <p key={note.id}><StickyNote size={17} /> {note.content}</p>)}
-                          {selectedJobInvoice && <p><ReceiptText size={17} /> Invoice #{selectedJobInvoice.invoiceNumber} linked to job.</p>}
+                          <article><Wrench size={17} /><div><strong>Job #{selectedJob.jobNumber} created</strong><span>{formatDateTime(selectedJob.createdAt)} / total = {money.format(jobInvoiceTotal(selectedJob) / 100)}</span></div></article>
+                          {selectedJob.scheduledStart && <article><CalendarDays size={17} /><div><strong>Job scheduled</strong><span>{formatDateTime(selectedJob.scheduledStart)}</span></div></article>}
+                          {selectedJob.technician && <article><UserPlus size={17} /><div><strong>Assigned to {selectedJob.technician.name}</strong><span>{formatDateTime(selectedJob.createdAt)}</span></div></article>}
+                          {(selectedJob.notes ?? []).map((note) => <article key={note.id}><StickyNote size={17} /><div><strong>{note.author}</strong><span>{formatDateTime(note.createdAt)}</span><p>{note.content}</p></div></article>)}
+                          {selectedJobInvoice && <article><ReceiptText size={17} /><div><strong>Invoice #{selectedJobInvoice.invoiceNumber} linked</strong><span>{formatDateTime(selectedJobInvoice.createdAt)}</span></div></article>}
                         </div>
                       </section>
                     </main>
@@ -4197,28 +4277,50 @@ export function App() {
         {activeView === "invoices" && (
           <div className="content-grid">
             <section className="panel">
-              <div className="panel-header"><h2>Create Invoice</h2><CreditCard size={18} /></div>
-              <form className="record-form" onSubmit={createInvoice}>
-                <select value={invoiceForm.customerId} onChange={(event) => setInvoiceForm({ ...invoiceForm, customerId: event.target.value })} required>
-                  <option value="">Select customer</option>
-                  {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.firstName} {customer.lastName}</option>)}
-                </select>
-                <select value={invoiceForm.jobId} onChange={(event) => setInvoiceForm({ ...invoiceForm, jobId: event.target.value })}>
-                  <option value="">No job attached</option>
-                  {jobs.filter((job) => !invoiceForm.customerId || job.customer.id === invoiceForm.customerId).map((job) => <option key={job.id} value={job.id}>#{job.jobNumber} {job.title}</option>)}
-                </select>
-                <input placeholder="Line item" value={invoiceForm.itemName} onChange={(event) => setInvoiceForm({ ...invoiceForm, itemName: event.target.value })} required />
-                <input placeholder="Quantity" value={invoiceForm.quantity} onChange={(event) => setInvoiceForm({ ...invoiceForm, quantity: event.target.value })} required />
-                <input placeholder="Unit price, dollars" value={invoiceForm.unitPrice} onChange={(event) => setInvoiceForm({ ...invoiceForm, unitPrice: event.target.value })} required />
-                <input placeholder="Tax, dollars" value={invoiceForm.tax} onChange={(event) => setInvoiceForm({ ...invoiceForm, tax: event.target.value })} />
-                <button className="primary" type="submit">Create invoice</button>
-              </form>
+              {selectedInvoice ? (
+                <>
+                  <div className="panel-header"><h2>Invoice #{selectedInvoice.invoiceNumber}</h2><CreditCard size={18} /></div>
+                  <div className="invoice-detail-card">
+                    <dl>
+                      <dt>Customer</dt><dd>{customerName(selectedInvoice.customer)}</dd>
+                      <dt>Status</dt><dd>{statusLabel(selectedInvoice.status)}</dd>
+                      <dt>Created</dt><dd>{formatDateTime(selectedInvoice.createdAt)}</dd>
+                      <dt>Total</dt><dd>{money.format(selectedInvoice.total / 100)}</dd>
+                    </dl>
+                    <div className="action-buttons">
+                      <button className="outline-button" type="button" onClick={() => setInvoiceActionMessage(`Invoice #${selectedInvoice.invoiceNumber} is ready to email once email delivery is connected.`)}><Mail size={17} /> Email invoice</button>
+                      <button className="outline-button" type="button" onClick={() => setInvoiceActionMessage(`Invoice #${selectedInvoice.invoiceNumber} is ready to text once SMS delivery is connected.`)}><MessageSquareText size={17} /> Text invoice</button>
+                      <button className="primary" type="button" onClick={() => openInvoicePayment(selectedInvoice)}><WalletCards size={17} /> Pay</button>
+                    </div>
+                    {invoiceActionMessage && <p className="inline-confirm">{invoiceActionMessage}</p>}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="panel-header"><h2>Create Invoice</h2><CreditCard size={18} /></div>
+                  <form className="record-form" onSubmit={createInvoice}>
+                    <select value={invoiceForm.customerId} onChange={(event) => setInvoiceForm({ ...invoiceForm, customerId: event.target.value })} required>
+                      <option value="">Select customer</option>
+                      {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.firstName} {customer.lastName}</option>)}
+                    </select>
+                    <select value={invoiceForm.jobId} onChange={(event) => setInvoiceForm({ ...invoiceForm, jobId: event.target.value })}>
+                      <option value="">No job attached</option>
+                      {jobs.filter((job) => !invoiceForm.customerId || job.customer.id === invoiceForm.customerId).map((job) => <option key={job.id} value={job.id}>#{job.jobNumber} {job.title}</option>)}
+                    </select>
+                    <input placeholder="Line item" value={invoiceForm.itemName} onChange={(event) => setInvoiceForm({ ...invoiceForm, itemName: event.target.value })} required />
+                    <input placeholder="Quantity" value={invoiceForm.quantity} onChange={(event) => setInvoiceForm({ ...invoiceForm, quantity: event.target.value })} required />
+                    <input placeholder="Unit price, dollars" value={invoiceForm.unitPrice} onChange={(event) => setInvoiceForm({ ...invoiceForm, unitPrice: event.target.value })} required />
+                    <input placeholder="Tax, dollars" value={invoiceForm.tax} onChange={(event) => setInvoiceForm({ ...invoiceForm, tax: event.target.value })} />
+                    <button className="primary" type="submit">Create invoice</button>
+                  </form>
+                </>
+              )}
             </section>
             <section className="panel wide">
               <div className="panel-header"><h2>Invoices</h2><CreditCard size={18} /></div>
               <div className="table-list">
                 {invoices.map((invoice) => (
-                  <article key={invoice.id}>
+                  <article key={invoice.id} className="clickable-row" onClick={() => setSelectedInvoiceId(invoice.id)}>
                     <div>
                       <strong>Invoice #{invoice.invoiceNumber}</strong>
                       <span>{invoice.customer.firstName} {invoice.customer.lastName} / {money.format(invoice.total / 100)} / {invoice.status}</span>

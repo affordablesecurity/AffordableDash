@@ -1409,6 +1409,42 @@ textarea {
   gap: 8px;
 }
 
+.activity-feed article {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 10px;
+  border: 1px solid #e8ebf3;
+  border-radius: 10px;
+  background: #fbfcff;
+  padding: 11px 12px;
+}
+
+.invoice-detail-card {
+  display: grid;
+  gap: 18px;
+}
+
+.invoice-detail-card dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.invoice-detail-card dt {
+  color: #7b86a2;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.invoice-detail-card dd {
+  margin: 4px 0 0;
+  color: #171b2a;
+  font-weight: 900;
+}
+
 .job-detail-hero {
   display: flex;
   align-items: center;
@@ -1487,6 +1523,49 @@ textarea {
   padding-top: 14px;
   white-space: pre-wrap;
   color: #4f5a72;
+}
+
+.job-note-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.job-note-list article {
+  border: 1px solid #e8ebf3;
+  border-radius: 10px;
+  background: #fbfcff;
+  padding: 12px;
+}
+
+.job-note-list strong,
+.activity-feed strong {
+  color: #171b2a;
+}
+
+.job-note-list span,
+.activity-feed span {
+  display: block;
+  margin-top: 3px;
+  color: #7b86a2;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.job-note-list p,
+.activity-feed p {
+  display: block;
+  margin: 8px 0 0;
+  color: #4f5a72;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.inline-confirm {
+  margin: 10px 0 0;
+  color: #087f4f;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .detail-inline-form {
