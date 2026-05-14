@@ -1158,6 +1158,211 @@ textarea {
   padding: 22px 14px;
 }
 
+.service-plans-page,
+.service-plan-form-stack {
+  display: grid;
+  gap: 20px;
+}
+
+.service-plan-dashboard {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 20px;
+}
+
+.recurring-card,
+.due-billing-card,
+.unscheduled-card {
+  grid-column: 2;
+}
+
+.unscheduled-card {
+  grid-column: 1 / -1;
+}
+
+.plan-summary-card,
+.templates-card {
+  grid-column: 1;
+}
+
+.plan-summary-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 18px;
+  align-items: center;
+}
+
+.plan-summary-body div:first-child {
+  display: grid;
+  gap: 6px;
+}
+
+.plan-summary-body strong {
+  font-size: 26px;
+}
+
+.plan-summary-body span,
+.plan-template-list span {
+  color: #6f7892;
+}
+
+.donut-chart {
+  width: 132px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: conic-gradient(#1477c9 0 var(--donut-a), #1eb052 var(--donut-a) 100%);
+  position: relative;
+}
+
+.donut-chart::after {
+  content: "";
+  position: absolute;
+  inset: 26px;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.mini-bar-chart {
+  min-height: 210px;
+  display: flex;
+  align-items: flex-end;
+  gap: 26px;
+  border-bottom: 1px solid #d8dce6;
+  padding: 18px 22px 26px;
+}
+
+.mini-bar-chart span {
+  width: 18px;
+  min-height: 6px;
+  border-radius: 5px 5px 0 0;
+  background: #18c85b;
+  position: relative;
+}
+
+.mini-bar-chart em {
+  position: absolute;
+  bottom: -24px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #5f6574;
+  font-style: normal;
+}
+
+.plan-template-list {
+  display: grid;
+  margin: -24px;
+}
+
+.plan-template-list article {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #eef1f6;
+  padding: 16px 18px;
+}
+
+.plan-template-list article > div {
+  display: grid;
+  gap: 5px;
+}
+
+.simple-table {
+  display: grid;
+  overflow-x: auto;
+}
+
+.simple-table-row {
+  min-width: 720px;
+  display: grid;
+  grid-template-columns: 1.1fr 0.8fr 0.9fr 0.8fr 0.7fr;
+  gap: 16px;
+  align-items: center;
+  border-bottom: 1px solid #eef1f6;
+  padding: 13px 0;
+}
+
+.service-visits-row,
+.unscheduled-card .simple-table-head {
+  grid-template-columns: 1fr 1.2fr 0.8fr 1.2fr 0.8fr 0.7fr;
+}
+
+.simple-table-head {
+  color: #5f6574;
+  font-weight: 900;
+}
+
+.service-plan-builder {
+  display: grid;
+  gap: 22px;
+}
+
+.plan-stepper {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+}
+
+.plan-stepper span {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #c9cdd5;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.plan-stepper span.active {
+  background: #1477c9;
+}
+
+.plan-builder-card {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 18px;
+  justify-self: center;
+  border: 1px solid #e6e9f1;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 16px 36px rgba(28, 33, 47, 0.08);
+  padding: 20px;
+}
+
+.plan-builder-card h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.service-plan-inline,
+.service-payment-row,
+.add-on-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 16px;
+  align-items: center;
+}
+
+.service-plan-inline.compact {
+  grid-template-columns: 72px auto;
+  justify-content: start;
+}
+
+.service-payment-row {
+  grid-template-columns: minmax(180px, 240px) 140px;
+}
+
+.service-payment-row span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.add-on-row {
+  grid-template-columns: minmax(0, 1.2fr) 150px minmax(0, 1.5fr) auto;
+}
+
 .job-create-layout {
   display: grid;
   grid-template-columns: minmax(320px, 360px) minmax(0, 1fr);
@@ -2950,6 +3155,7 @@ textarea {
 @media (max-width: 1100px) {
   .stats-grid,
   .content-grid,
+  .service-plan-dashboard,
   .job-create-layout,
   .settings-grid,
   .reports-page,
@@ -3054,6 +3260,9 @@ textarea {
   .new-client-grid,
   .schedule-form-grid,
   .line-item-row,
+  .service-plan-inline,
+  .service-payment-row,
+  .add-on-row,
   .template-editor-layout,
   .template-line-row,
   .template-table-row,
@@ -3069,6 +3278,14 @@ textarea {
   .line-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .recurring-card,
+  .due-billing-card,
+  .unscheduled-card,
+  .plan-summary-card,
+  .templates-card {
+    grid-column: auto;
   }
 
   .line-actions select {

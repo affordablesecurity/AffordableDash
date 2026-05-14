@@ -164,6 +164,37 @@ type PriceBookItem = {
   category?: PriceBookCategory;
 };
 
+type ServicePlanAddOn = {
+  item: string;
+  unitPrice: number;
+  description?: string;
+};
+
+type ServicePlanTemplate = {
+  id: string;
+  name: string;
+  description?: string;
+  businessUnit?: string;
+  visitsPerYear: number;
+  durationType: "indefinite" | "fixed";
+  billingInterval: "monthly" | "quarterly" | "semiannual" | "yearly";
+  recurringAmount: number;
+  cashAllowed: boolean;
+  discountDescription?: string;
+  discountPercent?: number;
+  addOns?: ServicePlanAddOn[];
+};
+
+type ServicePlanSummary = {
+  totalPlans: number;
+  servicePlanRevenueCents: number;
+  recurringRevenueCents: number;
+  dueForBillingCents: number;
+  upcomingScheduledVisits: number;
+  dueForBilling: Array<{ id: string; customer: string; phone: string; dueDate: string; status: string; amount: number }>;
+  upcomingVisits: Array<{ id: string; customerName: string; address: string; phone: string; plan: string; visitDate: string; reminderSent: boolean }>;
+};
+
 type CustomerForm = {
   firstName: string;
   lastName: string;
@@ -254,7 +285,7 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "customers" | "jobs" | "employees" | "invoices" | "reports" | "pricebook" | "settings" | "api";
+type View = "dispatch" | "schedule" | "customers" | "jobs" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
@@ -586,6 +617,23 @@ export function App() {
   const [priceBookSearch, setPriceBookSearch] = useState("");
   const [priceBookTab, setPriceBookTab] = useState<"items" | "categories">("items");
   const [priceBookModal, setPriceBookModal] = useState<"item" | "category" | null>(null);
+  const [servicePlanTemplates, setServicePlanTemplates] = useState<ServicePlanTemplate[]>([]);
+  const [servicePlanSummary, setServicePlanSummary] = useState<ServicePlanSummary | null>(null);
+  const [servicePlanMode, setServicePlanMode] = useState<"dashboard" | "create">("dashboard");
+  const [servicePlanStep, setServicePlanStep] = useState(1);
+  const [servicePlanForm, setServicePlanForm] = useState({
+    name: "",
+    description: "",
+    businessUnit: "Garage Door",
+    visitsPerYear: "1",
+    durationType: "indefinite" as "indefinite" | "fixed",
+    billingInterval: "yearly" as "monthly" | "quarterly" | "semiannual" | "yearly",
+    recurringAmount: "0",
+    cashAllowed: false,
+    discountDescription: "",
+    discountPercent: "",
+    addOns: [{ item: "", unitPrice: "0", description: "" }]
+  });
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("overview");
   const [settingsDraft, setSettingsDraft] = useState("");
   const [companySettingsForm, setCompanySettingsForm] = useState({
@@ -793,7 +841,7 @@ export function App() {
   ].filter(Boolean).join(", ") || "No company address saved yet";
 
   async function loadDashboard() {
-    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult] = await Promise.all([
       api<Summary>("/api/settings/summary"),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
@@ -801,7 +849,8 @@ export function App() {
       api<{ technicians: Technician[] }>("/api/technicians"),
       api<CrmOptions>("/api/settings/options"),
       api<{ categories: PriceBookCategory[]; items: PriceBookItem[] }>("/api/pricebook"),
-      api<{ templates: JobTemplate[] }>("/api/settings/job-templates")
+      api<{ templates: JobTemplate[] }>("/api/settings/job-templates"),
+      api<{ templates: ServicePlanTemplate[]; summary: ServicePlanSummary }>("/api/service-plans")
     ]);
 
     setSummary(summaryResult);
@@ -817,6 +866,8 @@ export function App() {
       ...savedTemplates,
       ...defaultJobTemplates.filter((template) => !savedTemplates.some((saved) => saved.name.toLowerCase() === template.name.toLowerCase()))
     ]);
+    setServicePlanTemplates(servicePlanResult.templates);
+    setServicePlanSummary(servicePlanResult.summary);
 
     const [locationResult, apiKeyResult, meResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
@@ -1308,6 +1359,64 @@ export function App() {
     setPriceBookItems((current) => current.filter((item) => item.id !== id));
   }
 
+  function resetServicePlanForm() {
+    setServicePlanForm({
+      name: "",
+      description: "",
+      businessUnit: "Garage Door",
+      visitsPerYear: "1",
+      durationType: "indefinite",
+      billingInterval: "yearly",
+      recurringAmount: "0",
+      cashAllowed: false,
+      discountDescription: "",
+      discountPercent: "",
+      addOns: [{ item: "", unitPrice: "0", description: "" }]
+    });
+    setServicePlanStep(1);
+  }
+
+  function updateServicePlanAddOn(index: number, patch: Partial<{ item: string; unitPrice: string; description: string }>) {
+    setServicePlanForm((current) => ({
+      ...current,
+      addOns: current.addOns.map((addOn, addOnIndex) => addOnIndex === index ? { ...addOn, ...patch } : addOn)
+    }));
+  }
+
+  async function createServicePlanTemplate(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    const result = await api<{ template: ServicePlanTemplate }>("/api/service-plans/templates", {
+      method: "POST",
+      body: JSON.stringify({
+        name: servicePlanForm.name,
+        description: servicePlanForm.description,
+        businessUnit: servicePlanForm.businessUnit,
+        visitsPerYear: Number(servicePlanForm.visitsPerYear || "0"),
+        durationType: servicePlanForm.durationType,
+        billingInterval: servicePlanForm.billingInterval,
+        recurringAmount: dollarsToCents(servicePlanForm.recurringAmount),
+        cashAllowed: servicePlanForm.cashAllowed,
+        discountDescription: servicePlanForm.discountDescription,
+        discountPercent: servicePlanForm.discountPercent ? Number(servicePlanForm.discountPercent) : undefined,
+        addOns: servicePlanForm.addOns
+          .filter((addOn) => addOn.item.trim())
+          .map((addOn) => ({ item: addOn.item, unitPrice: dollarsToCents(addOn.unitPrice), description: addOn.description }))
+      })
+    });
+    setServicePlanTemplates((current) => [result.template, ...current.filter((template) => template.id !== result.template.id)]);
+    await loadDashboard();
+    resetServicePlanForm();
+    setServicePlanMode("dashboard");
+  }
+
+  async function deleteServicePlanTemplate(id: string) {
+    setError("");
+    await api(`/api/service-plans/templates/${id}`, { method: "DELETE" });
+    setServicePlanTemplates((current) => current.filter((template) => template.id !== id));
+    await loadDashboard();
+  }
+
   function isStarterTemplate(id: string) {
     return defaultJobTemplates.some((template) => template.id === id);
   }
@@ -1629,6 +1738,7 @@ export function App() {
           <button><Clock3 size={18} /> Time Clock</button>
           <button><Laptop size={18} /> Online Booking</button>
           <button className={activeView === "pricebook" ? "active" : ""} onClick={() => setActiveView("pricebook")}><Tag size={18} /> Pricebook</button>
+          <button className={activeView === "servicePlans" ? "active" : ""} onClick={() => setActiveView("servicePlans")}><CheckCheck size={18} /> Service Plans</button>
 
           <span className="nav-section">More</span>
           <button className={activeView === "reports" ? "active" : ""} onClick={() => setActiveView("reports")}><ListChecks size={18} /> Reports</button>
@@ -1666,7 +1776,7 @@ export function App() {
         </header>
 
         <div className="page-titlebar">
-          <div className="breadcrumb"><Home size={17} /> {activeView === "dispatch" ? "Dashboard" : activeView[0].toUpperCase() + activeView.slice(1)}</div>
+          <div className="breadcrumb"><Home size={17} /> {activeView === "dispatch" ? "Dashboard" : activeView === "servicePlans" ? "Service Plans" : activeView[0].toUpperCase() + activeView.slice(1)}</div>
           <div className="topbar-actions">
             <select value={activeLocationId} onChange={(event) => switchLocation(event.target.value)}>
               {locations.map((item) => (
@@ -2731,6 +2841,208 @@ export function App() {
           </section>
         )}
 
+        {activeView === "servicePlans" && (
+          <section className="service-plans-page">
+            {servicePlanMode === "dashboard" ? (
+              <>
+                <div className="section-actions">
+                  <div className="breadcrumb"><CheckCheck size={17} /> Service Plans</div>
+                  <button className="primary" type="button" onClick={() => { resetServicePlanForm(); setServicePlanMode("create"); }}><Plus size={17} /> Service Plan</button>
+                </div>
+
+                <div className="stats-grid">
+                  <StatCard label="Service Plan Revenue" value={money.format((servicePlanSummary?.servicePlanRevenueCents ?? 0) / 100)} icon={CircleDollarSign} />
+                  <StatCard label="Recurring Revenue" value={money.format((servicePlanSummary?.recurringRevenueCents ?? 0) / 100)} icon={BadgeDollarSign} />
+                  <StatCard label="Due For Billing" value={money.format((servicePlanSummary?.dueForBillingCents ?? 0) / 100)} icon={WalletCards} />
+                  <StatCard label="Upcoming Scheduled Visits" value={String(servicePlanSummary?.upcomingScheduledVisits ?? 0)} icon={CalendarDays} />
+                </div>
+
+                <div className="service-plan-dashboard">
+                  <section className="panel plan-summary-card">
+                    <div className="panel-header">
+                      <h2>Plan Summary</h2>
+                      <button className="text-button" type="button">View all</button>
+                    </div>
+                    <div className="plan-summary-body">
+                      <div>
+                        <strong>{servicePlanSummary?.totalPlans ?? 0}</strong>
+                        <span>total plan templates</span>
+                        <strong>{money.format((servicePlanSummary?.servicePlanRevenueCents ?? 0) / 100)}</strong>
+                        <span>revenue all time</span>
+                      </div>
+                      <div className="donut-chart" style={{ "--donut-a": "70%", "--donut-b": "30%" } as CSSProperties} />
+                    </div>
+                  </section>
+
+                  <section className="panel recurring-card">
+                    <div className="panel-header">
+                      <h2>Recurring Revenue</h2>
+                      <button className="text-button" type="button">View reporting</button>
+                    </div>
+                    <div className="mini-bar-chart">
+                      {["May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month, index) => (
+                        <span key={month} style={{ height: `${index === 1 ? 42 : index === 5 ? 86 : 5}%` }}><em>{month}</em></span>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="panel templates-card">
+                    <div className="panel-header">
+                      <h2>Plan Templates</h2>
+                      <button className="icon-button" type="button" onClick={() => { resetServicePlanForm(); setServicePlanMode("create"); }} aria-label="Create service plan"><Plus size={18} /></button>
+                    </div>
+                    <div className="plan-template-list">
+                      {servicePlanTemplates.map((template) => (
+                        <article key={template.id}>
+                          <div>
+                            <strong>{template.name}</strong>
+                            <span>{template.visitsPerYear} visit{template.visitsPerYear === 1 ? "" : "s"} per year</span>
+                            <span>{template.durationType === "indefinite" ? "Indefinite" : "Fixed duration"} · {money.format(template.recurringAmount / 100)} / {template.billingInterval}</span>
+                          </div>
+                          <button className="text-button danger" type="button" onClick={() => deleteServicePlanTemplate(template.id)}><Trash2 size={16} /></button>
+                        </article>
+                      ))}
+                      {servicePlanTemplates.length === 0 && <p className="empty">No service plan templates yet.</p>}
+                    </div>
+                  </section>
+
+                  <section className="panel due-billing-card">
+                    <div className="panel-header">
+                      <h2>Due For Billing</h2>
+                      <button className="text-button" type="button">View more</button>
+                    </div>
+                    <div className="simple-table">
+                      <div className="simple-table-row simple-table-head">
+                        <span>Customer</span><span>Phone</span><span>Due date</span><span>Status</span><span>Amount</span>
+                      </div>
+                      {(servicePlanSummary?.dueForBilling ?? []).map((bill) => (
+                        <div className="simple-table-row" key={bill.id}>
+                          <span>{bill.customer}</span>
+                          <span>{bill.phone}</span>
+                          <span>{formatDate(bill.dueDate)}</span>
+                          <span>{bill.status}</span>
+                          <strong>{money.format(bill.amount / 100)}</strong>
+                        </div>
+                      ))}
+                      {!(servicePlanSummary?.dueForBilling.length) && <p className="empty table-empty">No upcoming bills due.</p>}
+                    </div>
+                  </section>
+
+                  <section className="panel unscheduled-card">
+                    <div className="panel-header">
+                      <h2>Unscheduled Visits</h2>
+                      <button className="text-button" type="button">View more</button>
+                    </div>
+                    <div className="simple-table">
+                      <div className="simple-table-row simple-table-head">
+                        <span>Customer Name</span><span>Address</span><span>Phone</span><span>Plan</span><span>Visit date</span><span>Reminder</span>
+                      </div>
+                      {(servicePlanSummary?.upcomingVisits ?? []).map((visit) => (
+                        <div className="simple-table-row service-visits-row" key={visit.id}>
+                          <span>{visit.customerName}</span>
+                          <span>{visit.address}</span>
+                          <span>{visit.phone}</span>
+                          <span>{visit.plan}</span>
+                          <span>{visit.visitDate}</span>
+                          <span>{visit.reminderSent ? "Sent" : "Not sent"}</span>
+                        </div>
+                      ))}
+                      {!(servicePlanSummary?.upcomingVisits.length) && <p className="empty table-empty">No unscheduled visits yet.</p>}
+                    </div>
+                  </section>
+                </div>
+              </>
+            ) : (
+              <form className="service-plan-builder" onSubmit={createServicePlanTemplate}>
+                <div className="section-actions">
+                  <div className="breadcrumb"><button className="text-button" type="button" onClick={() => setServicePlanMode("dashboard")}>Back</button> New service plan template</div>
+                  <div className="action-buttons">
+                    {servicePlanStep > 1 && <button className="outline-button" type="button" onClick={() => setServicePlanStep((step) => step - 1)}>Back</button>}
+                    {servicePlanStep < 3 ? (
+                      <button className="primary" type="button" onClick={() => setServicePlanStep((step) => step + 1)} disabled={servicePlanStep === 1 && !servicePlanForm.name.trim()}>Next</button>
+                    ) : (
+                      <button className="primary" type="submit">Create Plan</button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="plan-stepper">
+                  {[1, 2, 3].map((step) => <span key={step} className={servicePlanStep >= step ? "active" : ""}>{servicePlanStep > step ? "✓" : step}</span>)}
+                </div>
+
+                {servicePlanStep === 1 && (
+                  <div className="service-plan-form-stack">
+                    <section className="plan-builder-card">
+                      <h2>General</h2>
+                      <input placeholder="Plan name" value={servicePlanForm.name} onChange={(event) => setServicePlanForm({ ...servicePlanForm, name: event.target.value })} required />
+                      <textarea placeholder="Plan description" value={servicePlanForm.description} onChange={(event) => setServicePlanForm({ ...servicePlanForm, description: event.target.value })} />
+                    </section>
+                    <section className="plan-builder-card">
+                      <h2>Discount</h2>
+                      <label className="check-row"><input type="checkbox" checked={Boolean(servicePlanForm.discountDescription)} onChange={(event) => setServicePlanForm({ ...servicePlanForm, discountDescription: event.target.checked ? "Apply discount to jobs" : "", discountPercent: event.target.checked ? servicePlanForm.discountPercent : "" })} /> Apply discount to jobs</label>
+                      <div className="service-plan-inline">
+                        <input placeholder="Description" value={servicePlanForm.discountDescription} onChange={(event) => setServicePlanForm({ ...servicePlanForm, discountDescription: event.target.value })} />
+                        <input placeholder="Amount %" value={servicePlanForm.discountPercent} onChange={(event) => setServicePlanForm({ ...servicePlanForm, discountPercent: event.target.value })} />
+                      </div>
+                    </section>
+                    <section className="plan-builder-card">
+                      <h2>Business Unit</h2>
+                      <input placeholder="Business unit" value={servicePlanForm.businessUnit} onChange={(event) => setServicePlanForm({ ...servicePlanForm, businessUnit: event.target.value })} />
+                    </section>
+                  </div>
+                )}
+
+                {servicePlanStep === 2 && (
+                  <div className="service-plan-form-stack">
+                    <section className="plan-builder-card">
+                      <h2>Visits</h2>
+                      <div className="service-plan-inline compact">
+                        <input value={servicePlanForm.visitsPerYear} onChange={(event) => setServicePlanForm({ ...servicePlanForm, visitsPerYear: event.target.value })} />
+                        <span>per year</span>
+                      </div>
+                    </section>
+                    <section className="plan-builder-card">
+                      <h2>Duration</h2>
+                      <label className="check-row"><input type="radio" checked={servicePlanForm.durationType === "indefinite"} onChange={() => setServicePlanForm({ ...servicePlanForm, durationType: "indefinite" })} /> Continues until customer cancels</label>
+                      <label className="check-row"><input type="radio" checked={servicePlanForm.durationType === "fixed"} onChange={() => setServicePlanForm({ ...servicePlanForm, durationType: "fixed" })} /> Ends after a set duration</label>
+                    </section>
+                    <section className="plan-builder-card">
+                      <h2>Payment</h2>
+                      {([
+                        ["monthly", "Every month"],
+                        ["quarterly", "Every quarter"],
+                        ["semiannual", "Every 6 months"],
+                        ["yearly", "Every year"]
+                      ] as const).map(([value, label]) => (
+                        <label className="service-payment-row" key={value}>
+                          <span><input type="radio" checked={servicePlanForm.billingInterval === value} onChange={() => setServicePlanForm({ ...servicePlanForm, billingInterval: value })} /> {label}</span>
+                          <input placeholder="$0.00" value={servicePlanForm.billingInterval === value ? servicePlanForm.recurringAmount : ""} onChange={(event) => setServicePlanForm({ ...servicePlanForm, billingInterval: value, recurringAmount: event.target.value })} />
+                        </label>
+                      ))}
+                      <label className="check-row"><input type="checkbox" checked={servicePlanForm.cashAllowed} onChange={(event) => setServicePlanForm({ ...servicePlanForm, cashAllowed: event.target.checked })} /> payable by cash, check, other</label>
+                    </section>
+                  </div>
+                )}
+
+                {servicePlanStep === 3 && (
+                  <section className="plan-builder-card add-ons-card">
+                    <h2>Add-ons</h2>
+                    {servicePlanForm.addOns.map((addOn, index) => (
+                      <div className="add-on-row" key={index}>
+                        <input placeholder="Item" value={addOn.item} onChange={(event) => updateServicePlanAddOn(index, { item: event.target.value })} />
+                        <input placeholder="$0.00/mo" value={addOn.unitPrice} onChange={(event) => updateServicePlanAddOn(index, { unitPrice: event.target.value })} />
+                        <input placeholder="Description (optional)" value={addOn.description} onChange={(event) => updateServicePlanAddOn(index, { description: event.target.value })} />
+                        <button className="text-button danger" type="button" onClick={() => setServicePlanForm((current) => ({ ...current, addOns: current.addOns.filter((_item, addOnIndex) => addOnIndex !== index) }))}><Trash2 size={16} /></button>
+                      </div>
+                    ))}
+                    <button className="text-add-button" type="button" onClick={() => setServicePlanForm((current) => ({ ...current, addOns: [...current.addOns, { item: "", unitPrice: "0", description: "" }] }))}><Plus size={17} /> Item</button>
+                  </section>
+                )}
+              </form>
+            )}
+          </section>
+        )}
+
         {activeView === "settings" && (
           <section className="settings-page">
             <div className="section-actions">
@@ -2775,7 +3087,7 @@ export function App() {
                     <span className="settings-icon green"><ListChecks size={22} /></span>
                     <strong>Checklists</strong>
                   </button>
-                  <button type="button" className="settings-card" onClick={() => setSettingsSection("servicePlans")}>
+                  <button type="button" className="settings-card" onClick={() => setActiveView("servicePlans")}>
                     <span className="settings-icon yellow"><CheckCheck size={22} /></span>
                     <strong>Service Plans</strong>
                   </button>
@@ -2812,7 +3124,7 @@ export function App() {
                   <button onClick={() => setSettingsSection("jobTemplates")}>Job Templates</button>
                   <button onClick={() => setSettingsSection("jobTypes")}>Job Types</button>
                   <button onClick={() => setActiveView("pricebook")}>Price Book</button>
-                  <button onClick={() => setSettingsSection("servicePlans")}>Service Plans</button>
+                  <button onClick={() => setActiveView("servicePlans")}>Service Plans</button>
                   <span>Tags & Tools</span>
                   <button onClick={() => setSettingsSection("checklists")}>Checklists</button>
                   <button onClick={() => setSettingsSection("jobFields")}>Job Fields</button>
@@ -2942,7 +3254,7 @@ export function App() {
                   <button className="active" onClick={() => setSettingsSection("jobTemplates")}>Job Templates</button>
                   <button onClick={() => setSettingsSection("jobTypes")}>Job Types</button>
                   <button onClick={() => setActiveView("pricebook")}>Price Book</button>
-                  <button onClick={() => setSettingsSection("servicePlans")}>Service Plans</button>
+                  <button onClick={() => setActiveView("servicePlans")}>Service Plans</button>
                   <span>Tags & Tools</span>
                   <button onClick={() => setSettingsSection("checklists")}>Checklists</button>
                   <button onClick={() => setSettingsSection("jobFields")}>Job Fields</button>
@@ -3070,7 +3382,7 @@ export function App() {
                   <button onClick={() => setSettingsSection("jobTemplates")}>Job Templates</button>
                   <button className={settingsSection === "jobTypes" ? "active" : ""} onClick={() => setSettingsSection("jobTypes")}>Job Types</button>
                   <button onClick={() => setActiveView("pricebook")}>Price Book</button>
-                  <button className={settingsSection === "servicePlans" ? "active" : ""} onClick={() => setSettingsSection("servicePlans")}>Service Plans</button>
+                  <button onClick={() => setActiveView("servicePlans")}>Service Plans</button>
                   <span>Tags & Tools</span>
                   <button className={settingsSection === "checklists" ? "active" : ""} onClick={() => setSettingsSection("checklists")}>Checklists</button>
                   <button className={settingsSection === "jobFields" ? "active" : ""} onClick={() => setSettingsSection("jobFields")}>Job Fields</button>

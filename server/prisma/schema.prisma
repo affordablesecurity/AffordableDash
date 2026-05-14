@@ -99,6 +99,7 @@ model Location {
   apiKeys        LocationApiKey[]
   crmOptions     CrmOption[]
   jobTemplates   JobTemplate[]
+  servicePlanTemplates ServicePlanTemplate[]
   priceBookCategories PriceBookCategory[]
   priceBookItems      PriceBookItem[]
 
@@ -273,6 +274,29 @@ model JobTemplate {
 
   @@unique([locationId, name])
   @@index([locationId])
+}
+
+model ServicePlanTemplate {
+  id                  String   @id @default(cuid())
+  locationId          String
+  name                String
+  description         String?
+  businessUnit        String?
+  visitsPerYear       Int      @default(1)
+  durationType        String   @default("indefinite")
+  billingInterval     String   @default("yearly")
+  recurringAmount     Int      @default(0)
+  cashAllowed         Boolean  @default(false)
+  discountDescription String?
+  discountPercent     Int?
+  addOns              Json?
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  location            Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, name])
+  @@index([locationId, active])
 }
 
 model PriceBookCategory {
