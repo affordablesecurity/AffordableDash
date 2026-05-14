@@ -3,7 +3,8 @@ services:
     name: affordable-dash
     runtime: node
     plan: starter
-    buildCommand: npm install && npm run generate --workspace server && npm run build && npm run db:deploy --workspace server
+    buildCommand: npm install && npm run generate --workspace server && npm run build
+    preDeployCommand: npm run db:deploy --workspace server
     startCommand: npm run start --workspace server
     healthCheckPath: /health
     envVars:
