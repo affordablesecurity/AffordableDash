@@ -697,7 +697,6 @@ export function App() {
         : await signup({ name, email, username, password, companyName, locationName });
       setToken(result.token);
       updateToken(result.token);
-      if (result.locations) setLocations(result.locations);
       if (result.location) setActiveLocationId(result.location.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
