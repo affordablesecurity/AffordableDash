@@ -384,7 +384,7 @@ export function App() {
                     <h3>{job.title}</h3>
                     <p>{job.customer.firstName} {job.customer.lastName} / {job.jobType}</p>
                   </div>
-                  <span className="status-pill">{job.status.replaceAll("_", " ")}</span>
+                  <span className="status-pill">{job.status.replace(/_/g, " ")}</span>
                 </article>
               ))}
               {scheduledJobs.length === 0 && <p className="empty">No scheduled jobs yet.</p>}
