@@ -1369,10 +1369,23 @@ textarea {
   gap: 20px;
 }
 
+.compact-job-create {
+  max-width: 1280px;
+  grid-template-columns: 300px minmax(0, 1fr);
+  align-items: start;
+  margin: 0 auto;
+}
+
 .job-create-column {
   display: grid;
   align-content: start;
   gap: 20px;
+}
+
+.job-main-column {
+  display: grid;
+  align-content: start;
+  gap: 16px;
 }
 
 .sms-toggle {
@@ -1427,6 +1440,162 @@ textarea {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.schedule-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.schedule-card .panel-header,
+.job-detail-card .panel-header,
+.job-chip-card .panel-header,
+.private-note-panel .panel-header {
+  padding: 14px 16px;
+  margin: 0;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.schedule-card .panel-header,
+.job-chip-card .panel-header {
+  align-items: center;
+}
+
+.subtle-icon {
+  width: 34px;
+  height: 34px;
+  color: #555c6d;
+  background: transparent;
+}
+
+.schedule-compact {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.schedule-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 96px;
+  gap: 10px;
+  align-items: center;
+}
+
+.schedule-row span {
+  color: #272d3d;
+  font-weight: 700;
+}
+
+.schedule-row input,
+.schedule-team-row select {
+  width: 100%;
+}
+
+.anytime-row {
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 44px;
+  color: #272d3d;
+  font-weight: 700;
+}
+
+.anytime-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: #3f3df2;
+}
+
+.schedule-team-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.schedule-team-row svg {
+  color: #101421;
+}
+
+.unassigned-pill {
+  width: fit-content;
+  margin-left: 38px;
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: #eeeeef;
+  color: #272d3d;
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.job-collapsed-row {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #e6e9f1;
+  border-radius: 8px;
+  padding: 0 16px;
+  background: #ffffff;
+  color: #7b849a;
+  font-weight: 800;
+  box-shadow: 0 10px 24px rgba(28, 33, 47, 0.06);
+  cursor: pointer;
+}
+
+.job-collapsed-row svg:last-child {
+  color: #006bcf;
+}
+
+.file-row input {
+  display: none;
+}
+
+.job-detail-card,
+.job-chip-card,
+.private-note-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.compact-fields {
+  padding: 16px;
+}
+
+.job-chip-card > input,
+.job-chip-card .tag-editor {
+  margin: 16px;
+}
+
+.option-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.option-chip {
+  border: 1px solid #dfe4f1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4f5a72;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.option-chip:hover,
+.option-chip.selected {
+  border-color: #3f3df2;
+  background: #f0efff;
+  color: #3733ff;
+}
+
+.private-note-panel textarea {
+  min-height: 56px;
+  margin: 16px;
+  width: calc(100% - 32px);
 }
 
 .span-2 {
@@ -3259,6 +3428,7 @@ textarea {
   .jobs-tools,
   .new-client-grid,
   .schedule-form-grid,
+  .schedule-row,
   .line-item-row,
   .service-plan-inline,
   .service-payment-row,
@@ -3272,6 +3442,11 @@ textarea {
   .color-input-row,
   .category-grid {
     grid-template-columns: 1fr;
+  }
+
+  .anytime-row,
+  .unassigned-pill {
+    margin-left: 0;
   }
 
   .line-category-head,

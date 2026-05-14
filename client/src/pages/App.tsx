@@ -27,6 +27,7 @@ import {
   Navigation,
   Paperclip,
   Percent,
+  Pencil,
   Phone,
   Plus,
   ReceiptText,
@@ -1288,6 +1289,13 @@ export function App() {
     await saveJobOption("tag", cleanName);
   }
 
+  async function addJobLeadSource(name: string) {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    setJobForm((current) => ({ ...current, leadSource: cleanName }));
+    await saveJobOption("leadSource", cleanName);
+  }
+
   function selectJobCustomer(customer: Customer) {
     setCreateClientInline(false);
     setJobForm((current) => ({ ...current, customerId: customer.id, addressId: customer.addresses?.[0]?.id ?? "" }));
@@ -2279,7 +2287,7 @@ export function App() {
                 </div>
               </div>
 
-              <form id="create-job-form" className="job-create-layout" onSubmit={createJob}>
+              <form id="create-job-form" className="job-create-layout compact-job-create" onSubmit={createJob}>
                 <div className="job-create-column">
                   <section className="panel sms-toggle">
                     <strong>Send "Scheduled" SMS</strong>
@@ -2289,7 +2297,7 @@ export function App() {
                     </label>
                   </section>
 
-                  <section className="panel">
+                  <section className="panel job-side-card">
                     <div className="panel-header"><h2><Users size={18} /> Customer</h2>{selectedJobCustomer && <button className="text-button" type="button" onClick={clearJobCustomer}>Clear</button>}</div>
                     {!createClientInline && !selectedJobCustomer && (
                       <div className="record-form">
@@ -2391,96 +2399,59 @@ export function App() {
                     </button>
                   </section>
 
-                  <section className="panel">
-                    <div className="panel-header"><h2>Private Notes</h2></div>
-                    <textarea placeholder="Enter notes (internal only)" value={jobForm.internalNotes} onChange={(event) => setJobForm({ ...jobForm, internalNotes: event.target.value })} />
-                  </section>
-
-                  <section className="panel attachment-panel">
-                    <div className="panel-header"><h2>Attachments</h2><FileText size={18} /></div>
-                    <input type="file" multiple onChange={(event) => setJobAttachments(Array.from(event.currentTarget.files ?? []).map((file) => file.name))} />
-                    <div className="attachment-list">
-                      {jobAttachments.map((name) => <span key={name}>{name}</span>)}
-                      {jobAttachments.length === 0 && <p className="empty">No attachments selected.</p>}
+                  <section className="panel schedule-card">
+                    <div className="panel-header">
+                      <h2><CalendarDays size={19} /> Schedule</h2>
+                      <button className="icon-button subtle-icon" type="button" aria-label="Edit schedule"><Pencil size={18} /></button>
                     </div>
-                  </section>
-                </div>
-
-                <div className="job-create-column">
-                  <section className="panel">
-                    <div className="panel-header"><h2><CalendarDays size={20} /> Schedule</h2></div>
-                    <div className="schedule-form-grid">
-                      <label>Date <input type="date" value={jobForm.scheduledStart.slice(0, 10)} onChange={(event) => {
-                        const time = jobForm.scheduledStart.slice(11) || "10:00";
-                        setJobForm({ ...jobForm, scheduledStart: `${event.target.value}T${time}`, scheduledEnd: jobForm.scheduledEnd || `${event.target.value}T11:00` });
-                      }} /></label>
-                      <label>Start <input type="time" value={jobForm.scheduledStart.slice(11) || "10:00"} onChange={(event) => {
-                        const date = jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
-                        setJobForm({ ...jobForm, scheduledStart: `${date}T${event.target.value}` });
-                      }} /></label>
-                      <label>End <input type="time" value={jobForm.scheduledEnd.slice(11) || "11:00"} onChange={(event) => {
-                        const date = jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
-                        setJobForm({ ...jobForm, scheduledEnd: `${date}T${event.target.value}` });
-                      }} /></label>
-                      <label className="span-2">Field Techs
+                    <div className="schedule-compact">
+                      <div className="schedule-row">
+                        <span>From</span>
+                        <input type="date" value={jobForm.scheduledStart.slice(0, 10)} onChange={(event) => {
+                          const time = jobForm.scheduledStart.slice(11) || "10:00";
+                          const endDate = jobForm.scheduledEnd.slice(0, 10) || event.target.value;
+                          const endTime = jobForm.scheduledEnd.slice(11) || "11:00";
+                          setJobForm({ ...jobForm, scheduledStart: `${event.target.value}T${time}`, scheduledEnd: `${endDate}T${endTime}` });
+                        }} />
+                        <input type="time" value={jobForm.scheduledStart.slice(11) || "10:00"} onChange={(event) => {
+                          const date = jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
+                          setJobForm({ ...jobForm, scheduledStart: `${date}T${event.target.value}` });
+                        }} />
+                      </div>
+                      <div className="schedule-row">
+                        <span>To</span>
+                        <input type="date" value={(jobForm.scheduledEnd || jobForm.scheduledStart).slice(0, 10)} onChange={(event) => {
+                          const time = jobForm.scheduledEnd.slice(11) || "11:00";
+                          setJobForm({ ...jobForm, scheduledEnd: `${event.target.value}T${time}` });
+                        }} />
+                        <input type="time" value={jobForm.scheduledEnd.slice(11) || "11:00"} onChange={(event) => {
+                          const date = jobForm.scheduledEnd.slice(0, 10) || jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
+                          setJobForm({ ...jobForm, scheduledEnd: `${date}T${event.target.value}` });
+                        }} />
+                      </div>
+                      <label className="anytime-row"><input type="checkbox" /> Anytime</label>
+                      <div className="schedule-team-row">
+                        <Users size={21} />
                         <select value={jobForm.technicianId} onChange={(event) => setJobForm({ ...jobForm, technicianId: event.target.value })}>
-                          <option value="">Unassigned</option>
+                          <option value="">Edit team</option>
                           {technicians.filter((tech) => tech.active && tech.fieldTech).map((tech) => <option key={tech.id} value={tech.id}>{tech.name}</option>)}
                         </select>
-                      </label>
+                      </div>
+                      {!jobForm.technicianId && <span className="unassigned-pill">Unassigned</span>}
                     </div>
                   </section>
 
-                  <section className="panel">
-                    <div className="panel-header"><h2>More</h2></div>
-                    <div className="record-form">
+                  <button className="job-collapsed-row" type="button"><ListChecks size={18} /> Checklists <Plus size={18} /></button>
+                  <label className="job-collapsed-row file-row">
+                    <Paperclip size={18} /> Attachments <Plus size={18} />
+                    <input type="file" multiple onChange={(event) => setJobAttachments(Array.from(event.currentTarget.files ?? []).map((file) => file.name))} />
+                  </label>
+
+                  <section className="panel job-detail-card">
+                    <div className="panel-header"><h2><FileText size={18} /> Fields</h2></div>
+                    <div className="record-form compact-fields">
                       <label>Job Title
                         <input value={jobForm.title} onChange={(event) => setJobForm({ ...jobForm, title: event.target.value })} placeholder="Car lockout, Rekey, Install" required />
-                      </label>
-                      <label>Lead Source
-                        <input
-                          list="lead-source-options"
-                          value={jobForm.leadSource}
-                          onChange={(event) => setJobForm({ ...jobForm, leadSource: event.target.value })}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              saveJobOption("leadSource", jobForm.leadSource).catch((err: Error) => setError(err.message));
-                            }
-                          }}
-                          onBlur={() => saveJobOption("leadSource", jobForm.leadSource).catch(() => undefined)}
-                          placeholder="Type a source and press Enter"
-                        />
-                        <datalist id="lead-source-options">
-                          {crmOptions.leadSources.map((source) => <option key={source} value={source} />)}
-                        </datalist>
-                      </label>
-                      <label>Tags
-                        <div className="tag-editor">
-                          <div className="tag-list">
-                            {splitTags(jobForm.tags).map((tag) => (
-                              <button type="button" key={tag} onClick={() => setJobForm({ ...jobForm, tags: splitTags(jobForm.tags).filter((item) => item !== tag).join(", ") })}>
-                                {tag}
-                              </button>
-                            ))}
-                          </div>
-                          <input
-                            list="tag-options"
-                            placeholder="Type tag and press Enter"
-                            value={tagDraft}
-                            onChange={(event) => setTagDraft(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === ",") {
-                                event.preventDefault();
-                                addJobTag(tagDraft).catch((err: Error) => setError(err.message));
-                              }
-                            }}
-                            onBlur={() => addJobTag(tagDraft).catch(() => undefined)}
-                          />
-                          <datalist id="tag-options">
-                            {crmOptions.tags.map((tag) => <option key={tag} value={tag} />)}
-                          </datalist>
-                        </div>
                       </label>
                       <label>Job Type
                         <input
@@ -2505,6 +2476,75 @@ export function App() {
                         <input placeholder="Visible job description" value={jobForm.description} onChange={(event) => setJobForm({ ...jobForm, description: event.target.value })} />
                       </label>
                     </div>
+                  </section>
+
+                  <section className="panel job-chip-card">
+                    <div className="panel-header"><h2><Tag size={18} /> Tags</h2><Plus size={18} /></div>
+                    <div className="tag-editor">
+                      <div className="tag-list">
+                        {splitTags(jobForm.tags).map((tag) => (
+                          <button type="button" key={tag} onClick={() => setJobForm({ ...jobForm, tags: splitTags(jobForm.tags).filter((item) => item !== tag).join(", ") })}>
+                            {tag}
+                          </button>
+                        ))}
+                      </div>
+                      <input
+                        list="tag-options"
+                        placeholder="Tags (press enter)"
+                        value={tagDraft}
+                        onChange={(event) => setTagDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === ",") {
+                            event.preventDefault();
+                            addJobTag(tagDraft).catch((err: Error) => setError(err.message));
+                          }
+                        }}
+                        onBlur={() => addJobTag(tagDraft).catch(() => undefined)}
+                      />
+                      <datalist id="tag-options">
+                        {crmOptions.tags.map((tag) => <option key={tag} value={tag} />)}
+                      </datalist>
+                      <div className="option-chip-list">
+                        {crmOptions.tags.filter((tag) => !splitTags(jobForm.tags).includes(tag)).slice(0, 10).map((tag) => (
+                          <button className="option-chip" type="button" key={tag} onClick={() => addJobTag(tag).catch((err: Error) => setError(err.message))}>{tag}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="panel job-chip-card">
+                    <div className="panel-header"><h2><Navigation size={18} /> Lead source</h2><Plus size={18} /></div>
+                    <input
+                      list="lead-source-options"
+                      value={jobForm.leadSource}
+                      onChange={(event) => setJobForm({ ...jobForm, leadSource: event.target.value })}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addJobLeadSource(jobForm.leadSource).catch((err: Error) => setError(err.message));
+                        }
+                      }}
+                      onBlur={() => addJobLeadSource(jobForm.leadSource).catch(() => undefined)}
+                      placeholder="Lead source (press enter)"
+                    />
+                    <datalist id="lead-source-options">
+                      {crmOptions.leadSources.map((source) => <option key={source} value={source} />)}
+                    </datalist>
+                    <div className="option-chip-list">
+                      {crmOptions.leadSources.map((source) => (
+                        <button className={source === jobForm.leadSource ? "option-chip selected" : "option-chip"} type="button" key={source} onClick={() => addJobLeadSource(source).catch((err: Error) => setError(err.message))}>{source}</button>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+
+                <div className="job-main-column">
+                  <section className="panel private-note-panel">
+                    <div className="panel-header">
+                      <h2><StickyNote size={18} /> Private notes</h2>
+                      <div className="mini-segment"><button type="button" className="selected">This job</button><button type="button">Customer</button></div>
+                    </div>
+                    <textarea placeholder="Add a private note here" value={jobForm.internalNotes} onChange={(event) => setJobForm({ ...jobForm, internalNotes: event.target.value })} />
                   </section>
 
                   <section className="panel line-items-panel">
