@@ -4333,14 +4333,18 @@ button:disabled {
 }
 
 .calendar-time {
-  min-height: 72px;
+  min-height: 24px;
   display: flex;
   justify-content: flex-end;
   align-items: flex-start;
-  padding: 10px 10px 0 0;
+  padding: 5px 10px 0 0;
   background: #fbfcfe;
   color: #8290b3;
   font-weight: 800;
+}
+
+.calendar-time-subslot {
+  color: transparent;
 }
 
 .calendar-time.all-day {
@@ -4349,7 +4353,8 @@ button:disabled {
 }
 
 .calendar-cell {
-  min-height: 72px;
+  position: relative;
+  min-height: 24px;
   display: grid;
   align-content: start;
   gap: 4px;
@@ -4358,6 +4363,16 @@ button:disabled {
   background: #ffffff;
   padding: 4px;
   text-align: left;
+  overflow: visible;
+}
+
+.calendar-subslot {
+  border-bottom-color: #f5f7fb;
+}
+
+.calendar-time:not(.calendar-time-subslot),
+.calendar-hour-cell {
+  border-top: 1px solid #d9deeb;
 }
 
 .calendar-cell:hover {
@@ -4369,6 +4384,8 @@ button:disabled {
 }
 
 .calendar-job {
+  position: relative;
+  z-index: 2;
   display: grid;
   gap: 3px;
   border: 1px solid #2725bf;
@@ -4379,6 +4396,27 @@ button:disabled {
   font-size: 12px;
   line-height: 1.2;
   cursor: pointer;
+}
+
+.current-time-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 1;
+  background: #ef233c;
+  pointer-events: none;
+}
+
+.current-time-line::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #ef233c;
 }
 
 .calendar-job em,

@@ -324,7 +324,7 @@ type ApiKey = {
 
 type View = "dispatch" | "schedule" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
-type SlotPrompt = { date: Date; hour: number } | null;
+type SlotPrompt = { date: Date; hour: number; minute: number; technicianId?: string } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
 type SettingsSection = "overview" | "company" | "invoiceSettings" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans" | "jobTemplates";
 type CrmOptions = {
@@ -412,6 +412,8 @@ const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 const percent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const dayLabels = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const calendarHours = Array.from({ length: 24 }, (_item, hour) => hour);
+const calendarSlotMinutes = [0, 15, 30, 45];
+const calendarSlots = calendarHours.flatMap((hour) => calendarSlotMinutes.map((minute) => ({ hour, minute })));
 const reportDateRanges = [
   { value: "today", label: "Today" },
   { value: "weekToDate", label: "Week to date" },
@@ -519,10 +521,10 @@ function formatScheduleRange(mode: CalendarMode, date: Date, weekStart: Date) {
   return formatWeekRange(weekStart);
 }
 
-function formatHour(hour: number) {
-  if (hour === 0) return "12 AM";
-  if (hour === 12) return "12 PM";
-  return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
+function formatHour(hour: number, minute = 0) {
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const displayHour = hour % 12 || 12;
+  return minute ? `${displayHour}:${String(minute).padStart(2, "0")} ${suffix}` : `${displayHour} ${suffix}`;
 }
 
 function toDateTimeLocal(date: Date) {
@@ -537,6 +539,10 @@ function toInputDate(date: Date) {
 
 function sameCalendarDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function sameCalendarSlot(date: Date, hour: number, minute: number) {
+  return date.getHours() === hour && Math.floor(date.getMinutes() / 15) * 15 === minute;
 }
 
 function sourceColor(index: number) {
@@ -2538,13 +2544,14 @@ export function App() {
     }
   }
 
-  function openJobFromSlot(slot: { date: Date; hour: number }) {
+  function openJobFromSlot(slot: { date: Date; hour: number; minute: number; technicianId?: string }) {
     const start = new Date(slot.date);
-    start.setHours(slot.hour, 0, 0, 0);
+    start.setHours(slot.hour, slot.minute, 0, 0);
     const end = new Date(start);
     end.setHours(start.getHours() + 1);
     setJobForm((current) => ({
       ...current,
+      technicianId: slot.technicianId ?? current.technicianId,
       scheduledStart: toDateTimeLocal(start),
       scheduledEnd: toDateTimeLocal(end)
     }));
@@ -3023,19 +3030,25 @@ export function App() {
                   </div>
                 ))}
                 <div className="calendar-time all-day">All Day</div>
-                {scheduleColumns.map((column) => <button className="calendar-cell all-day-cell" key={`all-${column.id}`} onClick={() => setSlotPrompt({ date: column.date, hour: 9 })} />)}
-                {calendarHours.map((hour) => (
-                  <Fragment key={`row-${hour}`}>
-                    <div className="calendar-time" key={`label-${hour}`}>{formatHour(hour)}</div>
+                {scheduleColumns.map((column) => <button className="calendar-cell all-day-cell" key={`all-${column.id}`} onClick={() => setSlotPrompt({ date: column.date, hour: 9, minute: 0, technicianId: column.technicianId })} />)}
+                {calendarSlots.map(({ hour, minute }) => (
+                  <Fragment key={`row-${hour}-${minute}`}>
+                    <div className={minute === 0 ? "calendar-time" : "calendar-time calendar-time-subslot"} key={`label-${hour}-${minute}`}>
+                      {minute === 0 ? formatHour(hour) : ""}
+                    </div>
                     {scheduleColumns.map((column) => {
                       const slotJobs = scheduledJobs.filter((job) => {
                         if (!job.scheduledStart) return false;
                         const start = new Date(job.scheduledStart);
                         const techMatches = calendarMode !== "employees" || (column.technicianId ? job.technician?.id === column.technicianId : !job.technician?.id);
-                        return techMatches && sameCalendarDay(start, column.date) && start.getHours() === hour;
+                        return techMatches && sameCalendarDay(start, column.date) && sameCalendarSlot(start, hour, minute);
                       });
+                      const now = new Date();
+                      const isCurrentSlot = sameCalendarDay(column.date, now) && sameCalendarSlot(now, hour, minute);
+                      const currentOffset = `${(now.getMinutes() - minute) / 15 * 100}%`;
                       return (
-                        <button className="calendar-cell" key={`${column.id}-${hour}`} onClick={() => setSlotPrompt({ date: column.date, hour })}>
+                        <button className={minute === 0 ? "calendar-cell calendar-hour-cell" : "calendar-cell calendar-subslot"} key={`${column.id}-${hour}-${minute}`} onClick={() => setSlotPrompt({ date: column.date, hour, minute, technicianId: column.technicianId })}>
+                          {isCurrentSlot && <span className="current-time-line" style={{ top: currentOffset }} />}
                           {slotJobs.map((job) => (
                             <span
                               className="calendar-job"
@@ -3073,7 +3086,7 @@ export function App() {
           <div className="modal-backdrop" onClick={() => setSlotPrompt(null)}>
             <div className="create-modal" onClick={(event) => event.stopPropagation()}>
               <h2>What would you like to create?</h2>
-              <p>{slotPrompt.date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} at {formatHour(slotPrompt.hour)}</p>
+              <p>{slotPrompt.date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} at {formatHour(slotPrompt.hour, slotPrompt.minute)}</p>
               <div className="create-options">
                 <button onClick={() => openJobFromSlot(slotPrompt)}><Wrench size={18} /> Job</button>
                 <button onClick={() => setSlotPrompt(null)}><CalendarDays size={18} /> Event</button>
