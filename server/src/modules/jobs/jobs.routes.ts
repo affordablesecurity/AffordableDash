@@ -10,15 +10,15 @@ export const jobsRouter = Router();
 const jobSchema = z.object({
   customerId: z.string(),
   addressId: z.string().optional(),
-  technicianId: z.string().optional(),
+  technicianId: z.string().nullable().optional(),
   title: z.string().min(1),
   jobType: z.string().min(1),
   leadSource: z.string().optional(),
   tags: z.array(z.string()).default([]),
   status: z.nativeEnum(JobStatus).optional(),
   priority: z.string().default("normal"),
-  scheduledStart: z.string().datetime().optional(),
-  scheduledEnd: z.string().datetime().optional(),
+  scheduledStart: z.string().datetime().nullable().optional(),
+  scheduledEnd: z.string().datetime().nullable().optional(),
   description: z.string().optional(),
   internalNotes: z.string().optional(),
   attachments: z.array(z.string()).default([]),
@@ -175,8 +175,8 @@ jobsRouter.patch("/:id", asyncHandler(async (req, res) => {
     where: { id: jobId },
     data: {
       ...jobInput,
-      scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
-      scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined
+      scheduledStart: "scheduledStart" in input ? (input.scheduledStart ? new Date(input.scheduledStart) : null) : undefined,
+      scheduledEnd: "scheduledEnd" in input ? (input.scheduledEnd ? new Date(input.scheduledEnd) : null) : undefined
     },
     include: jobInclude
   });

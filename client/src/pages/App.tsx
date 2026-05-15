@@ -248,8 +248,8 @@ type Job = {
   leadSource?: string;
   tags?: string[];
   status: string;
-  scheduledStart?: string;
-  scheduledEnd?: string;
+  scheduledStart?: string | null;
+  scheduledEnd?: string | null;
   completedAt?: string;
   description?: string;
   internalNotes?: string;
@@ -936,6 +936,13 @@ export function App() {
     unitPrice: "0.00",
     unitCost: "0.00",
     taxable: false
+  });
+  const [appointmentDialogOpen, setAppointmentDialogOpen] = useState(false);
+  const [appointmentMenuOpen, setAppointmentMenuOpen] = useState(false);
+  const [appointmentForm, setAppointmentForm] = useState({
+    scheduledStart: "",
+    scheduledEnd: "",
+    technicianId: ""
   });
   const [jobAttachments, setJobAttachments] = useState<string[]>([]);
   const [priceBookItems, setPriceBookItems] = useState<PriceBookItem[]>([]);
@@ -2440,7 +2447,10 @@ export function App() {
     await loadDashboard();
   }
 
-  async function updateJobDetails(job: Job, payload: Partial<Pick<Job, "tags" | "leadSource" | "description" | "internalNotes">> & { technicianId?: string }) {
+  async function updateJobDetails(
+    job: Job,
+    payload: Partial<Pick<Job, "tags" | "leadSource" | "description" | "internalNotes" | "scheduledStart" | "scheduledEnd">> & { technicianId?: string | null }
+  ) {
     setError("");
     const result = await api<{ job: Job }>(`/api/jobs/${job.id}`, {
       method: "PATCH",
@@ -2567,7 +2577,7 @@ export function App() {
   }
 
   async function assignJobTechnician(job: Job, technicianId: string) {
-    await updateJobDetails(job, { technicianId });
+    await updateJobDetails(job, { technicianId: technicianId || null });
     const technicianName = technicians.find((technician) => technician.id === technicianId)?.name ?? "Unassigned";
     await api(`/api/jobs/${job.id}/notes`, {
       method: "POST",
@@ -2577,31 +2587,85 @@ export function App() {
     setDetailSavedMessage(`Assigned to ${technicianName}`);
   }
 
+  function openAppointmentEditor(job: Job) {
+    const start = job.scheduledStart ? new Date(job.scheduledStart) : new Date();
+    if (!job.scheduledStart) start.setHours(start.getHours() + 1, 0, 0, 0);
+    const end = job.scheduledEnd ? new Date(job.scheduledEnd) : new Date(start.getTime() + 60 * 60 * 1000);
+    setAppointmentForm({
+      scheduledStart: toDateTimeLocal(start),
+      scheduledEnd: toDateTimeLocal(end),
+      technicianId: job.technician?.id ?? ""
+    });
+    setAppointmentDialogOpen(true);
+    setAppointmentMenuOpen(false);
+    setError("");
+  }
+
+  async function saveAppointment(job: Job) {
+    if (!appointmentForm.scheduledStart) {
+      setError("Choose an appointment start time.");
+      return;
+    }
+    const startDate = new Date(appointmentForm.scheduledStart);
+    const endDate = appointmentForm.scheduledEnd
+      ? new Date(appointmentForm.scheduledEnd)
+      : new Date(startDate.getTime() + 60 * 60 * 1000);
+    if (endDate <= startDate) {
+      setError("Appointment end time must be after the start time.");
+      return;
+    }
+    await updateJobDetails(job, {
+      scheduledStart: startDate.toISOString(),
+      scheduledEnd: endDate.toISOString(),
+      technicianId: appointmentForm.technicianId || null
+    });
+    const technicianName = technicians.find((technician) => technician.id === appointmentForm.technicianId)?.name ?? "Unassigned";
+    await api(`/api/jobs/${job.id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ author: "System", content: `Appointment updated for ${formatDateTime(startDate.toISOString())}; assigned to ${technicianName}.` })
+    });
+    await loadDashboard();
+    setAppointmentDialogOpen(false);
+    setDetailSavedMessage("Appointment updated");
+  }
+
+  async function deleteAppointment(job: Job) {
+    const confirmed = window.confirm("Delete this appointment from the job?");
+    if (!confirmed) return;
+    const result = await api<{ job: Job }>(`/api/jobs/${job.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ scheduledStart: null, scheduledEnd: null, technicianId: null })
+    });
+    mergeJob(result.job);
+    setSelectedJobId(job.id);
+    setAppointmentMenuOpen(false);
+    await api(`/api/jobs/${job.id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ author: "System", content: "Appointment deleted." })
+    });
+    await loadDashboard();
+    setDetailSavedMessage("Appointment deleted");
+  }
+
+  async function sendAppointmentOmw(job: Job) {
+    setAppointmentMenuOpen(false);
+    await updateJobStatus(job, "DISPATCHED");
+    setDetailSavedMessage("On my way logged");
+  }
+
   function addAppointmentForJob(job: Job) {
     const start = job.scheduledEnd ? new Date(job.scheduledEnd) : new Date();
     if (!job.scheduledEnd) start.setHours(start.getHours() + 1, 0, 0, 0);
     const end = new Date(start);
     end.setHours(start.getHours() + 1);
-    setSelectedJobId("");
-    setCreateClientInline(false);
-    setJobForm((current) => ({
-      ...current,
-      customerId: job.customer.id,
-      addressId: job.address?.id ?? job.customer.addresses?.[0]?.id ?? "",
-      technicianId: job.technician?.id ?? "",
-      title: job.title || `Follow-up for job #${job.jobNumber}`,
-      jobType: job.jobType,
-      leadSource: job.leadSource || "Unknown",
-      tags: (job.tags ?? []).join(", "),
-      description: job.description || "",
-      internalNotes: "",
+    setAppointmentForm({
       scheduledStart: toDateTimeLocal(start),
-      scheduledEnd: toDateTimeLocal(end)
-    }));
-    setJobClientSearch(`${customerName(job.customer)} / ${job.customer.phone}`);
-    setJobAddressSearch(addressLine(job.address ?? job.customer.addresses?.[0]));
-    setJobPageMode("create");
-    setActiveView("jobs");
+      scheduledEnd: toDateTimeLocal(end),
+      technicianId: job.technician?.id ?? ""
+    });
+    setAppointmentDialogOpen(true);
+    setAppointmentMenuOpen(false);
+    setError("");
   }
 
   async function createInvoiceFromJob(job: Job) {
@@ -3802,14 +3866,35 @@ export function App() {
                       <section className="panel">
                         <div className="panel-header"><h2>Appointments <span className="count-chip">{selectedJob.scheduledStart ? 1 : 0}</span></h2><button className="outline-button" type="button" onClick={() => addAppointmentForJob(selectedJob)}><Plus size={17} /> Appointment</button></div>
                         <div className="appointment-table">
-                          <span>#</span><span>Date</span><span>Time</span><span>Arrival window</span><span>Employees</span>
+                          <span>#</span><span>Date</span><span>Time</span><span>Arrival window</span><span>Employees</span><span>Edit</span><span>More</span>
                           {selectedJob.scheduledStart ? (
                             <>
                               <strong>1</strong>
                               <strong>{new Date(selectedJob.scheduledStart).toLocaleDateString([], { weekday: "short", month: "2-digit", day: "2-digit", year: "numeric" })}</strong>
                               <strong>{new Date(selectedJob.scheduledStart).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}{selectedJob.scheduledEnd ? ` - ${new Date(selectedJob.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}</strong>
                               <strong>1h</strong>
-                              <strong>{selectedJob.technician?.name ?? "Unassigned"}</strong>
+                              <strong className="appointment-employee-cell">
+                                <select value={selectedJob.technician?.id ?? ""} onChange={(event) => assignJobTechnician(selectedJob, event.target.value)} aria-label="Appointment employee">
+                                  <option value="">Unassigned</option>
+                                  {technicians.filter((tech) => tech.active && tech.fieldTech).map((tech) => <option value={tech.id} key={tech.id}>{tech.name}</option>)}
+                                </select>
+                              </strong>
+                              <strong>
+                                <button className="icon-button appointment-row-button" type="button" onClick={() => openAppointmentEditor(selectedJob)} aria-label="Edit appointment">
+                                  <CalendarDays size={17} />
+                                </button>
+                              </strong>
+                              <strong className="appointment-menu-cell">
+                                <button className="icon-button appointment-row-button" type="button" onClick={() => setAppointmentMenuOpen((open) => !open)} aria-label="Appointment actions">
+                                  <MoreHorizontal size={18} />
+                                </button>
+                                {appointmentMenuOpen && (
+                                  <div className="appointment-menu">
+                                    <button type="button" onClick={() => sendAppointmentOmw(selectedJob)}><Navigation size={17} /> Send OMW</button>
+                                    <button className="danger" type="button" onClick={() => deleteAppointment(selectedJob)}><Trash2 size={17} /> Delete</button>
+                                  </div>
+                                )}
+                              </strong>
                             </>
                           ) : <p className="empty appointment-empty">No appointments scheduled.</p>}
                         </div>
@@ -5982,6 +6067,46 @@ export function App() {
                   </div>
                 </form>
               )}
+            </div>
+          </div>
+        )}
+
+        {appointmentDialogOpen && selectedJob && (
+          <div className="modal-backdrop" onClick={() => setAppointmentDialogOpen(false)}>
+            <div className="appointment-modal" onClick={(event) => event.stopPropagation()}>
+              <header>
+                <div>
+                  <h2>Edit appointment</h2>
+                  <p>Update the scheduled window or dispatch this job to a different field tech.</p>
+                </div>
+                <button className="icon-button" type="button" onClick={() => setAppointmentDialogOpen(false)} aria-label="Close appointment editor"><X size={20} /></button>
+              </header>
+              <div className="appointment-form-grid">
+                <label>Start
+                  <input
+                    type="datetime-local"
+                    value={appointmentForm.scheduledStart}
+                    onChange={(event) => setAppointmentForm((current) => ({ ...current, scheduledStart: event.target.value }))}
+                  />
+                </label>
+                <label>End
+                  <input
+                    type="datetime-local"
+                    value={appointmentForm.scheduledEnd}
+                    onChange={(event) => setAppointmentForm((current) => ({ ...current, scheduledEnd: event.target.value }))}
+                  />
+                </label>
+              </div>
+              <label>Field tech
+                <select value={appointmentForm.technicianId} onChange={(event) => setAppointmentForm((current) => ({ ...current, technicianId: event.target.value }))}>
+                  <option value="">Unassigned</option>
+                  {technicians.filter((tech) => tech.active && tech.fieldTech).map((tech) => <option value={tech.id} key={tech.id}>{tech.name}</option>)}
+                </select>
+              </label>
+              <div className="modal-actions">
+                <button className="outline-button" type="button" onClick={() => setAppointmentDialogOpen(false)}>Cancel</button>
+                <button className="primary" type="button" onClick={() => saveAppointment(selectedJob)}>Save appointment</button>
+              </div>
             </div>
           </div>
         )}
