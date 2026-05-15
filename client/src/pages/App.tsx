@@ -1420,6 +1420,11 @@ export function App() {
   const selectedSettings = settingsSections.find((section) => section.id === settingsSection);
   const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
   const activeLocationAccess = locations.find((item) => item.location.id === activeLocationId) ?? locations[0];
+  function messageThreadKey(phone: string) {
+    const digits = phone.replace(/\D/g, "");
+    return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits || phone || "unknown";
+  }
+
   const messageThreads = useMemo<MessageThread[]>(() => {
     const grouped = new globalThis.Map<string, MessageThread>();
     [...messages]
@@ -1427,7 +1432,7 @@ export function App() {
       .forEach((message) => {
         const customer = message.customer ?? customers.find((item) => item.id === message.customerId) ?? null;
         const phone = message.direction === "INBOUND" ? message.fromNumber : message.toNumber;
-        const id = message.customerId ?? phone;
+        const id = message.customerId ?? messageThreadKey(phone);
         const label = customer ? customerName(customer) : phone || "Unknown";
         const current = grouped.get(id) ?? { id, label, phone, customer, messages: [], latest: "", unread: 0 };
         current.messages.push(message);
@@ -1616,6 +1621,16 @@ export function App() {
     if (!token) return;
     loadDashboard().catch((err: unknown) => handleApiError(err, "Unable to load dashboard"));
   }, [token, dashboardDateRange, dashboardDate]);
+
+  useEffect(() => {
+    if (!token || activeView !== "messages") return;
+    const intervalId = window.setInterval(() => {
+      api<{ messages: CrmMessage[] }>("/api/messages")
+        .then((result) => setMessages(result.messages))
+        .catch((err: unknown) => handleApiError(err, "Unable to refresh messages"));
+    }, 10000);
+    return () => window.clearInterval(intervalId);
+  }, [token, activeView]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

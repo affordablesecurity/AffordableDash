@@ -5830,11 +5830,16 @@ button:disabled {
   max-width: min(680px, 75%);
   border-radius: 16px;
   padding: 12px 14px;
+  background: #fff;
+  border: 1px solid #e3e8f2;
+  color: #172033;
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
 }
 
 .message-bubble p {
+  color: #172033;
   margin: 0 0 8px;
+  font-weight: 700;
   white-space: pre-wrap;
 }
 
@@ -5853,12 +5858,17 @@ button:disabled {
 
 .message-bubble.outbound {
   align-self: flex-end;
-  background: var(--primary);
-  color: #fff;
+  background: #eef2ff;
+  border-color: #cfd7ff;
+  color: #16213f;
+}
+
+.message-bubble.outbound p {
+  color: #16213f;
 }
 
 .message-bubble.outbound span {
-  color: #d8dcff;
+  color: #53639a;
 }
 
 .message-bubble.inbound {
