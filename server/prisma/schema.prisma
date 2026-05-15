@@ -80,6 +80,7 @@ model Location {
   id             String           @id @default(cuid())
   organizationId String
   name           String
+  displayName    String?
   slug           String
   phone          String?
   street1        String?

@@ -45,14 +45,61 @@ function signUserToken(user: {
     throw new Error("User does not have an active location");
   }
 
+  return signLocationToken(user, {
+    role: membership.role,
+    organizationId: membership.organizationId,
+    locationId: membership.locationId
+  });
+}
+
+function signLocationToken(user: {
+  id: string;
+  email: string;
+  username: string;
+}, access: {
+  role: string;
+  organizationId: string;
+  locationId: string;
+}) {
   return jwt.sign({
     id: user.id,
     email: user.email,
     username: user.username,
-    role: membership.role,
-    organizationId: membership.organizationId,
-    locationId: membership.locationId
+    role: access.role,
+    organizationId: access.organizationId,
+    locationId: access.locationId
   }, env.JWT_SECRET, { expiresIn: "12h" });
+}
+
+async function expandedLocationAccess(userId: string) {
+  const memberships = await prisma.userMembership.findMany({
+    where: { userId },
+    include: { organization: true, location: true },
+    orderBy: { createdAt: "asc" }
+  });
+  const access: Array<{ role: string; organization: (typeof memberships)[number]["organization"]; location: NonNullable<(typeof memberships)[number]["location"]> }> = [];
+
+  for (const membership of memberships) {
+    if (membership.location) {
+      access.push({ role: membership.role, organization: membership.organization, location: membership.location });
+      continue;
+    }
+    if (!["OWNER", "ADMIN"].includes(membership.role)) continue;
+    const locations = await prisma.location.findMany({
+      where: { organizationId: membership.organizationId, active: true },
+      orderBy: { createdAt: "asc" }
+    });
+    for (const location of locations) {
+      access.push({ role: membership.role, organization: membership.organization, location });
+    }
+  }
+
+  const seen = new Set<string>();
+  return access.filter(({ location }) => {
+    if (seen.has(location.id)) return false;
+    seen.add(location.id);
+    return true;
+  });
 }
 
 authRouter.post("/signup", asyncHandler(async (req, res) => {
@@ -81,6 +128,7 @@ authRouter.post("/signup", asyncHandler(async (req, res) => {
       data: {
         organizationId: organization.id,
         name: input.locationName,
+        displayName: input.locationName,
         slug: locationSlug,
         phone: input.phone,
         city: input.city,
@@ -157,16 +205,31 @@ authRouter.post("/login", asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Invalid login" });
   }
 
-  const membership = user.memberships.find((item) => item.locationId);
-  if (!membership) return res.status(403).json({ error: "No location access configured" });
+  let membership = user.memberships.find((item) => item.locationId);
+  let selectedLocation = membership?.location ?? null;
+  if (!membership) {
+    membership = user.memberships.find((item) => !item.locationId && ["OWNER", "ADMIN"].includes(item.role));
+    if (membership) {
+      selectedLocation = await prisma.location.findFirst({
+        where: { organizationId: membership.organizationId, active: true },
+        orderBy: { createdAt: "asc" }
+      });
+    }
+  }
+  if (!membership || !selectedLocation) return res.status(403).json({ error: "No location access configured" });
 
-  const token = signUserToken(user, membership);
+  const token = signLocationToken(user, {
+    role: membership.role,
+    organizationId: selectedLocation.organizationId,
+    locationId: selectedLocation.id
+  });
+  const locations = await expandedLocationAccess(user.id);
   res.json({
     token,
     user: { id: user.id, email: user.email, username: user.username, name: user.name, role: membership.role },
     organization: membership.organization,
-    location: membership.location,
-    locations: user.memberships.map((item) => ({ role: item.role, organization: item.organization, location: item.location })).filter((item) => item.location)
+    location: selectedLocation,
+    locations
   });
 }));
 
@@ -191,19 +254,30 @@ authRouter.get("/me", requireAuth, asyncHandler(async (req, res) => {
 
 authRouter.post("/switch-location", requireAuth, asyncHandler(async (req, res) => {
   const input = z.object({ locationId: z.string() }).parse(req.body);
+  const targetLocation = await prisma.location.findUnique({
+    where: { id: input.locationId },
+    include: { organization: true }
+  });
+  if (!targetLocation) return res.status(404).json({ error: "Location not found" });
+
   const user = await prisma.user.findUnique({
     where: { id: req.user!.id },
     include: {
       memberships: {
-        where: { locationId: input.locationId },
+        where: { organizationId: targetLocation.organizationId },
         include: { organization: true, location: true }
       }
     }
   });
 
-  const membership = user?.memberships[0];
+  const membership = user?.memberships.find((item) => item.locationId === input.locationId)
+    ?? user?.memberships.find((item) => !item.locationId && ["OWNER", "ADMIN"].includes(item.role));
   if (!user || !membership) return res.status(403).json({ error: "You do not have access to that location" });
 
-  const token = signUserToken(user, membership);
-  res.json({ token, location: membership.location, organization: membership.organization });
+  const token = signLocationToken(user, {
+    role: membership.role,
+    organizationId: targetLocation.organizationId,
+    locationId: targetLocation.id
+  });
+  res.json({ token, location: targetLocation, organization: targetLocation.organization });
 }));

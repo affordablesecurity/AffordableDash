@@ -8,6 +8,7 @@ export const locationsRouter = Router();
 
 const locationSchema = z.object({
   name: z.string().min(1),
+  displayName: z.string().optional(),
   slug: z.string().min(2).regex(/^[a-z0-9-]+$/).optional(),
   phone: z.string().optional(),
   street1: z.string().optional(),
@@ -20,6 +21,7 @@ const locationSchema = z.object({
 
 const companySettingsSchema = z.object({
   companyName: z.string().min(1),
+  displayName: z.string().optional(),
   phone: z.string().optional(),
   street1: z.string().optional(),
   street2: z.string().optional(),
@@ -45,14 +47,45 @@ locationsRouter.get("/", asyncHandler(async (req, res) => {
     include: { organization: true, location: true },
     orderBy: { createdAt: "asc" }
   });
+  const locationEntries: Array<{
+    role: UserRole;
+    organization: (typeof memberships)[number]["organization"];
+    location: NonNullable<(typeof memberships)[number]["location"]>;
+  }> = [];
 
+  for (const membership of memberships) {
+    if (membership.location) {
+      locationEntries.push({
+        role: membership.role,
+        organization: membership.organization,
+        location: membership.location
+      });
+      continue;
+    }
+
+    if (!["OWNER", "ADMIN"].includes(membership.role)) continue;
+    const orgLocations = await prisma.location.findMany({
+      where: { organizationId: membership.organizationId, active: true },
+      orderBy: { createdAt: "asc" }
+    });
+
+    for (const location of orgLocations) {
+      locationEntries.push({
+        role: membership.role,
+        organization: membership.organization,
+        location
+      });
+    }
+  }
+
+  const seen = new Set<string>();
   res.json({
     activeLocationId: req.user!.locationId,
-    locations: memberships.filter((item) => item.location).map((item) => ({
-      role: item.role,
-      organization: item.organization,
-      location: item.location
-    }))
+    locations: locationEntries.filter(({ location }) => {
+      if (seen.has(location.id)) return false;
+      seen.add(location.id);
+      return true;
+    })
   });
 }));
 
@@ -66,6 +99,7 @@ locationsRouter.post("/", asyncHandler(async (req, res) => {
     data: {
       organizationId: req.user!.organizationId,
       name: input.name,
+      displayName: input.displayName || input.name,
       slug: input.slug ?? slugify(input.name),
       phone: input.phone,
       street1: input.street1,
@@ -102,6 +136,7 @@ locationsRouter.patch("/active/company-settings", asyncHandler(async (req, res) 
       where: { id: req.user!.locationId },
       data: {
         name: input.companyName,
+        displayName: input.displayName || null,
         phone: input.phone || null,
         street1: input.street1 || null,
         street2: input.street2 || null,

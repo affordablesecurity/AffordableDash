@@ -126,6 +126,8 @@ type Technician = {
   fieldTech: boolean;
   permissions: string[];
   active: boolean;
+  locationAccess?: Array<{ id: string; name: string; displayName?: string | null }>;
+  allLocations?: boolean;
 };
 
 type CalendarEvent = {
@@ -345,6 +347,7 @@ type LocationAccess = {
     id: string;
     organizationId: string;
     name: string;
+    displayName?: string | null;
     slug: string;
     phone?: string;
     street1?: string;
@@ -934,6 +937,9 @@ export function App() {
     fieldTech: true,
     color: "#2563eb",
     active: true,
+    locationIds: [] as string[],
+    allLocations: false,
+    locationDisplayName: "",
     locationName: "",
     locationSlug: "",
     locationPhone: "",
@@ -1040,6 +1046,7 @@ export function App() {
   const [stripeMessage, setStripeMessage] = useState("");
   const [companySettingsForm, setCompanySettingsForm] = useState({
     companyName: "",
+    displayName: "",
     phone: "",
     street1: "",
     street2: "",
@@ -1312,6 +1319,10 @@ export function App() {
   const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
   const activeLocationAccess = locations.find((item) => item.location.id === activeLocationId) ?? locations[0];
 
+  function locationDisplayName(location?: { name?: string; displayName?: string | null }) {
+    return location?.displayName?.trim() || location?.name || "Location";
+  }
+
   function clearSession(message = "") {
     clearToken();
     updateToken(null);
@@ -1430,7 +1441,9 @@ export function App() {
     setLocations(locationResult.locations);
     setActiveLocationId(locationResult.activeLocationId);
     setApiKeys(apiKeyResult.apiKeys);
-    setCurrentRole(meResult.user.memberships.find((item) => item.locationId === meResult.activeLocationId)?.role ?? "");
+    const activeMembership = meResult.user.memberships.find((item) => item.locationId === meResult.activeLocationId);
+    const organizationWideMembership = meResult.user.memberships.find((item) => !item.locationId && ["OWNER", "ADMIN"].includes(item.role));
+    setCurrentRole(activeMembership?.role ?? organizationWideMembership?.role ?? "");
   }
 
   async function loadReports() {
@@ -1523,6 +1536,7 @@ export function App() {
     if (!activeLocationAccess) return;
     setCompanySettingsForm({
       companyName: activeLocationAccess.organization.name || activeLocationAccess.location.name || "",
+      displayName: activeLocationAccess.location.displayName ?? activeLocationAccess.location.name ?? "",
       phone: activeLocationAccess.location.phone ?? "",
       street1: activeLocationAccess.location.street1 ?? "",
       street2: activeLocationAccess.location.street2 ?? "",
@@ -1603,6 +1617,9 @@ export function App() {
       fieldTech: type === "subcontractor",
       color: "#2563eb",
       active: true,
+      locationIds: activeLocationId ? [activeLocationId] : [],
+      allLocations: isOwner,
+      locationDisplayName: "",
       locationName: "",
       locationSlug: "",
       locationPhone: "",
@@ -1629,6 +1646,9 @@ export function App() {
       fieldTech: employee.fieldTech,
       color: employee.color,
       active: employee.active,
+      locationIds: employee.locationAccess?.map((location) => location.id) ?? (activeLocationId ? [activeLocationId] : []),
+      allLocations: Boolean(employee.allLocations),
+      locationDisplayName: "",
       locationName: "",
       locationSlug: "",
       locationPhone: "",
@@ -1657,8 +1677,11 @@ export function App() {
       fieldTech: employeeForm.fieldTech,
       color: employeeForm.color,
       active: employeeForm.active,
+      locationIds: employeeForm.allLocations ? undefined : employeeForm.locationIds,
+      allLocations: employeeForm.allLocations,
       newLocation: employeeModal === "owner" && !employeeEditingId ? {
         name: employeeForm.locationName,
+        displayName: employeeForm.locationDisplayName || undefined,
         slug: employeeForm.locationSlug || undefined,
         phone: employeeForm.locationPhone || undefined,
         street1: employeeForm.locationStreet1 || undefined,
@@ -3410,10 +3433,10 @@ export function App() {
         <div className="page-titlebar">
           <div className="breadcrumb"><Home size={17} /> {activeView === "dispatch" ? "Dashboard" : activeView === "servicePlans" ? "Service Plans" : activeView[0].toUpperCase() + activeView.slice(1)}</div>
           <div className="topbar-actions">
-            <select value={activeLocationId} onChange={(event) => switchLocation(event.target.value)}>
+            <select className="location-switcher" value={activeLocationId} onChange={(event) => switchLocation(event.target.value)}>
               {locations.map((item) => (
                 <option key={item.location.id} value={item.location.id}>
-                  {item.location.name}
+                  {locationDisplayName(item.location)}
                 </option>
               ))}
             </select>
@@ -5163,7 +5186,13 @@ export function App() {
                     <span>{employeeRoleLabel(employee.role)}</span>
                     <span>{employee.fieldTech ? "Yes" : "No"}</span>
                     <span className={`payment-pill ${employee.active ? "paid" : "unpaid"}`}>{employee.active ? "Active" : "Inactive"}</span>
-                    <small>{employee.userId ? (employee.permissions.includes("*") ? "Login + full access" : `Login + ${employee.permissions.join(", ")}`) : "Roster only"}</small>
+                    <small className="employee-access-copy">
+                      {employee.allLocations
+                        ? "All locations"
+                        : employee.locationAccess?.length
+                          ? employee.locationAccess.map((location) => locationDisplayName(location)).join(", ")
+                          : employee.userId ? "Current location" : "Roster only"}
+                    </small>
                     <div className="employee-actions">
                       <button className="text-button" onClick={() => editEmployee(employee)}>Edit</button>
                       <button className="text-button" onClick={() => updateEmployeeAccess(employee, !employee.active)}>
@@ -5222,12 +5251,47 @@ export function App() {
                   <input type="color" value={employeeForm.color} onChange={(event) => setEmployeeForm({ ...employeeForm, color: event.target.value })} />
                 </label>
               </div>
+              <section className="location-access-panel">
+                <strong>Location Access</strong>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={employeeForm.allLocations}
+                    disabled={!["OWNER", "ADMIN"].includes(employeeForm.role)}
+                    onChange={(event) => setEmployeeForm({ ...employeeForm, allLocations: event.target.checked })}
+                  />
+                  All current and future locations
+                </label>
+                {!employeeForm.allLocations && (
+                  <div className="location-access-list">
+                    {locations.map((item) => (
+                      <label key={item.location.id} className="location-access-option">
+                        <input
+                          type="checkbox"
+                          checked={employeeForm.locationIds.includes(item.location.id)}
+                          onChange={(event) => {
+                            const nextLocationIds = event.target.checked
+                              ? [...employeeForm.locationIds, item.location.id]
+                              : employeeForm.locationIds.filter((id) => id !== item.location.id);
+                            setEmployeeForm({ ...employeeForm, locationIds: nextLocationIds });
+                          }}
+                        />
+                        {locationDisplayName(item.location)}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <p>Super admins can use all locations. Staff can be limited to only the locations checked here.</p>
+              </section>
               {employeeModal === "owner" && !employeeEditingId && (
                 <>
                   <h3 className="modal-subhead">New Location</h3>
                   <div className="employee-form-grid">
                     <label>Location Name
                       <input value={employeeForm.locationName} onChange={(event) => setEmployeeForm({ ...employeeForm, locationName: event.target.value })} placeholder="San Diego" required />
+                    </label>
+                    <label>Switcher Name
+                      <input value={employeeForm.locationDisplayName} onChange={(event) => setEmployeeForm({ ...employeeForm, locationDisplayName: event.target.value })} placeholder="San Diego" />
                     </label>
                     <label>Location Slug
                       <input value={employeeForm.locationSlug} onChange={(event) => setEmployeeForm({ ...employeeForm, locationSlug: event.target.value })} placeholder="san-diego" />
@@ -5823,6 +5887,9 @@ export function App() {
                     </div>
 
                     <div className="company-form-grid">
+                      <label>Location Switcher Name
+                        <input value={companySettingsForm.displayName} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, displayName: event.target.value })} placeholder="Yuma, San Diego, Phoenix..." />
+                      </label>
                       <label>Company Name
                         <input value={companySettingsForm.companyName} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, companyName: event.target.value })} required />
                       </label>
