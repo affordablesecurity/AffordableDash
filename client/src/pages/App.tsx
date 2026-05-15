@@ -2670,7 +2670,7 @@ export function App() {
 
   async function createInvoiceFromJob(job: Job) {
     const existingInvoice = job.invoices?.[0];
-    if (existingInvoice && !invoiceSettings.progressiveInvoicing) {
+    if (existingInvoice) {
       setDetailSavedMessage(`Invoice #${existingInvoice.invoiceNumber} opened`);
       return existingInvoice;
     }
@@ -2683,7 +2683,7 @@ export function App() {
       taxable: false
     };
     const lineItems: NonNullable<Job["lineItems"]> = job.lineItems?.length ? job.lineItems : [fallbackLineItem];
-    const result = await api<{ invoice: Invoice }>("/api/invoices", {
+    const result = await api<{ invoice: Invoice; reused?: boolean }>("/api/invoices", {
       method: "POST",
       body: JSON.stringify({
         customerId: job.customer.id,
@@ -2701,10 +2701,14 @@ export function App() {
       })
     });
     setInvoices((current) => [result.invoice, ...current.filter((invoice) => invoice.id !== result.invoice.id)]);
-    setJobs((current) => current.map((item) => item.id === job.id ? { ...item, invoices: [result.invoice, ...(item.invoices ?? [])] } : item));
+    setJobs((current) => current.map((item) => {
+      if (item.id !== job.id) return item;
+      const remainingInvoices = (item.invoices ?? []).filter((invoice) => invoice.id !== result.invoice.id);
+      return { ...item, invoices: [result.invoice, ...remainingInvoices] };
+    }));
     setSelectedJobId(job.id);
     await loadDashboard();
-    setDetailSavedMessage(`Invoice #${result.invoice.invoiceNumber} created`);
+    setDetailSavedMessage(`Invoice #${result.invoice.invoiceNumber} ${result.reused ? "opened" : "created"}`);
     return result.invoice;
   }
 

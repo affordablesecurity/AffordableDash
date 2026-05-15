@@ -43,6 +43,16 @@ invoicesRouter.get("/", asyncHandler(async (req, res) => {
 invoicesRouter.post("/", asyncHandler(async (req, res) => {
   const input = invoiceSchema.parse(req.body);
   const locationId = activeLocationId(req);
+  if (input.jobId) {
+    const existingJobInvoice = await prisma.invoice.findFirst({
+      where: { jobId: input.jobId, locationId },
+      include: invoiceInclude,
+      orderBy: { createdAt: "asc" }
+    });
+    if (existingJobInvoice) {
+      return res.json({ invoice: existingJobInvoice, reused: true });
+    }
+  }
   const subtotal = input.items.reduce((sum, item) => sum + Math.round(item.quantity * item.unitPrice), 0);
   const location = await prisma.location.findUnique({
     where: { id: locationId },
@@ -81,7 +91,7 @@ invoicesRouter.post("/", asyncHandler(async (req, res) => {
       )
     `;
   }
-  res.status(201).json({ invoice });
+  res.status(201).json({ invoice, reused: false });
 }));
 
 invoicesRouter.get("/:id", asyncHandler(async (req, res) => {
