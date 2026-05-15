@@ -75,8 +75,9 @@ eventsRouter.post("/", asyncHandler(async (req, res) => {
 
 eventsRouter.get("/:id", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
+  const eventId = String(req.params.id);
   const event = await prisma.event.findFirst({
-    where: { id: req.params.id, locationId },
+    where: { id: eventId, locationId },
     include: eventInclude
   });
   if (!event) throw notFound("Event not found");
@@ -85,7 +86,8 @@ eventsRouter.get("/:id", asyncHandler(async (req, res) => {
 
 eventsRouter.patch("/:id", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
-  const existing = await prisma.event.findFirst({ where: { id: req.params.id, locationId } });
+  const eventId = String(req.params.id);
+  const existing = await prisma.event.findFirst({ where: { id: eventId, locationId } });
   if (!existing) throw notFound("Event not found");
 
   const input = eventPatchSchema.parse(req.body);
@@ -113,7 +115,8 @@ eventsRouter.patch("/:id", asyncHandler(async (req, res) => {
 
 eventsRouter.delete("/:id", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
-  const existing = await prisma.event.findFirst({ where: { id: req.params.id, locationId } });
+  const eventId = String(req.params.id);
+  const existing = await prisma.event.findFirst({ where: { id: eventId, locationId } });
   if (!existing) throw notFound("Event not found");
   await prisma.event.delete({ where: { id: existing.id } });
   res.json({ ok: true });
