@@ -4410,52 +4410,54 @@ export function App() {
             )}
             {messageMode === "internal" && (
               <div className="internal-messages-layout">
+                <aside className="internal-sidebar">
+                  <div className="thread-list-head">
+                    <strong>In-house</strong>
+                    <span>{internalRecipients.length}</span>
+                  </div>
+                  <div className="internal-channel-tabs">
+                    <button type="button" className={internalAudience === "team" ? "active" : ""} onClick={() => setInternalAudience("team")}>Team</button>
+                    {canUseAdminChannel && (
+                      <button type="button" className={internalAudience === "admin" ? "active" : ""} onClick={() => setInternalAudience("admin")}>Admins</button>
+                    )}
+                  </div>
+                  <div className="internal-roster-search">
+                    <Search size={16} />
+                    <input
+                      value={internalRecipientSearch}
+                      onChange={(event) => setInternalRecipientSearch(event.target.value)}
+                      placeholder="Search people..."
+                    />
+                  </div>
+                  <div className="internal-recipient-list">
+                    {filteredInternalRecipients.length ? filteredInternalRecipients.map((recipient) => (
+                      <button
+                        key={recipient.id}
+                        type="button"
+                        className={`internal-recipient-option ${internalAudience === "direct" && recipient.id === internalRecipientId ? "active" : ""}`}
+                        onClick={() => {
+                          setInternalAudience("direct");
+                          setInternalRecipientId(recipient.id);
+                        }}
+                      >
+                        <span>{recipient.name}</span>
+                        <small>{recipient.kind} · {recipient.email || recipient.phone || "No contact saved"}</small>
+                      </button>
+                    )) : (
+                      <div className="internal-recipient-empty">No matching team members.</div>
+                    )}
+                  </div>
+                </aside>
                 <div className="message-conversation">
                   <div className="conversation-head">
                     <div>
-                      <h2>In-house messages</h2>
-                      <span>Team chat stays inside this location.</span>
+                      <h2>{internalAudience === "direct" ? selectedInternalRecipient?.name ?? "Direct message" : internalAudience === "admin" ? "Admin channel" : "Team channel"}</h2>
+                      <span>{internalAudience === "direct" ? selectedInternalRecipient?.email || selectedInternalRecipient?.phone || "Private in-house message" : "Team chat stays inside this location."}</span>
                     </div>
                     <div className="internal-head-actions">
-                      <select className="internal-channel-select" value={internalAudience} onChange={(event) => setInternalAudience(event.target.value as "team" | "admin" | "direct")}>
-                        <option value="team">Team channel</option>
-                        {canUseAdminChannel && <option value="admin">Admin channel</option>}
-                        <option value="direct">Direct message</option>
-                      </select>
+                      <span className="internal-channel-pill">{internalAudience === "direct" ? "Direct" : internalAudience === "admin" ? "Admins" : "Team"}</span>
                     </div>
                   </div>
-                  {internalAudience === "direct" && (
-                    <div className="internal-recipient-picker">
-                      <label>Send to</label>
-                      <input
-                        className="internal-recipient-search"
-                        value={internalRecipientSearch}
-                        onChange={(event) => {
-                          setInternalRecipientSearch(event.target.value);
-                          if (selectedInternalRecipient && event.target.value !== selectedInternalRecipient.name) setInternalRecipientId("");
-                        }}
-                        placeholder="Search technician, admin, owner..."
-                      />
-                      <div className="internal-recipient-list">
-                        {filteredInternalRecipients.length ? filteredInternalRecipients.map((recipient) => (
-                          <button
-                            key={recipient.id}
-                            type="button"
-                            className={`internal-recipient-option ${recipient.id === internalRecipientId ? "active" : ""}`}
-                            onClick={() => {
-                              setInternalRecipientId(recipient.id);
-                              setInternalRecipientSearch(recipient.name);
-                            }}
-                          >
-                            <span>{recipient.name}</span>
-                            <small>{recipient.kind} · {recipient.email || recipient.phone || "No contact saved"}</small>
-                          </button>
-                        )) : (
-                          <div className="internal-recipient-empty">No matching team members.</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
                   <div className="message-list">
                     {visibleInternalMessages.length ? visibleInternalMessages.map((message) => (
                       <div key={message.id} className="message-bubble internal">

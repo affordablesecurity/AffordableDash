@@ -27,6 +27,11 @@ function firstPayloadValue(payload: SmsWebhookPayload, keys: string[]): string {
   return "";
 }
 
+function hasPayloadKey(payload: SmsWebhookPayload, keys: string[]): boolean {
+  const normalizedPayload = new Set(Object.keys(payload).map((key) => key.toLowerCase()));
+  return keys.some((key) => normalizedPayload.has(key.toLowerCase()));
+}
+
 function phoneDigits(value?: string | null): string {
   const digits = (value ?? "").replace(/\D/g, "");
   return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
@@ -157,6 +162,30 @@ function payloadAttachments(payload: SmsWebhookPayload): string[] {
   return [...new Set(attachments)];
 }
 
+function payloadLooksLikeMms(payload: SmsWebhookPayload): boolean {
+  if (payloadAttachments(payload).length) return true;
+  if (hasPayloadKey(payload, [
+    "mms",
+    "mms_url",
+    "mmsUrl",
+    "media",
+    "media_url",
+    "mediaUrl",
+    "attachment",
+    "attachment_url",
+    "attachmentUrl",
+    "image",
+    "image_url",
+    "imageUrl",
+    "picture",
+    "file",
+    "file_url",
+    "fileUrl"
+  ])) return true;
+  const type = firstPayloadValue(payload, ["type", "message_type", "messageType", "sms_type", "smsType", "channel"]);
+  return type.toLowerCase().includes("mms");
+}
+
 webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
   if (!stripe || !env.STRIPE_WEBHOOK_SECRET) {
     return res.status(400).json({ error: "Stripe webhook is not configured" });
@@ -233,8 +262,27 @@ async function receiveVoipmsSms(req: Request, res: Response) {
     "local_number"
   ]) || env.VOIPMS_DID || "";
   const attachments = payloadAttachments(payload);
-  const body = firstPayloadValue(payload, ["message", "sms", "body", "text", "msg", "content", "message_body"])
-    || (attachments.length ? "MMS attachment" : "");
+  const inboundBody = firstPayloadValue(payload, [
+    "message",
+    "sms",
+    "body",
+    "text",
+    "msg",
+    "content",
+    "message_body",
+    "messageBody",
+    "message_text",
+    "messageText",
+    "mms_message",
+    "mmsMessage",
+    "subject",
+    "caption"
+  ]);
+  const emptyMessageFieldWasProvided = hasPayloadKey(payload, ["message"]) && !payloadValue(payload.message);
+  const body = inboundBody
+    || (attachments.length ? "MMS attachment" : "")
+    || (payloadLooksLikeMms(payload) ? "MMS received. VoIP.ms did not include media in this callback." : "")
+    || (emptyMessageFieldWasProvided ? "Message received with no text. If this was an MMS, configure the VoIP.ms SMS/MMS Webhook URL as POST JSON so media URLs are included." : "");
   const providerRef = firstPayloadValue(payload, ["sms_id", "id", "message_id", "message_uuid", "uuid", "reference"]);
 
   if (!fromNumber || !body) {

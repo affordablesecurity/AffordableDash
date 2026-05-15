@@ -9,6 +9,74 @@ export type VoipmsSmsConfig = {
 
 type VoipmsMessageResponse = { status?: string; sms?: string; mms?: string; [key: string]: unknown };
 
+function xmlValue(text: string, key: string): string {
+  const match = new RegExp(`<${key}[^>]*>([\\s\\S]*?)<\\/${key}>`, "i").exec(text);
+  if (!match?.[1]) return "";
+  return match[1].replace(/^<!\[CDATA\[([\s\S]*?)\]\]>$/i, "$1").trim();
+}
+
+function queryValue(text: string, key: string): string {
+  const match = new RegExp(`(?:^|[?&\\s])${key}=([^&\\s<]+)`, "i").exec(text);
+  if (!match?.[1]) return "";
+  try {
+    return decodeURIComponent(match[1]).trim();
+  } catch {
+    return match[1].trim();
+  }
+}
+
+function parseVoipmsResponseText(text: string): VoipmsMessageResponse {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+
+  try {
+    return JSON.parse(trimmed) as VoipmsMessageResponse;
+  } catch {
+    // VoIP.ms can return XML/plain text for some API errors.
+  }
+
+  const status = xmlValue(trimmed, "status") || queryValue(trimmed, "status");
+  const error = xmlValue(trimmed, "error")
+    || xmlValue(trimmed, "errors")
+    || xmlValue(trimmed, "message")
+    || queryValue(trimmed, "error")
+    || queryValue(trimmed, "message");
+  const sms = xmlValue(trimmed, "sms") || xmlValue(trimmed, "sms_id") || queryValue(trimmed, "sms");
+  const mms = xmlValue(trimmed, "mms") || xmlValue(trimmed, "mms_id") || queryValue(trimmed, "mms");
+
+  if (status || error || sms || mms) {
+    return { status, error, sms, mms, raw: trimmed.slice(0, 500) };
+  }
+
+  if (/success/i.test(trimmed)) return { status: "success", raw: trimmed.slice(0, 500) };
+
+  return {
+    status: "error",
+    error: trimmed.startsWith("<")
+      ? "VoIP.ms returned XML without a readable status. Check that MMS is enabled for this DID and API method."
+      : trimmed.slice(0, 200),
+    raw: trimmed.slice(0, 500)
+  };
+}
+
+async function readVoipmsResponse(response: Awaited<ReturnType<typeof fetch>>): Promise<VoipmsMessageResponse> {
+  const text = await response.text();
+  const data = parseVoipmsResponseText(text);
+  if (!response.ok) {
+    const detail = String(data.error ?? data.message ?? text.slice(0, 200) ?? "Request failed");
+    throw new Error(`VoIP.ms request failed (${response.status}): ${detail}`);
+  }
+  return data;
+}
+
+function assertVoipmsSuccess(data: VoipmsMessageResponse, label: "SMS" | "MMS") {
+  const status = typeof data.status === "string" ? data.status.toLowerCase() : "";
+  if (status && status !== "success") {
+    const detail = String(data.error ?? data.message ?? data.status);
+    throw new Error(`VoIP.ms ${label} failed: ${detail}`);
+  }
+}
+
 function attachmentMedia(value: string) {
   let rawValue = value.trim();
   try {
@@ -45,11 +113,8 @@ export async function sendSms(to: string, message: string, config: VoipmsSmsConf
   });
 
   const response = await fetch(`${baseUrl}?${params.toString()}`);
-  const data = await response.json() as VoipmsMessageResponse;
-
-  if (data.status && data.status !== "success") {
-    throw new Error(`VoIP.ms SMS failed: ${data.status}`);
-  }
+  const data = await readVoipmsResponse(response);
+  assertVoipmsSuccess(data, "SMS");
 
   return data;
 }
@@ -87,11 +152,8 @@ export async function sendMms(to: string, message: string, attachments: string[]
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: params.toString()
   });
-  const data = await response.json() as VoipmsMessageResponse;
-
-  if (data.status && data.status !== "success") {
-    throw new Error(`VoIP.ms MMS failed: ${data.status}`);
-  }
+  const data = await readVoipmsResponse(response);
+  assertVoipmsSuccess(data, "MMS");
 
   return data;
 }
