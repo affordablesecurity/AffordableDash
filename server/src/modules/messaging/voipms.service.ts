@@ -15,6 +15,31 @@ function xmlValue(text: string, key: string): string {
   return match[1].replace(/^<!\[CDATA\[([\s\S]*?)\]\]>$/i, "$1").trim();
 }
 
+function stripMarkup(text: string): string {
+  return text
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function xmlRpcValue(text: string, key: string): string {
+  const memberRegex = /<member>\s*<name>([\s\S]*?)<\/name>\s*<value>([\s\S]*?)<\/value>\s*<\/member>/gi;
+  let match = memberRegex.exec(text);
+  while (match) {
+    if (stripMarkup(match[1]).toLowerCase() === key.toLowerCase()) return stripMarkup(match[2]);
+    match = memberRegex.exec(text);
+  }
+  return "";
+}
+
 function queryValue(text: string, key: string): string {
   const match = new RegExp(`(?:^|[?&\\s])${key}=([^&\\s<]+)`, "i").exec(text);
   if (!match?.[1]) return "";
@@ -35,14 +60,19 @@ function parseVoipmsResponseText(text: string): VoipmsMessageResponse {
     // VoIP.ms can return XML/plain text for some API errors.
   }
 
-  const status = xmlValue(trimmed, "status") || queryValue(trimmed, "status");
+  const status = xmlValue(trimmed, "status") || xmlRpcValue(trimmed, "status") || queryValue(trimmed, "status");
   const error = xmlValue(trimmed, "error")
     || xmlValue(trimmed, "errors")
     || xmlValue(trimmed, "message")
+    || xmlValue(trimmed, "faultString")
+    || xmlRpcValue(trimmed, "error")
+    || xmlRpcValue(trimmed, "errors")
+    || xmlRpcValue(trimmed, "message")
+    || xmlRpcValue(trimmed, "faultString")
     || queryValue(trimmed, "error")
     || queryValue(trimmed, "message");
-  const sms = xmlValue(trimmed, "sms") || xmlValue(trimmed, "sms_id") || queryValue(trimmed, "sms");
-  const mms = xmlValue(trimmed, "mms") || xmlValue(trimmed, "mms_id") || queryValue(trimmed, "mms");
+  const sms = xmlValue(trimmed, "sms") || xmlValue(trimmed, "sms_id") || xmlRpcValue(trimmed, "sms") || xmlRpcValue(trimmed, "sms_id") || queryValue(trimmed, "sms");
+  const mms = xmlValue(trimmed, "mms") || xmlValue(trimmed, "mms_id") || xmlRpcValue(trimmed, "mms") || xmlRpcValue(trimmed, "mms_id") || queryValue(trimmed, "mms");
 
   if (status || error || sms || mms) {
     return { status, error, sms, mms, raw: trimmed.slice(0, 500) };
@@ -52,9 +82,7 @@ function parseVoipmsResponseText(text: string): VoipmsMessageResponse {
 
   return {
     status: "error",
-    error: trimmed.startsWith("<")
-      ? "VoIP.ms returned XML without a readable status. Check that MMS is enabled for this DID and API method."
-      : trimmed.slice(0, 200),
+    error: trimmed.startsWith("<") ? stripMarkup(trimmed).slice(0, 240) || "VoIP.ms returned XML without a readable status." : trimmed.slice(0, 200),
     raw: trimmed.slice(0, 500)
   };
 }

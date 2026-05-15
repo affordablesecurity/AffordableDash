@@ -478,6 +478,14 @@ type MessageAttachment = {
   url?: string;
 };
 
+const customerMmsTypes: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp"
+};
+
 type MessageThread = {
   id: string;
   label: string;
@@ -3362,6 +3370,63 @@ export function App() {
     return { name: value };
   }
 
+  function fileMimeType(file: File) {
+    const explicitType = file.type.toLowerCase();
+    if (explicitType) return explicitType;
+    const extension = `.${file.name.split(".").pop()?.toLowerCase() ?? ""}`;
+    return customerMmsTypes[extension] ?? "";
+  }
+
+  function replaceFileExtension(name: string, extension: string) {
+    return name.includes(".") ? name.replace(/\.[^.]+$/, extension) : `${name}${extension}`;
+  }
+
+  function readFileAsDataUrl(file: File) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+      reader.onerror = () => reject(new Error(`Unable to read ${file.name}.`));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadAttachmentImage(dataUrl: string) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Unable to prepare that image for MMS."));
+      image.src = dataUrl;
+    });
+  }
+
+  async function readCustomerMmsAttachment(file: File): Promise<MessageAttachment> {
+    const mimeType = fileMimeType(file);
+    if (!customerMmsTypes[`.${file.name.split(".").pop()?.toLowerCase() ?? ""}`] && !["image/jpeg", "image/png", "image/gif", "image/webp"].includes(mimeType)) {
+      throw new Error("Customer MMS attachments must be JPG, PNG, GIF, or WEBP images.");
+    }
+
+    const dataUrl = await readFileAsDataUrl(file);
+    if (mimeType === "image/webp") {
+      const image = await loadAttachmentImage(dataUrl);
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth || image.width;
+      canvas.height = image.naturalHeight || image.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Unable to prepare that image for MMS.");
+      context.drawImage(image, 0, 0);
+      const convertedDataUrl = canvas.toDataURL("image/jpeg", 0.88);
+      const base64 = convertedDataUrl.split(",")[1] ?? "";
+      return {
+        name: replaceFileExtension(file.name, ".jpg"),
+        type: "image/jpeg",
+        size: Math.ceil(base64.length * 0.75),
+        dataUrl: convertedDataUrl
+      };
+    }
+
+    return { name: file.name, type: mimeType || file.type, size: file.size, dataUrl };
+  }
+
   async function addMessageAttachments(files: FileList | null) {
     const selectedFiles = Array.from(files ?? []);
     if (!selectedFiles.length) return;
@@ -3371,17 +3436,16 @@ export function App() {
       setError("Message attachments must be 2MB or smaller.");
       return;
     }
-    const loaded = await Promise.all(acceptedFiles.map((file) => new Promise<MessageAttachment>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve({
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        dataUrl: typeof reader.result === "string" ? reader.result : undefined
-      });
-      reader.onerror = () => reject(new Error(`Unable to read ${file.name}.`));
-      reader.readAsDataURL(file);
-    })));
+    const loaded = await Promise.all(acceptedFiles.map(readCustomerMmsAttachment)).catch((error: Error) => {
+      setError(error.message);
+      return null;
+    });
+    if (!loaded) return;
+    const convertedOversized = loaded.find((file) => (file.size ?? 0) > 2_000_000);
+    if (convertedOversized) {
+      setError(`${convertedOversized.name} is too large after MMS preparation. Please use an image under 2MB.`);
+      return;
+    }
     setMessageAttachments((current) => [...current, ...loaded].slice(0, 5));
   }
 
