@@ -131,7 +131,8 @@ async function receiveVoipmsSms(req: Request, res: Response) {
     }
   });
 
-  res.json({ received: true, messageId: message.id });
+  void message;
+  res.type("text/plain").send("ok");
 }
 
 webhooksRouter.get("/voipms/sms", asyncHandler(receiveVoipmsSms));
