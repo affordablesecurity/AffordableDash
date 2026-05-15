@@ -145,6 +145,11 @@ function payloadAttachments(payload: SmsWebhookPayload): string[] {
     "picture",
     "url"
   ];
+  for (const prefix of ["media", "media_url", "mms", "mms_url", "attachment", "attachment_url", "file", "file_url", "image", "image_url"]) {
+    for (let index = 1; index <= 5; index += 1) {
+      keys.push(`${prefix}${index}`, `${prefix}_${index}`);
+    }
+  }
   const attachments: string[] = [];
   for (const key of keys) {
     collectAttachment(payload[key] ?? normalizedPayload.get(key.toLowerCase()), attachments);

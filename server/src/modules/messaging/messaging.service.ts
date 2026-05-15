@@ -1,7 +1,7 @@
 import { InvoiceStatus, type Customer, type IntegrationCredential } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
-import { sendSms } from "./voipms.service.js";
+import { sendMms, sendSms } from "./voipms.service.js";
 
 export type MessagingTemplateKey =
   | "appointmentScheduled"
@@ -251,25 +251,13 @@ export async function sendLocationSms(input: {
     });
   }
 
-  if ((input.attachments ?? []).length > 0) {
-    return createMessage({
-      locationId: input.locationId,
-      customerId: input.customerId,
-      jobId: input.jobId,
-      invoiceId: input.invoiceId,
-      fromNumber,
-      toNumber: input.to,
-      body: input.body,
-      status: "FAILED",
-      error: "VoIP.ms outbound MMS is not configured yet. The attachment was saved in the CRM, but only text messages can be sent to phones right now.",
-      templateKey: input.templateKey,
-      attachments: input.attachments,
-      channel: "mms"
-    });
-  }
-
   try {
-    const result = await sendSms(input.to, input.body, {
+    const hasAttachments = (input.attachments ?? []).length > 0;
+    const result = hasAttachments ? await sendMms(input.to, input.body, input.attachments ?? [], {
+      username: settings.username,
+      apiPassword: settings.apiPassword,
+      did: settings.defaultDid
+    }) : await sendSms(input.to, input.body, {
       username: settings.username,
       apiPassword: settings.apiPassword,
       did: settings.defaultDid
@@ -285,9 +273,11 @@ export async function sendLocationSms(input: {
       status: "SENT",
       templateKey: input.templateKey,
       attachments: input.attachments,
-      providerRef: typeof result.sms === "string" ? result.sms : undefined
+      channel: hasAttachments ? "mms" : "sms",
+      providerRef: typeof result.mms === "string" ? result.mms : typeof result.sms === "string" ? result.sms : undefined
     });
   } catch (err) {
+    const hasAttachments = (input.attachments ?? []).length > 0;
     return createMessage({
       locationId: input.locationId,
       customerId: input.customerId,
@@ -297,9 +287,10 @@ export async function sendLocationSms(input: {
       toNumber: input.to,
       body: input.body,
       status: "FAILED",
-      error: err instanceof Error ? err.message : "SMS failed",
+      error: err instanceof Error ? err.message : hasAttachments ? "MMS failed" : "SMS failed",
       templateKey: input.templateKey,
-      attachments: input.attachments
+      attachments: input.attachments,
+      channel: hasAttachments ? "mms" : "sms"
     });
   }
 }

@@ -464,6 +464,7 @@ type CrmMessage = {
   status?: string;
   error?: string | null;
   templateKey?: string | null;
+  providerRef?: string | null;
   attachments?: string[];
   createdAt: string;
   customer?: Customer | null;
@@ -485,6 +486,17 @@ type MessageThread = {
   messages: CrmMessage[];
   latest: string;
   unread: number;
+};
+
+type InternalRecipient = {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  role: string;
+  kind: string;
+  technicianId?: string | null;
+  fieldTech?: boolean;
 };
 
 type MessagingSettings = {
@@ -1158,7 +1170,10 @@ export function App() {
   const [internalMessages, setInternalMessages] = useState<CrmMessage[]>([]);
   const [internalDraft, setInternalDraft] = useState("");
   const [internalAttachments, setInternalAttachments] = useState<MessageAttachment[]>([]);
-  const [internalAudience, setInternalAudience] = useState<"team" | "admin">("team");
+  const [internalAudience, setInternalAudience] = useState<"team" | "admin" | "direct">("team");
+  const [internalRecipients, setInternalRecipients] = useState<InternalRecipient[]>([]);
+  const [internalRecipientSearch, setInternalRecipientSearch] = useState("");
+  const [internalRecipientId, setInternalRecipientId] = useState("");
   const [readMessageIds, setReadMessageIds] = useState<string[]>([]);
   const [messagingSettings, setMessagingSettings] = useState<MessagingSettings>(defaultMessagingSettings);
   const [messagingSettingsMessage, setMessagingSettingsMessage] = useState("");
@@ -1463,10 +1478,30 @@ export function App() {
   }, [messages, customers, readMessageIdSet]);
   const selectedThread = messageThreads.find((thread) => thread.id === selectedMessageThread) ?? messageThreads[0] ?? null;
   const customerUnreadTotal = messageThreads.reduce((sum, thread) => sum + thread.unread, 0);
-  const internalMessageChannel = internalAudience === "admin" ? "internal-admin" : "internal-team";
+  const selectedInternalRecipient = internalRecipients.find((recipient) => recipient.id === internalRecipientId) ?? null;
+  const filteredInternalRecipients = useMemo(() => {
+    const query = internalRecipientSearch.trim().toLowerCase();
+    const sortedRecipients = [...internalRecipients].sort((a, b) => a.name.localeCompare(b.name));
+    if (!query) return sortedRecipients.slice(0, 8);
+    return sortedRecipients
+      .filter((recipient) => [
+        recipient.name,
+        recipient.email ?? "",
+        recipient.phone ?? "",
+        recipient.role,
+        recipient.kind
+      ].some((value) => value.toLowerCase().includes(query)))
+      .slice(0, 8);
+  }, [internalRecipients, internalRecipientSearch]);
+  const internalMessageChannel = internalAudience === "admin" ? "internal-admin" : internalAudience === "direct" ? "internal-direct" : "internal-team";
   const visibleInternalMessages = useMemo(() => internalMessages
-    .filter((message) => message.channel === internalMessageChannel)
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()), [internalMessages, internalMessageChannel]);
+    .filter((message) => {
+      if (internalAudience === "direct") {
+        return Boolean(internalRecipientId) && message.channel === "internal-direct" && (message.fromNumber === internalRecipientId || message.toNumber === internalRecipientId);
+      }
+      return message.channel === internalMessageChannel;
+    })
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()), [internalMessages, internalMessageChannel, internalAudience, internalRecipientId]);
   const messageReadStorageKey = activeLocationId ? `affordable-crm:read-messages:${activeLocationId}` : "";
 
   function locationDisplayName(location?: { name?: string; displayName?: string | null }) {
@@ -1547,7 +1582,7 @@ export function App() {
   async function loadDashboard() {
     const dashboardQuery = new URLSearchParams({ dateRange: dashboardDateRange });
     if (dashboardDateRange === "selectedDay") dashboardQuery.set("date", dashboardDate);
-    const [summaryResult, customersResult, jobsResult, eventsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult, stripeStatusResult, messagesResult, internalMessagesResult, messagingSettingsResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, eventsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult, stripeStatusResult, messagesResult, internalMessagesResult, internalRecipientsResult, messagingSettingsResult] = await Promise.all([
       api<Summary>(`/api/settings/summary?${dashboardQuery.toString()}`),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
@@ -1563,6 +1598,7 @@ export function App() {
       api<StripeStatus>("/api/integrations/stripe/status"),
       api<{ messages: CrmMessage[] }>("/api/messages"),
       api<{ messages: CrmMessage[] }>("/api/messages/internal"),
+      api<{ recipients: InternalRecipient[] }>("/api/messages/internal/recipients"),
       api<{ settings: MessagingSettings }>("/api/messages/settings")
     ]);
 
@@ -1587,6 +1623,8 @@ export function App() {
     setStripeStatus(stripeStatusResult);
     setMessages(messagesResult.messages);
     setInternalMessages(internalMessagesResult.messages);
+    setInternalRecipients(internalRecipientsResult.recipients);
+    setInternalRecipientId((current) => current || internalRecipientsResult.recipients[0]?.id || "");
     setMessagingSettings(mergeMessagingSettings(messagingSettingsResult.settings));
 
     const [locationResult, apiKeyResult, meResult] = await Promise.all([
@@ -3269,6 +3307,10 @@ export function App() {
     event.preventDefault();
     const trimmedBody = internalDraft.trim();
     if (!trimmedBody && !internalAttachments.length) return;
+    if (internalAudience === "direct" && !selectedInternalRecipient) {
+      setError("Choose a person to message.");
+      return;
+    }
     setError("");
     try {
       const result = await api<{ message: CrmMessage }>("/api/messages/internal", {
@@ -3276,6 +3318,7 @@ export function App() {
         body: JSON.stringify({
           body: trimmedBody || "Attachment",
           audience: internalAudience,
+          recipientUserId: internalAudience === "direct" ? selectedInternalRecipient?.id : undefined,
           attachments: internalAttachments.map((attachment) => JSON.stringify(attachment))
         })
       });
@@ -4373,17 +4416,50 @@ export function App() {
                       <h2>In-house messages</h2>
                       <span>Team chat stays inside this location.</span>
                     </div>
-                    {canUseAdminChannel && (
-                      <select className="internal-channel-select" value={internalAudience} onChange={(event) => setInternalAudience(event.target.value as "team" | "admin")}>
+                    <div className="internal-head-actions">
+                      <select className="internal-channel-select" value={internalAudience} onChange={(event) => setInternalAudience(event.target.value as "team" | "admin" | "direct")}>
                         <option value="team">Team channel</option>
-                        <option value="admin">Admin channel</option>
+                        {canUseAdminChannel && <option value="admin">Admin channel</option>}
+                        <option value="direct">Direct message</option>
                       </select>
-                    )}
+                    </div>
                   </div>
+                  {internalAudience === "direct" && (
+                    <div className="internal-recipient-picker">
+                      <label>Send to</label>
+                      <input
+                        className="internal-recipient-search"
+                        value={internalRecipientSearch}
+                        onChange={(event) => {
+                          setInternalRecipientSearch(event.target.value);
+                          if (selectedInternalRecipient && event.target.value !== selectedInternalRecipient.name) setInternalRecipientId("");
+                        }}
+                        placeholder="Search technician, admin, owner..."
+                      />
+                      <div className="internal-recipient-list">
+                        {filteredInternalRecipients.length ? filteredInternalRecipients.map((recipient) => (
+                          <button
+                            key={recipient.id}
+                            type="button"
+                            className={`internal-recipient-option ${recipient.id === internalRecipientId ? "active" : ""}`}
+                            onClick={() => {
+                              setInternalRecipientId(recipient.id);
+                              setInternalRecipientSearch(recipient.name);
+                            }}
+                          >
+                            <span>{recipient.name}</span>
+                            <small>{recipient.kind} · {recipient.email || recipient.phone || "No contact saved"}</small>
+                          </button>
+                        )) : (
+                          <div className="internal-recipient-empty">No matching team members.</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   <div className="message-list">
                     {visibleInternalMessages.length ? visibleInternalMessages.map((message) => (
                       <div key={message.id} className="message-bubble internal">
-                        <small>{message.templateKey || "Team member"}</small>
+                        <small>{message.templateKey || "Team member"}{message.channel === "internal-direct" && message.providerRef ? ` → ${message.providerRef}` : ""}</small>
                         <p>{message.body}</p>
                         {(message.attachments ?? []).length > 0 && (
                           <div className="message-attachments">
@@ -4418,7 +4494,7 @@ export function App() {
                         value={internalDraft}
                         onChange={(event) => setInternalDraft(event.target.value)}
                         onKeyDown={handleInternalComposerKeyDown}
-                        placeholder={internalAudience === "admin" ? "Message owners and admins..." : "Message the team..."}
+                        placeholder={internalAudience === "admin" ? "Message owners and admins..." : internalAudience === "direct" ? `Message ${selectedInternalRecipient?.name ?? "a team member"}...` : "Message the team..."}
                       />
                       {internalAttachments.length > 0 && (
                         <div className="composer-attachments">
@@ -4430,7 +4506,7 @@ export function App() {
                         </div>
                       )}
                     </div>
-                    <button className="primary" type="submit" disabled={!internalDraft.trim() && !internalAttachments.length}>Send</button>
+                    <button className="primary" type="submit" disabled={(!internalDraft.trim() && !internalAttachments.length) || (internalAudience === "direct" && !selectedInternalRecipient)}>Send</button>
                   </form>
                 </div>
               </div>
