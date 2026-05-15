@@ -58,7 +58,7 @@ app.use("/location-api/v1", publicApiRouter);
 
 app.use(express.static(clientDistPath));
 app.get("*", (req, res, next) => {
-  if (req.path.startsWith("/api") || req.path.startsWith("/location-api")) return next();
+  if (req.path === "/api" || req.path.startsWith("/api/") || req.path === "/location-api" || req.path.startsWith("/location-api/")) return next();
   res.sendFile(path.join(clientDistPath, "index.html"));
 });
 

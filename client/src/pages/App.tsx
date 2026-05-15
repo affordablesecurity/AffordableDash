@@ -435,6 +435,32 @@ const dashboardDateRanges = [
   { value: "lastMonth", label: "Last month" },
   { value: "lastYear", label: "Last year" }
 ];
+
+const viewPathMap: Record<View, string> = {
+  dispatch: "/dashboard",
+  schedule: "/schedule",
+  customers: "/customers",
+  jobs: "/jobs",
+  estimates: "/estimates",
+  employees: "/employees",
+  invoices: "/invoices",
+  reports: "/reports",
+  pricebook: "/pricebook",
+  servicePlans: "/service-plans",
+  settings: "/settings",
+  api: "/api-access"
+};
+
+function viewFromPath(pathname: string): View {
+  const normalized = pathname.replace(/\/+$/, "") || "/";
+  const match = (Object.entries(viewPathMap) as Array<[View, string]>).find(([_view, path]) => normalized === path);
+  if (match) return match[0];
+  if (normalized === "/" || normalized === "/home") return "dispatch";
+  if (normalized === "/clients" || normalized === "/clients-leads") return "customers";
+  if (normalized === "/price-book") return "pricebook";
+  return "dispatch";
+}
+
 const reportGroupings = [
   { value: "day", label: "Day" },
   { value: "week", label: "Week" },
@@ -775,7 +801,7 @@ export function App() {
   const [password, setPassword] = useState("ChangeMe123!");
   const [locations, setLocations] = useState<LocationAccess[]>([]);
   const [activeLocationId, setActiveLocationId] = useState("");
-  const [activeView, setActiveView] = useState<View>("dispatch");
+  const [activeView, setActiveView] = useState<View>(() => typeof window === "undefined" ? "dispatch" : viewFromPath(window.location.pathname));
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("week");
   const [scheduleDate, setScheduleDate] = useState(() => new Date());
@@ -1224,6 +1250,23 @@ export function App() {
     setJobPageMode("list");
     setActiveView("jobs");
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const nextPath = viewPathMap[activeView];
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({ view: activeView }, "", nextPath);
+    }
+  }, [activeView]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handlePopState = () => {
+      setActiveView(viewFromPath(window.location.pathname));
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   useEffect(() => {
     if (!token) return;
