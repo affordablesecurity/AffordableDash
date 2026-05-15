@@ -66,7 +66,8 @@ messagingRouter.post("/sms", asyncHandler(async (req, res) => {
     jobId: z.string().optional(),
     invoiceId: z.string().optional(),
     to: z.string().min(7),
-    body: z.string().min(1).max(1500)
+    body: z.string().min(1).max(1500),
+    attachments: z.array(z.string().trim().min(1).max(4_000_000)).max(5).default([])
   }).parse(req.body);
   const locationId = activeLocationId(req);
 
@@ -80,6 +81,7 @@ messagingRouter.post("/sms", asyncHandler(async (req, res) => {
     invoiceId: input.invoiceId,
     to: input.to,
     body: input.body,
+    attachments: input.attachments,
     customer
   });
 

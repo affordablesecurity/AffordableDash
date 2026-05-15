@@ -164,6 +164,7 @@ async function createMessage(data: {
   status?: string;
   error?: string;
   templateKey?: string;
+  attachments?: string[];
   provider?: string;
   providerRef?: string;
 }) {
@@ -181,6 +182,7 @@ async function createMessage(data: {
       status: data.status ?? "SENT",
       error: data.error,
       templateKey: data.templateKey,
+      attachments: data.attachments ?? [],
       provider: data.provider ?? provider,
       providerRef: data.providerRef
     }
@@ -195,6 +197,7 @@ export async function sendLocationSms(input: {
   to: string;
   body: string;
   templateKey?: string;
+  attachments?: string[];
   customer?: Pick<Customer, "communicationPrefs"> | null;
 }) {
   const settings = await getMessagingSettings(input.locationId, false);
@@ -211,7 +214,8 @@ export async function sendLocationSms(input: {
       body: input.body,
       status: "FAILED",
       error: "VoIP.ms SMS is not configured for this location.",
-      templateKey: input.templateKey
+      templateKey: input.templateKey,
+      attachments: input.attachments
     });
   }
 
@@ -226,7 +230,8 @@ export async function sendLocationSms(input: {
       body: input.body,
       status: "FAILED",
       error: "Customer has no phone number for SMS.",
-      templateKey: input.templateKey
+      templateKey: input.templateKey,
+      attachments: input.attachments
     });
   }
 
@@ -241,7 +246,8 @@ export async function sendLocationSms(input: {
       body: input.body,
       status: "SKIPPED",
       error: "Customer has opted out of text messages.",
-      templateKey: input.templateKey
+      templateKey: input.templateKey,
+      attachments: input.attachments
     });
   }
 
@@ -261,6 +267,7 @@ export async function sendLocationSms(input: {
       body: input.body,
       status: "SENT",
       templateKey: input.templateKey,
+      attachments: input.attachments,
       providerRef: typeof result.sms === "string" ? result.sms : undefined
     });
   } catch (err) {
@@ -274,7 +281,8 @@ export async function sendLocationSms(input: {
       body: input.body,
       status: "FAILED",
       error: err instanceof Error ? err.message : "SMS failed",
-      templateKey: input.templateKey
+      templateKey: input.templateKey,
+      attachments: input.attachments
     });
   }
 }

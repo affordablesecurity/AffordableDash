@@ -5856,6 +5856,28 @@ button:disabled {
   margin-top: 4px;
 }
 
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.message-attachments span,
+.message-attachments a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: #f7f8fc;
+  border: 1px solid #dfe5f0;
+  color: #27324a;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .message-bubble.outbound {
   align-self: flex-end;
   background: #eef2ff;
@@ -5879,15 +5901,66 @@ button:disabled {
 
 .message-composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 12px;
+  align-items: end;
   padding: 16px;
   border-top: 1px solid #eef1f6;
+}
+
+.composer-attach-button {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  color: #3c41e9;
+  cursor: pointer;
+}
+
+.composer-attach-button:hover {
+  background: #f5f4ff;
+}
+
+.composer-attach-button input {
+  display: none;
+}
+
+.composer-input-stack {
+  display: grid;
+  gap: 8px;
 }
 
 .message-composer textarea {
   min-height: 74px;
   resize: vertical;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.composer-attachments button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #d8def0;
+  border-radius: 999px;
+  background: #f7f8fc;
+  color: #1d2940;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.composer-attachments span {
+  color: #a42424;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .empty-state.small {

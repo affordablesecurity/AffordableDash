@@ -505,6 +505,7 @@ model Message {
   status      String           @default("SENT")
   error       String?
   templateKey String?
+  attachments String[]         @default([])
   provider    String           @default("voipms")
   providerRef String?
   createdAt   DateTime         @default(now())

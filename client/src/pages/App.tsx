@@ -464,8 +464,16 @@ type CrmMessage = {
   status?: string;
   error?: string | null;
   templateKey?: string | null;
+  attachments?: string[];
   createdAt: string;
   customer?: Customer | null;
+};
+
+type MessageAttachment = {
+  name: string;
+  type?: string;
+  size?: number;
+  dataUrl?: string;
 };
 
 type MessageThread = {
@@ -1144,6 +1152,7 @@ export function App() {
   const [messages, setMessages] = useState<CrmMessage[]>([]);
   const [selectedMessageThread, setSelectedMessageThread] = useState("");
   const [messageDraft, setMessageDraft] = useState("");
+  const [messageAttachments, setMessageAttachments] = useState<MessageAttachment[]>([]);
   const [messagingSettings, setMessagingSettings] = useState<MessagingSettings>(defaultMessagingSettings);
   const [messagingSettingsMessage, setMessagingSettingsMessage] = useState("");
   const [companySettingsForm, setCompanySettingsForm] = useState({
@@ -3192,15 +3201,60 @@ export function App() {
         body: JSON.stringify({
           customerId: selectedThread.customer?.id,
           to: selectedThread.phone,
-          body: messageDraft.trim()
+          body: messageDraft.trim(),
+          attachments: messageAttachments.map((attachment) => JSON.stringify(attachment))
         })
       });
       setMessages((current) => [result.message, ...current.filter((message) => message.id !== result.message.id)]);
       setMessageDraft("");
+      setMessageAttachments([]);
       await loadDashboard();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to send text message.");
     }
+  }
+
+  function handleMessageComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+
+  function parseMessageAttachment(value: string): MessageAttachment {
+    try {
+      const parsed = JSON.parse(value) as MessageAttachment;
+      if (parsed?.name) return parsed;
+    } catch {
+      // Older messages may only have a saved filename.
+    }
+    return { name: value };
+  }
+
+  async function addMessageAttachments(files: FileList | null) {
+    const selectedFiles = Array.from(files ?? []);
+    if (!selectedFiles.length) return;
+    const acceptedFiles = selectedFiles.slice(0, Math.max(0, 5 - messageAttachments.length));
+    const oversized = acceptedFiles.find((file) => file.size > 2_000_000);
+    if (oversized) {
+      setError("Message attachments must be 2MB or smaller.");
+      return;
+    }
+    const loaded = await Promise.all(acceptedFiles.map((file) => new Promise<MessageAttachment>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        dataUrl: typeof reader.result === "string" ? reader.result : undefined
+      });
+      reader.onerror = () => reject(new Error(`Unable to read ${file.name}.`));
+      reader.readAsDataURL(file);
+    })));
+    setMessageAttachments((current) => [...current, ...loaded].slice(0, 5));
+  }
+
+  function removeMessageAttachment(name: string) {
+    setMessageAttachments((current) => current.filter((item) => item.name !== name));
   }
 
   function updateMessagingTemplate(key: MessagingTemplateKey, value: string) {
@@ -4121,13 +4175,50 @@ export function App() {
                       {selectedThread.messages.map((message) => (
                         <div key={message.id} className={`message-bubble ${message.direction.toLowerCase()}`}>
                           <p>{message.body}</p>
+                          {(message.attachments ?? []).length > 0 && (
+                            <div className="message-attachments">
+                              {(message.attachments ?? []).map((attachment) => {
+                                const parsedAttachment = parseMessageAttachment(attachment);
+                                return parsedAttachment.dataUrl ? (
+                                  <a key={attachment} href={parsedAttachment.dataUrl} download={parsedAttachment.name}>
+                                    <Paperclip size={13} /> {parsedAttachment.name}
+                                  </a>
+                                ) : (
+                                  <span key={attachment}><Paperclip size={13} /> {parsedAttachment.name}</span>
+                                );
+                              })}
+                            </div>
+                          )}
                           <span>{formatDateTime(message.createdAt)} · {message.status ?? (message.direction === "INBOUND" ? "Received" : "Sent")}</span>
                           {message.error && <strong>{message.error}</strong>}
                         </div>
                       ))}
                     </div>
                     <form className="message-composer" onSubmit={sendManualMessage}>
-                      <textarea value={messageDraft} onChange={(event) => setMessageDraft(event.target.value)} placeholder="Type a text message..." />
+                      <label className="composer-attach-button" title="Attach files">
+                        <Paperclip size={18} />
+                        <input type="file" multiple onChange={(event) => {
+                          void addMessageAttachments(event.currentTarget.files);
+                          event.currentTarget.value = "";
+                        }} />
+                      </label>
+                      <div className="composer-input-stack">
+                        <textarea
+                          value={messageDraft}
+                          onChange={(event) => setMessageDraft(event.target.value)}
+                          onKeyDown={handleMessageComposerKeyDown}
+                          placeholder="Type a text message..."
+                        />
+                        {messageAttachments.length > 0 && (
+                          <div className="composer-attachments">
+                            {messageAttachments.map((attachment) => (
+                              <button key={attachment.name} type="button" onClick={() => removeMessageAttachment(attachment.name)}>
+                                <Paperclip size={13} /> {attachment.name} <span>×</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <button className="primary" type="submit" disabled={!messageDraft.trim()}>Send text</button>
                     </form>
                   </>

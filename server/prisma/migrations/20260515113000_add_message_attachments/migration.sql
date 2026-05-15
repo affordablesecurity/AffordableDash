@@ -1,0 +1,1 @@
+ALTER TABLE "Message" ADD COLUMN "attachments" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
