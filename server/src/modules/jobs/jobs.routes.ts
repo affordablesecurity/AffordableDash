@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
+import { queueReviewEmailForJob, sendJobTemplateSms } from "../messaging/messaging.service.js";
 
 export const jobsRouter = Router();
 
@@ -152,6 +153,9 @@ jobsRouter.post("/", asyncHandler(async (req, res) => {
       update: {}
     })));
   }
+  if (job.scheduledStart) {
+    await sendJobTemplateSms(locationId, job.id, "appointmentScheduled");
+  }
   res.status(201).json({ job });
 }));
 
@@ -167,19 +171,36 @@ jobsRouter.get("/:id", asyncHandler(async (req, res) => {
 
 jobsRouter.patch("/:id", asyncHandler(async (req, res) => {
   const jobId = String(req.params.id);
+  const locationId = activeLocationId(req);
   const input = jobSchema.partial().parse(req.body);
   const { lineItems: _lineItems, ...jobInput } = input;
-  const existing = await prisma.job.findFirst({ where: { id: jobId, locationId: activeLocationId(req) } });
+  const existing = await prisma.job.findFirst({ where: { id: jobId, locationId } });
   if (!existing) return res.status(404).json({ error: "Job not found" });
+  const scheduleChanged = "scheduledStart" in input
+    && Boolean(input.scheduledStart)
+    && (!existing.scheduledStart || new Date(input.scheduledStart as string).getTime() !== existing.scheduledStart.getTime());
+  const statusChanged = Boolean(input.status && input.status !== existing.status);
   const job = await prisma.job.update({
     where: { id: jobId },
     data: {
       ...jobInput,
       scheduledStart: "scheduledStart" in input ? (input.scheduledStart ? new Date(input.scheduledStart) : null) : undefined,
-      scheduledEnd: "scheduledEnd" in input ? (input.scheduledEnd ? new Date(input.scheduledEnd) : null) : undefined
+      scheduledEnd: "scheduledEnd" in input ? (input.scheduledEnd ? new Date(input.scheduledEnd) : null) : undefined,
+      completedAt: input.status === JobStatus.COMPLETED && !existing.completedAt ? new Date() : undefined
     },
     include: jobInclude
   });
+  const notifications: Array<Promise<unknown>> = [];
+  if (scheduleChanged) notifications.push(sendJobTemplateSms(locationId, job.id, "appointmentScheduled"));
+  if (statusChanged) {
+    if (input.status === JobStatus.DISPATCHED) notifications.push(sendJobTemplateSms(locationId, job.id, "onMyWay"));
+    if (input.status === JobStatus.IN_PROGRESS) notifications.push(sendJobTemplateSms(locationId, job.id, "workStarted"));
+    if (input.status === JobStatus.COMPLETED) {
+      notifications.push(sendJobTemplateSms(locationId, job.id, "jobCompleted"));
+      notifications.push(queueReviewEmailForJob(locationId, job.id));
+    }
+  }
+  if (notifications.length) await Promise.allSettled(notifications);
   res.json({ job });
 }));
 

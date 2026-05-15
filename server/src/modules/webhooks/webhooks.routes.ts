@@ -5,6 +5,7 @@ import { z } from "zod";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { asyncHandler } from "../../utils/async-handler.js";
+import { sendPaymentReceiptSms } from "../messaging/messaging.service.js";
 import { stripe } from "../payments/stripe.service.js";
 
 export const webhooksRouter = Router();
@@ -44,7 +45,12 @@ webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
       });
 
       if (status === "SUCCEEDED") {
-        await prisma.invoice.update({ where: { id: invoiceId }, data: { status: "PAID" } });
+        const paidInvoice = await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: { status: "PAID" },
+          select: { id: true, locationId: true }
+        });
+        await sendPaymentReceiptSms(paidInvoice.locationId, paidInvoice.id, intent.amount);
       }
     }
   }
@@ -62,17 +68,34 @@ webhooksRouter.post("/voipms/sms", asyncHandler(async (req, res) => {
   }).passthrough().parse(req.body);
 
   const fromNumber = input.from ?? "";
+  const toNumber = input.dst ?? input.did ?? env.VOIPMS_DID ?? "";
+  const credentials = await prisma.integrationCredential.findMany({
+    where: { provider: "voipms", enabled: true }
+  });
+  const matchingCredential = credentials.find((credential) => {
+    if (!credential.metadata || typeof credential.metadata !== "object" || Array.isArray(credential.metadata)) return false;
+    const metadata = credential.metadata as { defaultDid?: string; availableDids?: string[] };
+    return metadata.defaultDid === toNumber || metadata.availableDids?.includes(toNumber);
+  });
+  const locationId = matchingCredential?.locationId ?? undefined;
   const customer = fromNumber
-    ? await prisma.customer.findFirst({ where: { OR: [{ phone: fromNumber }, { alternatePhone: fromNumber }] } })
+    ? await prisma.customer.findFirst({
+      where: {
+        ...(locationId ? { locationId } : {}),
+        OR: [{ phone: fromNumber }, { alternatePhone: fromNumber }]
+      }
+    })
     : null;
 
   await prisma.message.create({
     data: {
+      locationId: locationId ?? customer?.locationId,
       customerId: customer?.id,
       direction: "INBOUND",
       fromNumber,
-      toNumber: input.dst ?? input.did ?? env.VOIPMS_DID ?? "",
+      toNumber,
       body: input.message ?? "",
+      status: "RECEIVED",
       providerRef: input.sms
     }
   });

@@ -495,15 +495,25 @@ model Message {
   id          String           @id @default(cuid())
   locationId  String?
   customerId  String?
+  jobId       String?
+  invoiceId   String?
   direction   MessageDirection
   fromNumber  String
   toNumber    String
   body        String
+  channel     String           @default("sms")
+  status      String           @default("SENT")
+  error       String?
+  templateKey String?
   provider    String           @default("voipms")
   providerRef String?
   createdAt   DateTime         @default(now())
   customer    Customer?        @relation(fields: [customerId], references: [id])
   location    Location?        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId, customerId, createdAt])
+  @@index([jobId])
+  @@index([invoiceId])
 }
 
 model IntegrationCredential {

@@ -378,11 +378,11 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "map" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "events" | "settings" | "api";
+type View = "dispatch" | "schedule" | "map" | "messages" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "events" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number; minute: number; technicianId?: string } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
-type SettingsSection = "overview" | "company" | "invoiceSettings" | "stripe" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans" | "jobTemplates";
+type SettingsSection = "overview" | "company" | "invoiceSettings" | "stripe" | "messagingSettings" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans" | "jobTemplates";
 type CrmOptions = {
   leadSources: string[];
   tags: string[];
@@ -448,6 +448,52 @@ type InvoiceSettings = {
   reminderBodyTemplate: string;
 };
 
+type MessagingTemplateKey = "appointmentScheduled" | "onMyWay" | "workStarted" | "jobCompleted" | "invoiceSent" | "paymentReceived";
+
+type CrmMessage = {
+  id: string;
+  locationId?: string | null;
+  customerId?: string | null;
+  jobId?: string | null;
+  invoiceId?: string | null;
+  direction: "INBOUND" | "OUTBOUND";
+  fromNumber: string;
+  toNumber: string;
+  body: string;
+  channel?: string;
+  status?: string;
+  error?: string | null;
+  templateKey?: string | null;
+  createdAt: string;
+  customer?: Customer | null;
+};
+
+type MessageThread = {
+  id: string;
+  label: string;
+  phone: string;
+  customer?: Customer | null;
+  messages: CrmMessage[];
+  latest: string;
+  unread: number;
+};
+
+type MessagingSettings = {
+  smsEnabled: boolean;
+  username: string;
+  apiPassword: string;
+  defaultDid: string;
+  areaCode: string;
+  availableDids: string[];
+  autoSend: Record<MessagingTemplateKey, boolean>;
+  templates: Record<MessagingTemplateKey, string>;
+  reviewEmail: {
+    enabled: boolean;
+    subject: string;
+    body: string;
+  };
+};
+
 type ReportRow = { label: string; value: string; detail?: string };
 type ReportItem = { id: string; label: string; value: string; detail: string; rows: ReportRow[] };
 type ReportSection = { title: string; items: ReportItem[] };
@@ -507,6 +553,7 @@ const viewPathMap: Record<View, string> = {
   dispatch: "/dashboard",
   schedule: "/schedule",
   map: "/map",
+  messages: "/messages",
   customers: "/customers",
   jobs: "/jobs",
   estimates: "/estimates",
@@ -837,7 +884,7 @@ const optionKeyByKind: Record<CrmOptionKind, keyof CrmOptions> = {
 };
 
 const settingsSections: Array<{
-  id: Exclude<SettingsSection, "overview" | "company" | "invoiceSettings" | "stripe" | "jobTemplates">;
+  id: Exclude<SettingsSection, "overview" | "company" | "invoiceSettings" | "stripe" | "messagingSettings" | "jobTemplates">;
   kind: CrmOptionKind;
   title: string;
   description: string;
@@ -895,6 +942,56 @@ const defaultInvoiceSettings: InvoiceSettings = {
   reminderSubjectTemplate: "Reminder: Invoice {{invoiceNumber}} is due from {{companyName}} - {{invoiceTotal}}",
   reminderBodyTemplate: "Hi {{customerFirstName}},\n\nThis is a friendly reminder from {{companyName}} that invoice {{invoiceNumber}} for {{invoiceTotal}} is due. Please see the attached invoice to review and pay."
 };
+
+const messagingTemplateLabels: Record<MessagingTemplateKey, string> = {
+  appointmentScheduled: "Appointment scheduled",
+  onMyWay: "On my way",
+  workStarted: "Work started",
+  jobCompleted: "Job completed",
+  invoiceSent: "Invoice sent",
+  paymentReceived: "Payment received"
+};
+
+const defaultMessagingSettings: MessagingSettings = {
+  smsEnabled: false,
+  username: "",
+  apiPassword: "",
+  defaultDid: "",
+  areaCode: "",
+  availableDids: [],
+  autoSend: {
+    appointmentScheduled: true,
+    onMyWay: true,
+    workStarted: true,
+    jobCompleted: true,
+    invoiceSent: true,
+    paymentReceived: true
+  },
+  templates: {
+    appointmentScheduled: "Hi {{customerFirstName}}, your appointment with {{companyName}} is scheduled for {{scheduledWindow}}. Reply STOP to opt out.",
+    onMyWay: "Hi {{customerFirstName}}, {{technicianName}} is on the way for job #{{jobNumber}} with {{companyName}}.",
+    workStarted: "Hi {{customerFirstName}}, work has started on job #{{jobNumber}}.",
+    jobCompleted: "Hi {{customerFirstName}}, job #{{jobNumber}} has been completed. Thank you for choosing {{companyName}}.",
+    invoiceSent: "Hi {{customerFirstName}}, invoice #{{invoiceNumber}} for {{invoiceTotal}} from {{companyName}} is ready.",
+    paymentReceived: "Hi {{customerFirstName}}, payment of {{paymentAmount}} was received. Thank you for choosing {{companyName}}."
+  },
+  reviewEmail: {
+    enabled: true,
+    subject: "How was your service with {{companyName}}?",
+    body: "Hi {{customerFirstName}}, thank you for choosing {{companyName}}. We would appreciate it if you could leave us a review."
+  }
+};
+
+function mergeMessagingSettings(settings?: Partial<MessagingSettings>): MessagingSettings {
+  return {
+    ...defaultMessagingSettings,
+    ...settings,
+    availableDids: settings?.availableDids ?? defaultMessagingSettings.availableDids,
+    autoSend: { ...defaultMessagingSettings.autoSend, ...(settings?.autoSend ?? {}) },
+    templates: { ...defaultMessagingSettings.templates, ...(settings?.templates ?? {}) },
+    reviewEmail: { ...defaultMessagingSettings.reviewEmail, ...(settings?.reviewEmail ?? {}) }
+  };
+}
 
 export function App() {
   const [token, updateToken] = useState(getToken());
@@ -1044,6 +1141,11 @@ export function App() {
   const [invoiceSettingsMessage, setInvoiceSettingsMessage] = useState("");
   const [stripeStatus, setStripeStatus] = useState<StripeStatus | null>(null);
   const [stripeMessage, setStripeMessage] = useState("");
+  const [messages, setMessages] = useState<CrmMessage[]>([]);
+  const [selectedMessageThread, setSelectedMessageThread] = useState("");
+  const [messageDraft, setMessageDraft] = useState("");
+  const [messagingSettings, setMessagingSettings] = useState<MessagingSettings>(defaultMessagingSettings);
+  const [messagingSettingsMessage, setMessagingSettingsMessage] = useState("");
   const [companySettingsForm, setCompanySettingsForm] = useState({
     companyName: "",
     displayName: "",
@@ -1318,6 +1420,24 @@ export function App() {
   const selectedSettings = settingsSections.find((section) => section.id === settingsSection);
   const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
   const activeLocationAccess = locations.find((item) => item.location.id === activeLocationId) ?? locations[0];
+  const messageThreads = useMemo<MessageThread[]>(() => {
+    const grouped = new globalThis.Map<string, MessageThread>();
+    [...messages]
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      .forEach((message) => {
+        const customer = message.customer ?? customers.find((item) => item.id === message.customerId) ?? null;
+        const phone = message.direction === "INBOUND" ? message.fromNumber : message.toNumber;
+        const id = message.customerId ?? phone;
+        const label = customer ? customerName(customer) : phone || "Unknown";
+        const current = grouped.get(id) ?? { id, label, phone, customer, messages: [], latest: "", unread: 0 };
+        current.messages.push(message);
+        current.latest = message.createdAt;
+        if (message.direction === "INBOUND") current.unread += 1;
+        grouped.set(id, current);
+      });
+    return [...grouped.values()].sort((a, b) => new Date(b.latest).getTime() - new Date(a.latest).getTime());
+  }, [messages, customers]);
+  const selectedThread = messageThreads.find((thread) => thread.id === selectedMessageThread) ?? messageThreads[0] ?? null;
 
   function locationDisplayName(location?: { name?: string; displayName?: string | null }) {
     return location?.displayName?.trim() || location?.name || "Location";
@@ -1397,7 +1517,7 @@ export function App() {
   async function loadDashboard() {
     const dashboardQuery = new URLSearchParams({ dateRange: dashboardDateRange });
     if (dashboardDateRange === "selectedDay") dashboardQuery.set("date", dashboardDate);
-    const [summaryResult, customersResult, jobsResult, eventsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult, stripeStatusResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, eventsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult, stripeStatusResult, messagesResult, messagingSettingsResult] = await Promise.all([
       api<Summary>(`/api/settings/summary?${dashboardQuery.toString()}`),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
@@ -1410,7 +1530,9 @@ export function App() {
       api<{ templates: JobTemplate[] }>("/api/settings/job-templates"),
       api<{ templates: ServicePlanTemplate[]; summary: ServicePlanSummary }>("/api/service-plans"),
       api<{ settings: InvoiceSettings }>("/api/settings/invoice-settings"),
-      api<StripeStatus>("/api/integrations/stripe/status")
+      api<StripeStatus>("/api/integrations/stripe/status"),
+      api<{ messages: CrmMessage[] }>("/api/messages"),
+      api<{ settings: MessagingSettings }>("/api/messages/settings")
     ]);
 
     setSummary(summaryResult);
@@ -1432,6 +1554,8 @@ export function App() {
     setServicePlanSummary(servicePlanResult.summary);
     setInvoiceSettings({ ...defaultInvoiceSettings, ...invoiceSettingsResult.settings });
     setStripeStatus(stripeStatusResult);
+    setMessages(messagesResult.messages);
+    setMessagingSettings(mergeMessagingSettings(messagingSettingsResult.settings));
 
     const [locationResult, apiKeyResult, meResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
@@ -3014,35 +3138,86 @@ export function App() {
   async function confirmInvoiceSend() {
     if (!selectedInvoice) return;
     setError("");
-    const wantsEmail = invoiceSendMethod === "email" || invoiceSendMethod === "both";
-    const wantsText = invoiceSendMethod === "text" || invoiceSendMethod === "both";
-    if (wantsEmail && !wantsText) {
-      setError("Email sending is not connected yet. Add an email provider before sending invoices by email.");
-      return;
+    setInvoiceActionMessage("");
+    try {
+      const result = await api<{ invoice: Invoice; deliveries: Array<CrmMessage | null> }>(`/api/invoices/${selectedInvoice.id}/send`, {
+        method: "POST",
+        body: JSON.stringify({
+          method: invoiceSendMethod,
+          to: invoiceSendTo.trim() || undefined,
+          subject: invoiceSendSubject,
+          message: invoiceSendMessage
+        })
+      });
+      const deliveryMessages = result.deliveries.filter((item): item is CrmMessage => Boolean(item));
+      setInvoices((current) => current.map((invoice) => invoice.id === result.invoice.id ? result.invoice : invoice));
+      setMessages((current) => [
+        ...deliveryMessages,
+        ...current.filter((message) => !deliveryMessages.some((delivery) => delivery.id === message.id))
+      ]);
+      setSelectedInvoiceId(result.invoice.id);
+      setInvoiceSendDialogOpen(false);
+      const failed = deliveryMessages.filter((message) => message.status === "FAILED").length;
+      setInvoiceActionMessage(failed
+        ? `Invoice #${result.invoice.invoiceNumber} delivery created with ${failed} issue${failed === 1 ? "" : "s"}.`
+        : `Invoice #${result.invoice.invoiceNumber} delivery created.`);
+      await loadDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to send invoice.");
     }
-    if (wantsText) {
-      const textNumber = invoiceSendMethod === "text" ? invoiceSendTo.trim() : selectedInvoice.customer.phone ?? selectedInvoice.customer.alternatePhone ?? "";
-      if (!textNumber) {
-        setError("This customer does not have a phone number for invoice text messages.");
-        return;
-      }
-      const companyName = activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security";
-      try {
-        await api("/api/messages/sms", {
-          method: "POST",
-          body: JSON.stringify({
-            customerId: selectedInvoice.customer.id,
-            to: textNumber,
-            body: renderInvoiceTemplate(invoiceSettings.smsTemplate, selectedInvoice, companyName)
-          })
-        });
-        setInvoiceActionMessage(wantsEmail
-          ? `Invoice #${selectedInvoice.invoiceNumber} text sent to ${textNumber}. Email was not sent because an email provider is not connected yet.`
-          : `Invoice #${selectedInvoice.invoiceNumber} text sent to ${textNumber}.`);
-        setInvoiceSendDialogOpen(false);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to send invoice text message.");
-      }
+  }
+
+  async function sendManualMessage(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedThread || !messageDraft.trim()) return;
+    setError("");
+    try {
+      const result = await api<{ message: CrmMessage }>("/api/messages/sms", {
+        method: "POST",
+        body: JSON.stringify({
+          customerId: selectedThread.customer?.id,
+          to: selectedThread.phone,
+          body: messageDraft.trim()
+        })
+      });
+      setMessages((current) => [result.message, ...current.filter((message) => message.id !== result.message.id)]);
+      setMessageDraft("");
+      await loadDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to send text message.");
+    }
+  }
+
+  function updateMessagingTemplate(key: MessagingTemplateKey, value: string) {
+    setMessagingSettings((current) => ({
+      ...current,
+      templates: { ...current.templates, [key]: value }
+    }));
+  }
+
+  function updateMessagingAutoSend(key: MessagingTemplateKey, value: boolean) {
+    setMessagingSettings((current) => ({
+      ...current,
+      autoSend: { ...current.autoSend, [key]: value }
+    }));
+  }
+
+  async function saveMessagingSettings(event?: FormEvent) {
+    event?.preventDefault();
+    setError("");
+    setMessagingSettingsMessage("");
+    try {
+      const result = await api<{ settings: MessagingSettings }>("/api/messages/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          ...messagingSettings,
+          availableDids: messagingSettings.availableDids.map((did) => did.trim()).filter(Boolean)
+        })
+      });
+      setMessagingSettings(mergeMessagingSettings(result.settings));
+      setMessagingSettingsMessage("Messaging settings saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to save messaging settings.");
     }
   }
 
@@ -3378,7 +3553,7 @@ export function App() {
           <button className={activeView === "map" ? "active" : ""} onClick={() => setActiveView("map")}><Map size={18} /> Map</button>
 
           <span className="nav-section">Communication</span>
-          <button><MessageSquareText size={18} /> Messages</button>
+          <button className={activeView === "messages" ? "active" : ""} onClick={() => setActiveView("messages")}><MessageSquareText size={18} /> Messages</button>
           <button><Phone size={18} /> Phone</button>
           <button><TrendingUp size={18} /> Marketing</button>
 
@@ -3416,7 +3591,7 @@ export function App() {
           <div className="add-menu-wrap">
             <button className="primary add-button" onClick={() => setAddMenuOpen((open) => !open)}><Plus size={18} /> Add New</button>
             <div className={`quick-add-menu ${addMenuOpen ? "open" : ""}`}>
-              <button onClick={() => setAddMenuOpen(false)}><MessageSquareText size={16} /> Message</button>
+              <button onClick={() => { setActiveView("messages"); setAddMenuOpen(false); }}><MessageSquareText size={16} /> Message</button>
               <button onClick={() => { setActiveView("customers"); setAddMenuOpen(false); }}><Users size={16} /> Client or Lead</button>
               <button onClick={() => { setAddMenuOpen(false); setActiveView("employees"); openEmployeeModal("employee"); }}><UserPlus size={16} /> Employee</button>
               <button onClick={() => { setActiveView("jobs"); setJobPageMode("create"); setAddMenuOpen(false); }}><Wrench size={16} /> Job</button>
@@ -3884,6 +4059,72 @@ export function App() {
                 </tbody>
               </table>
             </section>
+          </section>
+        )}
+
+        {activeView === "messages" && (
+          <section className="messages-page">
+            <div className="section-actions">
+              <div className="breadcrumb"><MessageSquareText size={17} /> Messages</div>
+              <button className="outline-button" type="button" onClick={() => { setSettingsSection("messagingSettings"); setActiveView("settings"); }}>SMS Settings</button>
+            </div>
+            <div className="messages-layout">
+              <aside className="message-thread-list">
+                <div className="thread-list-head">
+                  <strong>Conversations</strong>
+                  <span>{messageThreads.length}</span>
+                </div>
+                {messageThreads.length ? messageThreads.map((thread) => {
+                  const lastMessage = thread.messages[thread.messages.length - 1];
+                  return (
+                    <button key={thread.id} type="button" className={selectedThread?.id === thread.id ? "message-thread active" : "message-thread"} onClick={() => setSelectedMessageThread(thread.id)}>
+                      <span>{thread.label}</span>
+                      <small>{lastMessage?.body ?? "No messages yet"}</small>
+                      <em>{lastMessage ? formatDateTime(lastMessage.createdAt) : ""}</em>
+                    </button>
+                  );
+                }) : <div className="empty-state small">No text conversations yet.</div>}
+              </aside>
+              <div className="message-conversation">
+                {selectedThread ? (
+                  <>
+                    <div className="conversation-head">
+                      <div>
+                        <h2>{selectedThread.label}</h2>
+                        <span>{selectedThread.phone}</span>
+                      </div>
+                      {selectedThread.customer && (
+                        <button className="outline-button" type="button" onClick={() => {
+                          const customer = selectedThread.customer;
+                          if (!customer) return;
+                          setSelectedCustomerId(customer.id);
+                          setActiveView("customers");
+                        }}>Customer profile</button>
+                      )}
+                    </div>
+                    <div className="message-list">
+                      {selectedThread.messages.map((message) => (
+                        <div key={message.id} className={`message-bubble ${message.direction.toLowerCase()}`}>
+                          <p>{message.body}</p>
+                          <span>{formatDateTime(message.createdAt)} · {message.status ?? (message.direction === "INBOUND" ? "Received" : "Sent")}</span>
+                          {message.error && <strong>{message.error}</strong>}
+                        </div>
+                      ))}
+                    </div>
+                    <form className="message-composer" onSubmit={sendManualMessage}>
+                      <textarea value={messageDraft} onChange={(event) => setMessageDraft(event.target.value)} placeholder="Type a text message..." />
+                      <button className="primary" type="submit" disabled={!messageDraft.trim()}>Send text</button>
+                    </form>
+                  </>
+                ) : (
+                  <div className="empty-state">
+                    <MessageSquareText size={34} />
+                    <strong>No messages yet</strong>
+                    <p>Automated and manual customer texts will show here after VoIP.ms is configured.</p>
+                  </div>
+                )}
+              </div>
+            </div>
           </section>
         )}
 
@@ -5742,7 +5983,7 @@ export function App() {
                     <span className="settings-icon purple"><KeyRound size={22} /></span>
                     <strong>API Access</strong>
                   </button>
-                  <button type="button" className="settings-card" onClick={() => setSettingsSection("overview")}>
+                  <button type="button" className="settings-card" onClick={() => setSettingsSection("messagingSettings")}>
                     <span className="settings-icon pink"><MessageSquareText size={22} /></span>
                     <strong>SMS Notifications</strong>
                   </button>
@@ -5761,6 +6002,81 @@ export function App() {
                   </div>
                 </div>
               </>
+            ) : settingsSection === "messagingSettings" ? (
+              <div className="settings-layout">
+                <aside className="settings-menu">
+                  <span>Communication</span>
+                  <button className="active" onClick={() => setSettingsSection("messagingSettings")}>SMS Settings</button>
+                  <button onClick={() => setActiveView("messages")}>Messages</button>
+                  <span>Integrations</span>
+                  <button onClick={() => setSettingsSection("stripe")}>Stripe</button>
+                  <button onClick={() => setSettingsSection("invoiceSettings")}>Invoice Settings</button>
+                  <button onClick={() => setSettingsSection("company")}>Company</button>
+                </aside>
+
+                <form className="settings-panel messaging-settings-panel" onSubmit={saveMessagingSettings}>
+                  <div className="settings-panel-head">
+                    <div>
+                      <p className="settings-kicker">Messages</p>
+                      <h2>SMS Settings</h2>
+                      <p>VoIP.ms text messaging is configured separately for this active location.</p>
+                    </div>
+                    <button className="primary" type="submit">Save</button>
+                  </div>
+
+                  {messagingSettingsMessage && <p className="inline-confirm">{messagingSettingsMessage}</p>}
+
+                  <section className="invoice-settings-card span-2">
+                    <h3>VoIP.ms connection</h3>
+                    <label className="setting-toggle-row">
+                      <span>
+                        <strong>Enable SMS for this location</strong>
+                        <small>Automated and manual texts use this location's outbound DID.</small>
+                      </span>
+                      <input type="checkbox" checked={messagingSettings.smsEnabled} onChange={(event) => setMessagingSettings({ ...messagingSettings, smsEnabled: event.target.checked })} />
+                    </label>
+                    <div className="provider-grid">
+                      <label>API username<input value={messagingSettings.username} onChange={(event) => setMessagingSettings({ ...messagingSettings, username: event.target.value })} /></label>
+                      <label>API password<input type="password" value={messagingSettings.apiPassword} onChange={(event) => setMessagingSettings({ ...messagingSettings, apiPassword: event.target.value })} /></label>
+                      <label>Outbound DID<input value={messagingSettings.defaultDid} onChange={(event) => setMessagingSettings({ ...messagingSettings, defaultDid: event.target.value })} placeholder="9285802775" /></label>
+                      <label>Preferred area code<input value={messagingSettings.areaCode} onChange={(event) => setMessagingSettings({ ...messagingSettings, areaCode: event.target.value })} placeholder="928" /></label>
+                      <label className="span-2">Available inbound DIDs<input value={messagingSettings.availableDids.join(", ")} onChange={(event) => setMessagingSettings({ ...messagingSettings, availableDids: event.target.value.split(",").map((did) => did.trim()).filter(Boolean) })} placeholder="9285802775, 7605551212" /></label>
+                    </div>
+                    <div className="settings-note">Inbound VoIP.ms webhooks are matched to this location by DID. Outbound texts use the outbound DID above.</div>
+                  </section>
+
+                  <section className="invoice-settings-card span-2">
+                    <h3>Automation templates</h3>
+                    <div className="template-settings-grid">
+                      {(Object.keys(messagingTemplateLabels) as MessagingTemplateKey[]).map((key) => (
+                        <div className="template-settings-card" key={key}>
+                          <label className="setting-toggle-row">
+                            <span>
+                              <strong>{messagingTemplateLabels[key]}</strong>
+                              <small>Send automatically when this workflow event happens.</small>
+                            </span>
+                            <input type="checkbox" checked={messagingSettings.autoSend[key]} onChange={(event) => updateMessagingAutoSend(key, event.target.checked)} />
+                          </label>
+                          <textarea value={messagingSettings.templates[key]} onChange={(event) => updateMessagingTemplate(key, event.target.value)} />
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="invoice-settings-card span-2">
+                    <h3>Review email</h3>
+                    <label className="setting-toggle-row">
+                      <span>
+                        <strong>Queue review email after completed jobs</strong>
+                        <small>Email delivery can be connected later; the request is logged now.</small>
+                      </span>
+                      <input type="checkbox" checked={messagingSettings.reviewEmail.enabled} onChange={(event) => setMessagingSettings({ ...messagingSettings, reviewEmail: { ...messagingSettings.reviewEmail, enabled: event.target.checked } })} />
+                    </label>
+                    <label>Subject<input value={messagingSettings.reviewEmail.subject} onChange={(event) => setMessagingSettings({ ...messagingSettings, reviewEmail: { ...messagingSettings.reviewEmail, subject: event.target.value } })} /></label>
+                    <label>Message<textarea value={messagingSettings.reviewEmail.body} onChange={(event) => setMessagingSettings({ ...messagingSettings, reviewEmail: { ...messagingSettings.reviewEmail, body: event.target.value } })} /></label>
+                  </section>
+                </form>
+              </div>
             ) : settingsSection === "stripe" ? (
               <div className="settings-layout">
                 <aside className="settings-menu">

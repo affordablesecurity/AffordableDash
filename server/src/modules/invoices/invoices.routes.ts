@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
+import { queueInvoiceEmail, sendInvoiceTemplateSms } from "../messaging/messaging.service.js";
 
 export const invoicesRouter = Router();
 
@@ -28,6 +29,13 @@ const invoiceSchema = z.object({
     unitPrice: z.number().int().default(0),
     taxable: z.boolean().default(true)
   })).default([])
+});
+
+const sendInvoiceSchema = z.object({
+  method: z.enum(["email", "text", "both"]),
+  to: z.string().trim().optional(),
+  subject: z.string().trim().max(200).optional(),
+  message: z.string().trim().max(2000).optional()
 });
 
 invoicesRouter.get("/", asyncHandler(async (req, res) => {
@@ -92,6 +100,40 @@ invoicesRouter.post("/", asyncHandler(async (req, res) => {
     `;
   }
   res.status(201).json({ invoice, reused: false });
+}));
+
+invoicesRouter.post("/:id/send", asyncHandler(async (req, res) => {
+  const invoiceId = String(req.params.id);
+  const locationId = activeLocationId(req);
+  const input = sendInvoiceSchema.parse(req.body);
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, locationId },
+    include: invoiceInclude
+  });
+  if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+
+  const deliveries: unknown[] = [];
+  const wantsEmail = input.method === "email" || input.method === "both";
+  const wantsText = input.method === "text" || input.method === "both";
+
+  if (wantsText) {
+    const to = input.method === "text" ? input.to : input.to?.split(",").map((part) => part.trim()).find((part) => /\d/.test(part));
+    deliveries.push(await sendInvoiceTemplateSms(locationId, invoice.id, to, input.message));
+  }
+  if (wantsEmail) {
+    const to = input.method === "email" ? input.to : input.to?.split(",").map((part) => part.trim()).find((part) => part.includes("@"));
+    const recipient = to || invoice.customer.email;
+    if (!recipient) return res.status(422).json({ error: "This customer does not have an email address for invoice email." });
+    deliveries.push(await queueInvoiceEmail(locationId, invoice.id, recipient, input.message || ""));
+  }
+
+  const updatedInvoice = await prisma.invoice.update({
+    where: { id: invoice.id },
+    data: { status: invoice.status === InvoiceStatus.DRAFT ? InvoiceStatus.SENT : invoice.status },
+    include: invoiceInclude
+  });
+
+  res.json({ invoice: updatedInvoice, deliveries });
 }));
 
 invoicesRouter.get("/:id", asyncHandler(async (req, res) => {
