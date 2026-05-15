@@ -11,7 +11,7 @@ import { authRouter } from "./modules/auth/auth.routes.js";
 import { apiKeysRouter } from "./modules/api-keys/api-keys.routes.js";
 import { customersRouter } from "./modules/customers/customers.routes.js";
 import { estimatesRouter } from "./modules/estimates/estimates.routes.js";
-import { integrationsRouter } from "./modules/integrations/integrations.routes.js";
+import { integrationsRouter, stripeOAuthRouter } from "./modules/integrations/integrations.routes.js";
 import { invoicesRouter } from "./modules/invoices/invoices.routes.js";
 import { jobsRouter } from "./modules/jobs/jobs.routes.js";
 import { locationsRouter } from "./modules/locations/locations.routes.js";
@@ -39,6 +39,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/api/auth", authRouter);
+app.use("/api/integrations/stripe", stripeOAuthRouter);
 app.use("/api/locations", requireAuth, locationsRouter);
 app.use("/api/location-api-keys", requireAuth, apiKeysRouter);
 app.use("/api/customers", requireAuth, customersRouter);

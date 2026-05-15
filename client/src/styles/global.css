@@ -3635,6 +3635,148 @@ button:disabled {
   margin: 0;
 }
 
+.stripe-settings-panel {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.stripe-connect-row,
+.stripe-manage-card,
+.stripe-status-grid {
+  border: 1px solid #e6e9f1;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.stripe-connect-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px;
+}
+
+.stripe-brand-row,
+.stripe-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.app-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: #3f3df2;
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.connection-arrow {
+  color: #6c7696;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.stripe-wordmark {
+  color: #635bff;
+  font-size: 34px;
+  letter-spacing: 0;
+}
+
+.status-pill.connected {
+  background: #f0efff;
+  color: #3733ff;
+}
+
+.status-pill.warning {
+  background: #fff5d8;
+  color: #9b5e00;
+}
+
+.danger-outline {
+  border: 1px solid #ff5b5b;
+  color: #d83333;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 800;
+}
+
+.stripe-manage-card {
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 26px;
+  background: linear-gradient(135deg, #087c95, #0b6e8a);
+  color: #ffffff;
+  overflow: hidden;
+}
+
+.stripe-manage-card h3,
+.stripe-manage-card p {
+  margin: 0;
+}
+
+.stripe-manage-card p {
+  max-width: 560px;
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.stripe-manage-card code {
+  display: inline-block;
+  margin-top: 12px;
+  color: #ffffff;
+}
+
+.stripe-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.stripe-status-grid div {
+  display: grid;
+  gap: 6px;
+  padding: 18px;
+  border-right: 1px solid #e6e9f1;
+}
+
+.stripe-status-grid div:last-child {
+  border-right: 0;
+}
+
+.stripe-status-grid span {
+  color: #7e8aac;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.success-banner,
+.info-banner {
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-weight: 800;
+}
+
+.success-banner {
+  border: 1px solid #bfecc8;
+  background: #effbf2;
+  color: #137c35;
+}
+
+.info-banner {
+  border: 1px solid #cfe4ff;
+  background: #edf6ff;
+  color: #1d5f9c;
+}
+
 .settings-layout {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);

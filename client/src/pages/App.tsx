@@ -326,7 +326,7 @@ type View = "dispatch" | "schedule" | "customers" | "jobs" | "estimates" | "empl
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number; minute: number; technicianId?: string } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
-type SettingsSection = "overview" | "company" | "invoiceSettings" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans" | "jobTemplates";
+type SettingsSection = "overview" | "company" | "invoiceSettings" | "stripe" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans" | "jobTemplates";
 type CrmOptions = {
   leadSources: string[];
   tags: string[];
@@ -334,6 +334,17 @@ type CrmOptions = {
   jobFields: string[];
   checklists: string[];
   servicePlans: string[];
+};
+
+type StripeStatus = {
+  configured: boolean;
+  connected: boolean;
+  accountId?: string;
+  businessName?: string | null;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+  dashboardUrl?: string;
 };
 
 type InvoiceSettings = {
@@ -458,6 +469,7 @@ function viewFromPath(pathname: string): View {
   if (normalized === "/" || normalized === "/home") return "dispatch";
   if (normalized === "/clients" || normalized === "/clients-leads") return "customers";
   if (normalized === "/price-book") return "pricebook";
+  if (normalized === "/settings/stripe") return "settings";
   return "dispatch";
 }
 
@@ -730,7 +742,7 @@ const optionKeyByKind: Record<CrmOptionKind, keyof CrmOptions> = {
 };
 
 const settingsSections: Array<{
-  id: Exclude<SettingsSection, "overview" | "company" | "invoiceSettings" | "jobTemplates">;
+  id: Exclude<SettingsSection, "overview" | "company" | "invoiceSettings" | "stripe" | "jobTemplates">;
   kind: CrmOptionKind;
   title: string;
   description: string;
@@ -896,6 +908,8 @@ export function App() {
   const [settingsDraft, setSettingsDraft] = useState("");
   const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings>(defaultInvoiceSettings);
   const [invoiceSettingsMessage, setInvoiceSettingsMessage] = useState("");
+  const [stripeStatus, setStripeStatus] = useState<StripeStatus | null>(null);
+  const [stripeMessage, setStripeMessage] = useState("");
   const [companySettingsForm, setCompanySettingsForm] = useState({
     companyName: "",
     phone: "",
@@ -1206,7 +1220,7 @@ export function App() {
   async function loadDashboard() {
     const dashboardQuery = new URLSearchParams({ dateRange: dashboardDateRange });
     if (dashboardDateRange === "selectedDay") dashboardQuery.set("date", dashboardDate);
-    const [summaryResult, customersResult, jobsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult, stripeStatusResult] = await Promise.all([
       api<Summary>(`/api/settings/summary?${dashboardQuery.toString()}`),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
@@ -1217,7 +1231,8 @@ export function App() {
       api<{ categories: PriceBookCategory[]; items: PriceBookItem[] }>("/api/pricebook"),
       api<{ templates: JobTemplate[] }>("/api/settings/job-templates"),
       api<{ templates: ServicePlanTemplate[]; summary: ServicePlanSummary }>("/api/service-plans"),
-      api<{ settings: InvoiceSettings }>("/api/settings/invoice-settings")
+      api<{ settings: InvoiceSettings }>("/api/settings/invoice-settings"),
+      api<StripeStatus>("/api/integrations/stripe/status")
     ]);
 
     setSummary(summaryResult);
@@ -1237,6 +1252,7 @@ export function App() {
     setServicePlanTemplates(servicePlanResult.templates);
     setServicePlanSummary(servicePlanResult.summary);
     setInvoiceSettings({ ...defaultInvoiceSettings, ...invoiceSettingsResult.settings });
+    setStripeStatus(stripeStatusResult);
 
     const [locationResult, apiKeyResult, meResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
@@ -1271,16 +1287,21 @@ export function App() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const nextPath = viewPathMap[activeView];
+    const nextPath = activeView === "settings" && settingsSection === "stripe" ? "/settings/stripe" : viewPathMap[activeView];
     if (window.location.pathname !== nextPath) {
       window.history.pushState({ view: activeView }, "", nextPath);
     }
-  }, [activeView]);
+  }, [activeView, settingsSection]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (window.location.pathname === "/settings/stripe" || window.location.search.includes("stripe=")) {
+      setSettingsSection("stripe");
+      setActiveView("settings");
+    }
     const handlePopState = () => {
       setActiveView(viewFromPath(window.location.pathname));
+      if (window.location.pathname === "/settings/stripe" || window.location.search.includes("stripe=")) setSettingsSection("stripe");
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -1290,6 +1311,14 @@ export function App() {
     if (!token) return;
     loadDashboard().catch((err: unknown) => handleApiError(err, "Unable to load dashboard"));
   }, [token, dashboardDateRange, dashboardDate]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stripeResult = new URLSearchParams(window.location.search).get("stripe");
+    if (stripeResult === "connected") setStripeMessage("Stripe is connected for this location.");
+    if (stripeResult === "cancelled") setStripeMessage("Stripe connection was cancelled.");
+    if (stripeResult && !["connected", "cancelled"].includes(stripeResult)) setError("Stripe connection could not be completed. Please try again.");
+  }, []);
 
   useEffect(() => {
     if (!selectedJob) return;
@@ -1668,6 +1697,32 @@ export function App() {
   function updateInvoiceSetting<K extends keyof InvoiceSettings>(key: K, value: InvoiceSettings[K]) {
     setInvoiceSettings((current) => ({ ...current, [key]: value }));
     setInvoiceSettingsMessage("");
+  }
+
+  async function refreshStripeStatus() {
+    const result = await api<StripeStatus>("/api/integrations/stripe/status");
+    setStripeStatus(result);
+    return result;
+  }
+
+  async function connectStripe() {
+    setError("");
+    setStripeMessage("");
+    const result = await api<{ url: string }>("/api/integrations/stripe/connect", { method: "POST" });
+    window.location.assign(result.url);
+  }
+
+  async function disconnectStripe() {
+    if (!window.confirm("Disconnect Stripe from this location? Existing payment records stay in the CRM, but new online payments will be disabled until Stripe is connected again.")) return;
+    setError("");
+    setStripeMessage("");
+    await api("/api/integrations/stripe/disconnect", { method: "POST" });
+    await refreshStripeStatus();
+    setStripeMessage("Stripe disconnected for this location.");
+  }
+
+  function manageStripe() {
+    window.open(stripeStatus?.dashboardUrl || "https://dashboard.stripe.com/", "_blank", "noopener,noreferrer");
   }
 
   function handleInvoiceLogoUpload(file?: File) {
@@ -4947,10 +5002,80 @@ export function App() {
                   <div className="settings-grid compact">
                     <button type="button" className="settings-card"><span className="settings-icon green"><CalendarDays size={22} /></span><strong>Google</strong></button>
                     <button type="button" className="settings-card"><span className="settings-icon blue"><CreditCard size={22} /></span><strong>Quickbooks</strong></button>
-                    <button type="button" className="settings-card"><span className="settings-icon purple"><BadgeDollarSign size={22} /></span><strong>Stripe</strong></button>
+                    <button type="button" className="settings-card" onClick={() => setSettingsSection("stripe")}><span className="settings-icon purple"><BadgeDollarSign size={22} /></span><strong>Stripe</strong></button>
                   </div>
                 </div>
               </>
+            ) : settingsSection === "stripe" ? (
+              <div className="settings-layout">
+                <aside className="settings-menu">
+                  <span>Integrations</span>
+                  <button className="active" onClick={() => setSettingsSection("stripe")}>Stripe</button>
+                  <button onClick={() => setSettingsSection("invoiceSettings")}>Invoice Settings</button>
+                  <button onClick={() => setSettingsSection("company")}>Company</button>
+                </aside>
+
+                <div className="settings-panel stripe-settings-panel">
+                  <div className="panel-header">
+                    <div>
+                      <span className="breadcrumb">Settings / Stripe Settings</span>
+                      <h2>Connect with Stripe</h2>
+                      <p className="muted">Stripe is connected separately for each location. Payments from this location's invoices will use this location's connected Stripe account.</p>
+                    </div>
+                  </div>
+
+                  {stripeMessage && <div className="success-banner">{stripeMessage}</div>}
+
+                  <div className="stripe-connect-row">
+                    <div className="stripe-brand-row">
+                      <span className="app-mark">A</span>
+                      <span className="connection-arrow">{"->"}</span>
+                      <strong className="stripe-wordmark">stripe</strong>
+                    </div>
+                    <div className="stripe-actions">
+                      {!stripeStatus?.configured ? (
+                        <span className="status-pill warning">Needs setup</span>
+                      ) : stripeStatus.connected ? (
+                        <>
+                          <span className="status-pill connected">Connected</span>
+                          <button className="danger-outline" type="button" onClick={disconnectStripe}>Disconnect</button>
+                        </>
+                      ) : (
+                        <button className="primary" type="button" onClick={connectStripe}>Connect Stripe</button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="stripe-manage-card">
+                    <div>
+                      <h3>{stripeStatus?.connected ? "Stripe account connected" : "Take online payments with Stripe"}</h3>
+                      <p>{stripeStatus?.connected
+                        ? "View your balance, payouts, banking details, and Stripe account settings from Stripe."
+                        : "Connect this location to a Stripe account before sending payable invoices or collecting card payments."}</p>
+                      {stripeStatus?.accountId && <code>{stripeStatus.accountId}</code>}
+                    </div>
+                    {stripeStatus?.connected ? (
+                      <button className="outline-button" type="button" onClick={manageStripe}>Manage Stripe</button>
+                    ) : (
+                      <button className="outline-button" type="button" onClick={connectStripe} disabled={!stripeStatus?.configured}>Start setup</button>
+                    )}
+                  </div>
+
+                  {stripeStatus?.connected && (
+                    <div className="stripe-status-grid">
+                      <div><span>Charges</span><strong>{stripeStatus.chargesEnabled ? "Enabled" : "Needs review"}</strong></div>
+                      <div><span>Payouts</span><strong>{stripeStatus.payoutsEnabled ? "Enabled" : "Needs review"}</strong></div>
+                      <div><span>Verification</span><strong>{stripeStatus.detailsSubmitted ? "Submitted" : "Incomplete"}</strong></div>
+                    </div>
+                  )}
+
+                  {!stripeStatus?.configured && (
+                    <div className="info-banner">
+                      Add `STRIPE_CONNECT_CLIENT_ID` in Render and configure the Stripe OAuth redirect URL as `{window.location.origin}/api/integrations/stripe/oauth/callback`.
+                    </div>
+                  )}
+                </div>
+              </div>
             ) : settingsSection === "company" ? (
               <div className="settings-layout">
                 <aside className="settings-menu">

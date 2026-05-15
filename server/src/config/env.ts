@@ -11,6 +11,7 @@ const schema = z.object({
   DATABASE_URL: z.string(),
   JWT_SECRET: z.string().min(16),
   STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_CONNECT_CLIENT_ID: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   VOIPMS_BASE_URL: z.string().default("https://voip.ms/api/v1/rest.php"),
   VOIPMS_USERNAME: z.string().optional(),
