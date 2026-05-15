@@ -2414,6 +2414,19 @@ export function App() {
     await loadDashboard();
   }
 
+  async function deleteInvoice(invoice: Invoice) {
+    if (!window.confirm(`Delete invoice #${invoice.invoiceNumber}? This cannot be undone.`)) return;
+    setError("");
+    await api(`/api/invoices/${invoice.id}`, { method: "DELETE" });
+    setInvoices((current) => current.filter((item) => item.id !== invoice.id));
+    setJobs((current) => current.map((job) => ({
+      ...job,
+      ...(job.invoices ? { invoices: job.invoices.filter((item) => item.id !== invoice.id) } : {})
+    })));
+    if (selectedInvoiceId === invoice.id) setSelectedInvoiceId("");
+    await loadDashboard();
+  }
+
   function mergeJob(job: Job) {
     setJobs((current) => current.map((item) => item.id === job.id ? { ...item, ...job } : item));
     if (job.invoices?.length) {
@@ -2961,6 +2974,7 @@ export function App() {
           <button className="icon-button" type="button" onClick={() => setSelectedInvoiceId("")} aria-label="Close invoice"><X size={22} /></button>
           <h1>Send invoice</h1>
           <div className="invoice-top-actions">
+            <button className="icon-button danger" type="button" onClick={() => deleteInvoice(invoice)} aria-label="Delete invoice"><Trash2 size={20} /></button>
             <button className="icon-button" type="button" onClick={() => window.print()} aria-label="Print invoice"><Printer size={20} /></button>
             <button className="icon-button" type="button" onClick={() => setError("PDF download is not connected yet. Use Print for now, or connect PDF generation before using downloads.")} aria-label="Download invoice"><Download size={20} /></button>
             <button className="primary" type="button" onClick={() => openInvoiceSendDialog(invoice)}>Send</button>
@@ -6335,6 +6349,17 @@ export function App() {
                         <strong>Invoice #{invoice.invoiceNumber}</strong>
                         <span>{invoice.customer.firstName} {invoice.customer.lastName} / {money.format(invoice.total / 100)} / {invoice.status}</span>
                       </div>
+                      <button
+                        className="icon-button danger"
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          deleteInvoice(invoice);
+                        }}
+                        aria-label={`Delete invoice ${invoice.invoiceNumber}`}
+                      >
+                        <Trash2 size={18} />
+                      </button>
                     </article>
                   ))}
                   {invoices.length === 0 && <p className="empty">No invoices yet.</p>}

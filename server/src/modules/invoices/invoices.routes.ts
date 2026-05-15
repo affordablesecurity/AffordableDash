@@ -103,3 +103,20 @@ invoicesRouter.get("/:id", asyncHandler(async (req, res) => {
   if (!invoice) return res.status(404).json({ error: "Invoice not found" });
   res.json({ invoice });
 }));
+
+invoicesRouter.delete("/:id", asyncHandler(async (req, res) => {
+  const invoiceId = String(req.params.id);
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, locationId: activeLocationId(req) },
+    select: {
+      id: true,
+      payments: { select: { id: true }, take: 1 }
+    }
+  });
+  if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+  if (invoice.payments.length > 0) {
+    return res.status(400).json({ error: "Invoices with recorded payments cannot be deleted." });
+  }
+  await prisma.invoice.delete({ where: { id: invoice.id } });
+  res.status(204).send();
+}));
