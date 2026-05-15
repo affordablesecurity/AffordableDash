@@ -1,4 +1,4 @@
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus, type Customer } from "@prisma/client";
 import { type Request, type Response, Router } from "express";
 import Stripe from "stripe";
 import { env } from "../../config/env.js";
@@ -18,8 +18,10 @@ function payloadValue(value: unknown): string {
 }
 
 function firstPayloadValue(payload: SmsWebhookPayload, keys: string[]): string {
+  const normalizedPayload = new Map(Object.entries(payload).map(([key, value]) => [key.toLowerCase(), value]));
+
   for (const key of keys) {
-    const value = payloadValue(payload[key]);
+    const value = payloadValue(payload[key]) || payloadValue(normalizedPayload.get(key.toLowerCase()));
     if (value) return value;
   }
   return "";
@@ -44,6 +46,24 @@ function credentialDids(metadata: unknown): string[] {
     ? values.availableDids.map(payloadValue).filter(Boolean)
     : [];
   return [defaultDid, ...availableDids].filter(Boolean);
+}
+
+function customerPhoneNumbers(customer: Pick<Customer, "phone" | "alternatePhone" | "additionalPhones">): string[] {
+  const phones = [customer.phone, customer.alternatePhone].filter(Boolean) as string[];
+  const additionalPhones = customer.additionalPhones;
+
+  if (Array.isArray(additionalPhones)) {
+    for (const phone of additionalPhones) {
+      if (typeof phone === "string") {
+        phones.push(phone);
+      } else if (phone && typeof phone === "object" && !Array.isArray(phone)) {
+        const values = phone as Record<string, unknown>;
+        phones.push(payloadValue(values.number) || payloadValue(values.phone) || payloadValue(values.value));
+      }
+    }
+  }
+
+  return phones.filter(Boolean);
 }
 
 webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
@@ -97,26 +117,64 @@ webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
 async function receiveVoipmsSms(req: Request, res: Response) {
   const bodyPayload = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body as SmsWebhookPayload : {};
   const payload = { ...req.query, ...bodyPayload } as SmsWebhookPayload;
-  const fromNumber = firstPayloadValue(payload, ["from", "from_number", "from_did", "src", "source", "callerid", "caller_id", "sender", "phone"]);
-  const toNumber = firstPayloadValue(payload, ["dst", "to", "to_number", "did", "did_number", "destination", "recipient"]) || env.VOIPMS_DID || "";
-  const body = firstPayloadValue(payload, ["message", "sms", "body", "text", "msg", "content"]);
-  const providerRef = firstPayloadValue(payload, ["sms_id", "id", "message_id", "message_uuid", "uuid"]);
+  const fromNumber = firstPayloadValue(payload, [
+    "from",
+    "from_number",
+    "from_did",
+    "src",
+    "source",
+    "callerid",
+    "caller_id",
+    "sender",
+    "phone",
+    "contact",
+    "msisdn"
+  ]);
+  const toNumber = firstPayloadValue(payload, [
+    "dst",
+    "to",
+    "to_number",
+    "did",
+    "did_number",
+    "destination",
+    "recipient",
+    "dst_number",
+    "local_number"
+  ]) || env.VOIPMS_DID || "";
+  const body = firstPayloadValue(payload, ["message", "sms", "body", "text", "msg", "content", "message_body"]);
+  const providerRef = firstPayloadValue(payload, ["sms_id", "id", "message_id", "message_uuid", "uuid", "reference"]);
 
   if (!fromNumber || !body) {
-    return res.status(400).json({ error: "Missing inbound SMS sender or message body" });
+    console.warn("VoIP.ms inbound SMS webhook did not include a sender or message body", {
+      query: req.query,
+      body: bodyPayload
+    });
+    return res.type("text/plain").send("ok");
   }
 
   const credentials = await prisma.integrationCredential.findMany({
-    where: { provider: "voipms", enabled: true }
+    where: { provider: "voipms", enabled: true },
+    include: { location: true }
   });
-  const matchingCredential = credentials.find((credential) => credentialDids(credential.metadata).some((did) => samePhoneNumber(did, toNumber)));
+  const matchingCredential = credentials.find((credential) => {
+    const dids = [...credentialDids(credential.metadata), credential.location?.phone].filter(Boolean) as string[];
+    return dids.some((did) => samePhoneNumber(did, toNumber));
+  });
   const locationId = matchingCredential?.locationId ?? undefined;
   const customerCandidates = await prisma.customer.findMany({
     where: locationId ? { locationId } : {},
     take: 5000
   });
-  const customer = customerCandidates.find((item) => samePhoneNumber(item.phone, fromNumber) || samePhoneNumber(item.alternatePhone, fromNumber)) ?? null;
+  const customer = customerCandidates.find((item) => customerPhoneNumbers(item).some((phone) => samePhoneNumber(phone, fromNumber))) ?? null;
   const resolvedLocationId = locationId ?? customer?.locationId ?? (credentials.length === 1 ? credentials[0].locationId ?? undefined : undefined);
+
+  if (!resolvedLocationId) {
+    console.warn("VoIP.ms inbound SMS webhook could not resolve a CRM location", {
+      fromNumber,
+      toNumber,
+      providerRef
+    });
+  }
 
   const message = await prisma.message.create({
     data: {
