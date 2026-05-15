@@ -47,8 +47,8 @@ import {
   Wrench,
   X
 } from "lucide-react";
-import { Fragment, FormEvent, useEffect, useMemo, useState } from "react";
-import type { CSSProperties } from "react";
+import { Fragment, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { api, clearToken, getToken, login, setToken, signup } from "../api/client";
 import { StatCard } from "../components/StatCard";
 
@@ -92,6 +92,7 @@ type Customer = {
   createdAt?: string;
   privateNotes?: CustomerNote[];
   jobs?: Job[];
+  estimates?: Estimate[];
   invoices?: Invoice[];
   addresses?: Address[];
 };
@@ -244,6 +245,31 @@ type Job = {
   notes?: Array<{ id: string; author: string; content: string; createdAt: string }>;
 };
 
+type Estimate = {
+  id: string;
+  estimateNumber: number;
+  createdAt?: string;
+  title: string;
+  jobType: string;
+  leadSource?: string;
+  tags?: string[];
+  status: "DRAFT" | "SENT" | "APPROVED" | "DECLINED" | "CONVERTED";
+  scheduledStart?: string;
+  scheduledEnd?: string;
+  description?: string;
+  internalNotes?: string;
+  approvalSignature?: string;
+  approvalName?: string;
+  approvedAt?: string;
+  declinedAt?: string;
+  convertedJobId?: string;
+  customer: Customer;
+  address?: Address;
+  technician?: Technician;
+  lineItems?: Array<{ id: string; category: string; name: string; description?: string; quantity: string; unitPrice: number; taxable?: boolean }>;
+  convertedJob?: Job;
+};
+
 type Invoice = {
   id: string;
   invoiceNumber: number;
@@ -296,7 +322,7 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "customers" | "jobs" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "settings" | "api";
+type View = "dispatch" | "schedule" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
@@ -541,6 +567,22 @@ function calculateJobLineTax(job: Job) {
     return isTaxable ? sum + Number(item.quantity || "0") * item.unitPrice : sum;
   }, 0);
   return Math.round(taxableSubtotal * 0.094);
+}
+
+function calculateEstimateSubtotal(estimate: Estimate) {
+  return (estimate.lineItems ?? []).reduce((sum, item) => sum + Number(item.quantity || "0") * item.unitPrice, 0);
+}
+
+function calculateEstimateTax(estimate: Estimate) {
+  const taxableSubtotal = (estimate.lineItems ?? []).reduce((sum, item) => {
+    const isTaxable = item.category === "material" && item.taxable !== false;
+    return isTaxable ? sum + Number(item.quantity || "0") * item.unitPrice : sum;
+  }, 0);
+  return Math.round(taxableSubtotal * 0.094);
+}
+
+function estimateTotal(estimate: Estimate) {
+  return calculateEstimateSubtotal(estimate) + calculateEstimateTax(estimate);
 }
 
 function jobPaymentStatus(job: Job) {
@@ -878,6 +920,15 @@ export function App() {
   const [customerAddressForm, setCustomerAddressForm] = useState({ label: "Service", street1: "", street2: "", city: "", state: "CA", postalCode: "" });
   const [customerAttachmentName, setCustomerAttachmentName] = useState("");
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [estimates, setEstimates] = useState<Estimate[]>([]);
+  const [estimatePageMode, setEstimatePageMode] = useState<"list" | "create">("list");
+  const [selectedEstimateId, setSelectedEstimateId] = useState("");
+  const [estimateSearch, setEstimateSearch] = useState("");
+  const [estimateStatusFilter, setEstimateStatusFilter] = useState("all");
+  const [signatureName, setSignatureName] = useState("");
+  const [signatureHasInk, setSignatureHasInk] = useState(false);
+  const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const signingRef = useRef(false);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [crmOptions, setCrmOptions] = useState<CrmOptions>({
@@ -916,6 +967,7 @@ export function App() {
   const scheduledJobs = useMemo(() => jobs.filter((job) => job.status !== "COMPLETED" && job.status !== "CANCELED"), [jobs]);
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? null;
   const selectedJobInvoice = selectedJob?.invoices?.[0] ?? null;
+  const selectedEstimate = estimates.find((estimate) => estimate.id === selectedEstimateId) ?? null;
   const weekStart = useMemo(() => startOfWeek(scheduleDate), [scheduleDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
   const monthDays = useMemo(() => {
@@ -987,6 +1039,22 @@ export function App() {
       return matchesStatus && matchesQuery;
     });
   }, [jobSearch, jobStatusFilter, jobs]);
+  const filteredEstimates = useMemo(() => {
+    const query = estimateSearch.trim().toLowerCase();
+    return estimates.filter((estimate) => {
+      const matchesStatus = estimateStatusFilter === "all" || estimate.status === estimateStatusFilter;
+      const matchesQuery = !query || [
+        String(estimate.estimateNumber),
+        estimate.title,
+        estimate.jobType,
+        estimate.leadSource ?? "",
+        ...(estimate.tags ?? []),
+        customerName(estimate.customer),
+        addressLine(estimate.address ?? estimate.customer.addresses?.[0])
+      ].some((value) => value.toLowerCase().includes(query));
+      return matchesStatus && matchesQuery;
+    });
+  }, [estimateSearch, estimateStatusFilter, estimates]);
   const filteredCustomers = useMemo(() => {
     const query = customerSearch.trim().toLowerCase();
     if (!query) return customers;
@@ -1010,6 +1078,10 @@ export function App() {
     if (!selectedCustomer) return [];
     return invoices.filter((invoice) => invoice.customer.id === selectedCustomer.id);
   }, [invoices, selectedCustomer]);
+  const selectedCustomerEstimates = useMemo(() => {
+    if (!selectedCustomer) return [];
+    return estimates.filter((estimate) => estimate.customer.id === selectedCustomer.id);
+  }, [estimates, selectedCustomer]);
   const selectedCustomerLifetimeValue = selectedCustomerInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
   const selectedCustomerOutstanding = selectedCustomerInvoices
     .filter((invoice) => invoice.status !== "PAID")
@@ -1035,6 +1107,13 @@ export function App() {
     completed: jobs.filter((job) => job.status === "COMPLETED").length,
     canceled: jobs.filter((job) => job.status === "CANCELED").length
   }), [jobs]);
+  const estimateCounts = useMemo(() => ({
+    draft: estimates.filter((estimate) => estimate.status === "DRAFT").length,
+    sent: estimates.filter((estimate) => estimate.status === "SENT").length,
+    approved: estimates.filter((estimate) => estimate.status === "APPROVED").length,
+    declined: estimates.filter((estimate) => estimate.status === "DECLINED").length,
+    converted: estimates.filter((estimate) => estimate.status === "CONVERTED").length
+  }), [estimates]);
   const jobLineSubtotal = useMemo(() => jobLines.reduce((sum, item) => sum + (Number(item.quantity || "0") * dollarsToCents(item.unitPrice)), 0), [jobLines]);
   const jobTaxableSubtotal = useMemo(() => jobLines.reduce((sum, item) => {
     if (item.category !== "material" || item.taxable === false) return sum;
@@ -1077,10 +1156,11 @@ export function App() {
   async function loadDashboard() {
     const dashboardQuery = new URLSearchParams({ dateRange: dashboardDateRange });
     if (dashboardDateRange === "selectedDay") dashboardQuery.set("date", dashboardDate);
-    const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult] = await Promise.all([
       api<Summary>(`/api/settings/summary?${dashboardQuery.toString()}`),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
+      api<{ estimates: Estimate[] }>("/api/estimates"),
       api<{ invoices: Invoice[] }>("/api/invoices"),
       api<{ technicians: Technician[] }>("/api/technicians"),
       api<CrmOptions>("/api/settings/options"),
@@ -1093,6 +1173,7 @@ export function App() {
     setSummary(summaryResult);
     setCustomers(customersResult.customers);
     setJobs(jobsResult.jobs);
+    setEstimates(estimatesResult.estimates);
     setInvoices(invoicesResult.invoices);
     setTechnicians(techniciansResult.technicians);
     setCrmOptions((current) => ({ ...current, ...optionsResult }));
@@ -1950,6 +2031,183 @@ export function App() {
     setJobPageMode("list");
   }
 
+  async function createEstimate(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    let customerId = jobForm.customerId;
+    let addressId = jobForm.addressId || undefined;
+
+    if (!customerId && createClientInline) {
+      const customerResult = await api<{ customer: Customer }>("/api/customers", {
+        method: "POST",
+        body: JSON.stringify({
+          firstName: jobClientForm.firstName,
+          lastName: jobClientForm.lastName,
+          phone: jobClientForm.phone,
+          email: jobClientForm.email,
+          additionalEmails: splitTags(jobClientForm.additionalEmails),
+          source: jobForm.leadSource || jobClientForm.source,
+          tags: splitTags(jobClientForm.tags),
+          notes: jobClientForm.notes,
+          address: jobClientForm.street1 ? {
+            label: "Service",
+            street1: jobClientForm.street1,
+            street2: jobClientForm.street2 || undefined,
+            city: jobClientForm.city,
+            state: jobClientForm.state,
+            postalCode: jobClientForm.postalCode
+          } : undefined
+        })
+      });
+      customerId = customerResult.customer.id;
+      addressId = customerResult.customer.addresses?.[0]?.id;
+    }
+
+    if (!customerId) {
+      setError("Select an existing client or create a new client before creating the estimate.");
+      return;
+    }
+
+    const result = await api<{ estimate: Estimate }>("/api/estimates", {
+      method: "POST",
+      body: JSON.stringify({
+        customerId,
+        addressId,
+        technicianId: jobForm.technicianId || undefined,
+        title: jobForm.title || jobForm.jobType,
+        jobType: jobForm.jobType,
+        leadSource: jobForm.leadSource,
+        tags: splitTags(jobForm.tags),
+        status: "DRAFT",
+        scheduledStart: jobForm.scheduledStart ? new Date(jobForm.scheduledStart).toISOString() : undefined,
+        scheduledEnd: jobForm.scheduledEnd ? new Date(jobForm.scheduledEnd).toISOString() : undefined,
+        description: jobForm.description,
+        internalNotes: jobForm.internalNotes || undefined,
+        attachments: jobAttachments,
+        lineItems: jobLines.filter((item) => item.name.trim()).map((item) => ({
+          category: item.category,
+          name: item.name,
+          description: item.description || undefined,
+          quantity: Number(item.quantity || "1"),
+          unitPrice: dollarsToCents(item.unitPrice),
+          taxable: item.category === "material" && item.taxable !== false
+        }))
+      })
+    });
+    setEstimates((current) => [result.estimate, ...current.filter((estimate) => estimate.id !== result.estimate.id)]);
+    setSelectedEstimateId(result.estimate.id);
+    setJobForm({
+      customerId: "",
+      addressId: "",
+      technicianId: "",
+      title: "",
+      jobType: "Car Lockout Service",
+      scheduledStart: "",
+      scheduledEnd: "",
+      description: "",
+      internalNotes: "",
+      leadSource: "Unknown",
+      tags: ""
+    });
+    setJobClientForm(blankCustomerForm());
+    setCreateClientInline(false);
+    setJobClientSearch("");
+    setJobAddressSearch("");
+    setTagDraft("");
+    setJobTemplateId("");
+    setJobLines([]);
+    setJobAttachments([]);
+    await loadDashboard();
+    setEstimatePageMode("list");
+  }
+
+  function signaturePoint(event: ReactPointerEvent<HTMLCanvasElement>) {
+    const canvas = event.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.height
+    };
+  }
+
+  function beginSignature(event: ReactPointerEvent<HTMLCanvasElement>) {
+    const canvas = event.currentTarget;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const point = signaturePoint(event);
+    signingRef.current = true;
+    context.lineWidth = 3;
+    context.lineCap = "round";
+    context.strokeStyle = "#101421";
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+    canvas.setPointerCapture(event.pointerId);
+  }
+
+  function drawSignature(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (!signingRef.current) return;
+    const context = event.currentTarget.getContext("2d");
+    if (!context) return;
+    const point = signaturePoint(event);
+    context.lineTo(point.x, point.y);
+    context.stroke();
+    setSignatureHasInk(true);
+  }
+
+  function endSignature(event: ReactPointerEvent<HTMLCanvasElement>) {
+    signingRef.current = false;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // Pointer may already be released by the browser.
+    }
+  }
+
+  function clearSignature() {
+    const canvas = signatureCanvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+    setSignatureHasInk(false);
+  }
+
+  async function updateEstimate(estimate: Estimate, payload: Partial<Estimate> & { lineItems?: Estimate["lineItems"] }) {
+    setError("");
+    const result = await api<{ estimate: Estimate }>(`/api/estimates/${estimate.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setSelectedEstimateId(result.estimate.id);
+    return result.estimate;
+  }
+
+  async function approveEstimate(estimate: Estimate) {
+    const signature = signatureCanvasRef.current?.toDataURL("image/png");
+    if (!estimate.approvalSignature && !signatureHasInk) {
+      setError("Capture the customer signature before approving the estimate.");
+      return;
+    }
+    await updateEstimate(estimate, {
+      status: "APPROVED",
+      approvalSignature: estimate.approvalSignature || signature,
+      approvalName: signatureName || customerName(estimate.customer)
+    });
+    setSignatureName("");
+    clearSignature();
+  }
+
+  async function declineEstimate(estimate: Estimate) {
+    await updateEstimate(estimate, { status: "DECLINED" });
+  }
+
+  async function convertEstimateToJob(estimate: Estimate) {
+    setError("");
+    const result = await api<{ estimate: Estimate; job: Job }>(`/api/estimates/${estimate.id}/convert-to-job`, { method: "POST" });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setJobs((current) => [result.job, ...current.filter((job) => job.id !== result.job.id)]);
+    openJobDetail(result.job);
+  }
+
   async function createInvoice(event: FormEvent) {
     event.preventDefault();
     setError("");
@@ -2531,7 +2789,7 @@ export function App() {
           <button className={activeView === "customers" ? "active" : ""} onClick={() => setActiveView("customers")}><Users size={18} /> Clients & Leads</button>
           <button className={activeView === "employees" ? "active" : ""} onClick={() => setActiveView("employees")}><UserPlus size={18} /> Employees</button>
           <button className={activeView === "invoices" ? "active" : ""} onClick={() => setActiveView("invoices")}><ReceiptText size={18} /> Invoices</button>
-          <button><FileText size={18} /> Estimates</button>
+          <button className={activeView === "estimates" ? "active" : ""} onClick={() => setActiveView("estimates")}><FileText size={18} /> Estimates</button>
           <button><WalletCards size={18} /> Payments</button>
           <button><CalendarDays size={18} /> Events</button>
           <button><Clock3 size={18} /> Time Clock</button>
@@ -2565,7 +2823,7 @@ export function App() {
               <button onClick={() => { setAddMenuOpen(false); setActiveView("employees"); openEmployeeModal("employee"); }}><UserPlus size={16} /> Employee</button>
               <button onClick={() => { setActiveView("jobs"); setJobPageMode("create"); setAddMenuOpen(false); }}><Wrench size={16} /> Job</button>
               <button onClick={() => { setActiveView("invoices"); setAddMenuOpen(false); }}><ReceiptText size={16} /> Invoice</button>
-              <button><FileText size={16} /> Estimate</button>
+              <button onClick={() => { setActiveView("estimates"); setEstimatePageMode("create"); setSelectedEstimateId(""); setAddMenuOpen(false); }}><FileText size={16} /> Estimate</button>
               <button onClick={() => { setActiveView("schedule"); setAddMenuOpen(false); }}><CalendarDays size={16} /> Event</button>
             </div>
           </div>
@@ -2923,7 +3181,7 @@ export function App() {
                   </div>
                   <div className="customer-profile-actions">
                     <button className="outline-button" onClick={() => { setActiveView("jobs"); setJobPageMode("create"); selectJobCustomer(selectedCustomer); }}><Plus size={17} /> Job</button>
-                    <button className="outline-button"><Plus size={17} /> Estimate</button>
+                    <button className="outline-button" onClick={() => { setActiveView("estimates"); setEstimatePageMode("create"); setSelectedEstimateId(""); selectJobCustomer(selectedCustomer); }}><Plus size={17} /> Estimate</button>
                     <button className="outline-button"><Plus size={17} /> Lead</button>
                     <button className="text-button" onClick={() => removeCustomer(selectedCustomer.id)}><Trash2 size={16} /> Remove</button>
                   </div>
@@ -3047,6 +3305,22 @@ export function App() {
                   </section>
                 )}
 
+                {customerProfileTab === "estimates" && (
+                  <section className="panel">
+                    <div className="panel-header"><h2>Estimates</h2><FileText size={18} /></div>
+                    <div className="profile-table">
+                      {selectedCustomerEstimates.map((estimate) => (
+                        <article key={estimate.id} role="button" tabIndex={0} onClick={() => { setSelectedEstimateId(estimate.id); setEstimatePageMode("list"); setActiveView("estimates"); }}>
+                          <strong>Estimate #{estimate.estimateNumber} {estimate.title}</strong>
+                          <span>{formatDate(estimate.createdAt)} / {statusLabel(estimate.status)}</span>
+                          <span>{money.format(estimateTotal(estimate) / 100)}</span>
+                        </article>
+                      ))}
+                      {selectedCustomerEstimates.length === 0 && <p className="empty">No estimates for this customer yet.</p>}
+                    </div>
+                  </section>
+                )}
+
                 {customerProfileTab === "attachments" && (
                   <section className="panel">
                     <div className="panel-header"><h2>Attachments</h2><Paperclip size={18} /></div>
@@ -3061,7 +3335,7 @@ export function App() {
                   </section>
                 )}
 
-                {(customerProfileTab === "notes" || customerProfileTab === "leads" || customerProfileTab === "estimates") && (
+                {(customerProfileTab === "notes" || customerProfileTab === "leads") && (
                   <section className="panel">
                     <div className="panel-header"><h2>{customerProfileTab[0].toUpperCase() + customerProfileTab.slice(1)}</h2><FileText size={18} /></div>
                     {customerProfileTab === "notes" ? (
@@ -3761,6 +4035,265 @@ export function App() {
                   </section>
                 </div>
               </form>
+            </section>
+          )
+        )}
+
+        {activeView === "estimates" && (
+          estimatePageMode === "create" ? (
+            <section className="jobs-page job-create-page">
+              <div className="section-actions">
+                <div className="breadcrumb"><FileText size={17} /> Estimates / New Estimate</div>
+                <div className="action-buttons">
+                  <select value={jobTemplateId} onChange={(event) => applyJobTemplate(event.target.value)} aria-label="Estimate template">
+                    <option value="">Estimate Template</option>
+                    {jobTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+                  </select>
+                  <button className="outline-button" type="button" onClick={() => setEstimatePageMode("list")}>Back to Estimates</button>
+                  <button className="primary" type="submit" form="create-estimate-form">Save Estimate</button>
+                </div>
+              </div>
+
+              <form id="create-estimate-form" className="job-create-layout compact-job-create" onSubmit={createEstimate}>
+                <div className="job-create-column">
+                  <section className="panel job-side-card">
+                    <div className="panel-header"><h2><Users size={18} /> Customer</h2>{selectedJobCustomer && <button className="text-button" type="button" onClick={clearJobCustomer}>Clear</button>}</div>
+                    {!createClientInline && !selectedJobCustomer && (
+                      <div className="record-form">
+                        <div className="typeahead">
+                          <input placeholder="Name, email, phone or address" value={jobClientSearch} onChange={(event) => {
+                            setJobClientSearch(event.target.value);
+                            setJobForm({ ...jobForm, customerId: "", addressId: "" });
+                            setJobAddressSearch("");
+                          }} />
+                          {jobClientSearch && !jobForm.customerId && (
+                            <div className="typeahead-results">
+                              {clientMatches.map((customer) => (
+                                <button type="button" key={customer.id} onClick={() => selectJobCustomer(customer)}>
+                                  <strong>{customerName(customer)}</strong>
+                                  <span>{customer.phone}{customer.email ? ` / ${customer.email}` : ""}</span>
+                                  <small>{addressLine(customer.addresses?.[0])}</small>
+                                </button>
+                              ))}
+                              {clientMatches.length === 0 && <span className="typeahead-empty">No matching clients yet.</span>}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {!createClientInline && selectedJobCustomer && (
+                      <div className="job-customer-card">
+                        <div className="job-customer-map"><span>Street view</span><strong>{selectedJobCustomer.addresses?.[0]?.city || "Service address"}</strong></div>
+                        <div className="job-customer-body">
+                          <div className="job-customer-title"><strong>{customerName(selectedJobCustomer)}</strong><button className="outline-button" type="button" onClick={() => openCustomerProfile(selectedJobCustomer)}>View details</button></div>
+                          <p>{addressLine(selectedJobCustomer.addresses?.find((address) => address.id === jobForm.addressId) ?? selectedJobCustomer.addresses?.[0])}</p>
+                          <p><Phone size={16} /> {selectedJobCustomer.phone}</p>
+                          {selectedJobCustomer.email && <p><Mail size={16} /> {selectedJobCustomer.email}</p>}
+                          <button className="customer-profile-link" type="button" onClick={() => openCustomerProfile(selectedJobCustomer)}>Customer profile</button>
+                        </div>
+                      </div>
+                    )}
+                    {createClientInline && (
+                      <div className="new-client-grid">
+                        <input placeholder="First name" value={jobClientForm.firstName} onChange={(event) => setJobClientForm({ ...jobClientForm, firstName: event.target.value })} required />
+                        <input placeholder="Last name" value={jobClientForm.lastName} onChange={(event) => setJobClientForm({ ...jobClientForm, lastName: event.target.value })} required />
+                        <input placeholder="Phone" value={jobClientForm.phone} onChange={(event) => setJobClientForm({ ...jobClientForm, phone: event.target.value })} required />
+                        <input placeholder="Email" value={jobClientForm.email} onChange={(event) => setJobClientForm({ ...jobClientForm, email: event.target.value })} />
+                        <input className="span-2" placeholder="Street address" value={jobClientForm.street1} onChange={(event) => setJobClientForm({ ...jobClientForm, street1: event.target.value })} />
+                        <input placeholder="City" value={jobClientForm.city} onChange={(event) => setJobClientForm({ ...jobClientForm, city: event.target.value })} />
+                        <input placeholder="State" value={jobClientForm.state} onChange={(event) => setJobClientForm({ ...jobClientForm, state: event.target.value })} />
+                        <input placeholder="Postal code" value={jobClientForm.postalCode} onChange={(event) => setJobClientForm({ ...jobClientForm, postalCode: event.target.value })} />
+                      </div>
+                    )}
+                    <div className="or-divider">OR</div>
+                    <button className="primary centered-action" type="button" onClick={() => {
+                      setCreateClientInline((current) => !current);
+                      setJobForm((current) => ({ ...current, customerId: "", addressId: "" }));
+                      setJobClientSearch("");
+                      setJobAddressSearch("");
+                    }}><Plus size={18} /> {createClientInline ? "Select Existing Client" : "Create New Client"}</button>
+                  </section>
+
+                  <section className="panel schedule-card">
+                    <div className="panel-header"><h2><CalendarDays size={19} /> Visit Window</h2><Pencil size={18} /></div>
+                    <div className="schedule-compact">
+                      <div className="schedule-row"><span>From</span><input type="date" value={jobForm.scheduledStart.slice(0, 10)} onChange={(event) => {
+                        const time = jobForm.scheduledStart.slice(11) || "10:00";
+                        setJobForm({ ...jobForm, scheduledStart: `${event.target.value}T${time}` });
+                      }} /><input type="time" value={jobForm.scheduledStart.slice(11) || "10:00"} onChange={(event) => {
+                        const date = jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
+                        setJobForm({ ...jobForm, scheduledStart: `${date}T${event.target.value}` });
+                      }} /></div>
+                      <div className="schedule-row"><span>To</span><input type="date" value={(jobForm.scheduledEnd || jobForm.scheduledStart).slice(0, 10)} onChange={(event) => {
+                        const time = jobForm.scheduledEnd.slice(11) || "11:00";
+                        setJobForm({ ...jobForm, scheduledEnd: `${event.target.value}T${time}` });
+                      }} /><input type="time" value={jobForm.scheduledEnd.slice(11) || "11:00"} onChange={(event) => {
+                        const date = jobForm.scheduledEnd.slice(0, 10) || jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
+                        setJobForm({ ...jobForm, scheduledEnd: `${date}T${event.target.value}` });
+                      }} /></div>
+                      <div className="schedule-team-row"><Users size={21} /><select value={jobForm.technicianId} onChange={(event) => setJobForm({ ...jobForm, technicianId: event.target.value })}><option value="">Edit team</option>{technicians.filter((tech) => tech.active && tech.fieldTech).map((tech) => <option key={tech.id} value={tech.id}>{tech.name}</option>)}</select></div>
+                    </div>
+                  </section>
+                </div>
+
+                <div className="job-main-column">
+                  <section className="panel private-note-panel">
+                    <div className="panel-header"><h2><StickyNote size={18} /> Estimate notes</h2></div>
+                    <textarea placeholder="Private/internal notes for this estimate" value={jobForm.internalNotes} onChange={(event) => setJobForm({ ...jobForm, internalNotes: event.target.value })} />
+                  </section>
+                  <section className="panel job-detail-card">
+                    <div className="record-form compact-fields">
+                      <label>Estimate Title<input value={jobForm.title} onChange={(event) => setJobForm({ ...jobForm, title: event.target.value })} placeholder="Residential rekey, commercial repair" required /></label>
+                      <label>Job Type<input list="job-type-options" value={jobForm.jobType} onChange={(event) => setJobForm({ ...jobForm, jobType: event.target.value })} onBlur={() => saveJobOption("jobType", jobForm.jobType).catch(() => undefined)} required /></label>
+                      <label>Lead Source<input list="lead-source-options" value={jobForm.leadSource} onChange={(event) => setJobForm({ ...jobForm, leadSource: event.target.value })} onBlur={() => addJobLeadSource(jobForm.leadSource).catch(() => undefined)} /></label>
+                      <label>Description<input placeholder="Visible estimate description" value={jobForm.description} onChange={(event) => setJobForm({ ...jobForm, description: event.target.value })} /></label>
+                    </div>
+                    <div className="tag-editor estimate-tag-editor">
+                      <div className="tag-list">{splitTags(jobForm.tags).map((tag) => <button type="button" key={tag} onClick={() => setJobForm({ ...jobForm, tags: splitTags(jobForm.tags).filter((item) => item !== tag).join(", ") })}>{tag}</button>)}</div>
+                      <input list="tag-options" placeholder="Tags (press enter)" value={tagDraft} onChange={(event) => setTagDraft(event.target.value)} onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === ",") {
+                          event.preventDefault();
+                          addJobTag(tagDraft).catch((err: Error) => setError(err.message));
+                        }
+                      }} />
+                    </div>
+                  </section>
+                  <section className="panel line-items-panel">
+                    <div className="line-items-header"><h2>Line items</h2><FileText size={18} /></div>
+                    {(["service", "material"] as const).map((category) => (
+                      <div className="line-category" key={category}>
+                        <div className="line-category-head"><strong>{category === "service" ? "Services" : "Materials"}</strong><div className="line-actions"><select onChange={(event) => { addPriceBookItemToJob(event.target.value); event.currentTarget.value = ""; }}><option value="">Add from price book</option>{priceBookItems.filter((item) => item.itemType === category).map((item) => <option key={item.id} value={item.id}>{item.name} / {money.format(item.price / 100)}</option>)}</select><button type="button" className="text-add-button" onClick={() => addJobLine(category)}><Plus size={18} /> Add {category}</button></div></div>
+                        {jobLines.filter((item) => item.category === category).map((item) => (
+                          <div className="line-item-row" key={item.id}>
+                            <input placeholder="Name" value={item.name} onChange={(event) => updateJobLine(item.id, { name: event.target.value })} />
+                            <input placeholder="Description" value={item.description} onChange={(event) => updateJobLine(item.id, { description: event.target.value })} />
+                            <input placeholder="Qty" value={item.quantity} onChange={(event) => updateJobLine(item.id, { quantity: event.target.value })} />
+                            <input placeholder="Price" value={item.unitPrice} onChange={(event) => updateJobLine(item.id, { unitPrice: event.target.value })} />
+                            <label className="line-tax-toggle"><input type="checkbox" checked={item.category === "material" && item.taxable !== false} disabled={item.category !== "material"} onChange={(event) => updateJobLine(item.id, { taxable: event.target.checked })} /> Taxable</label>
+                            <button type="button" className="text-button" onClick={() => setJobLines((current) => current.filter((line) => line.id !== item.id))}><Trash2 size={16} /></button>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                    <div className="totals-box"><span>Subtotal <strong>{money.format(jobLineSubtotal / 100)}</strong></span><span>Tax rate <em>Taxable materials (9.4%)</em> <strong>{money.format(jobLineTax / 100)}</strong></span><span className="grand-total">Estimate total <strong>{money.format(jobLineTotal / 100)}</strong></span></div>
+                  </section>
+                </div>
+              </form>
+            </section>
+          ) : (
+            <section className="jobs-page">
+              <div className="section-actions">
+                <div className="breadcrumb"><FileText size={17} /> {selectedEstimate ? `Estimates / #${selectedEstimate.estimateNumber}` : "Estimates"}</div>
+                <div className="action-buttons">
+                  {selectedEstimate && <button className="outline-button" type="button" onClick={() => setSelectedEstimateId("")}>All Estimates</button>}
+                  <button className="primary" onClick={() => { setSelectedEstimateId(""); setEstimatePageMode("create"); }}><Plus size={18} /> Create Estimate</button>
+                </div>
+              </div>
+
+              {selectedEstimate ? (
+                <div className="job-detail-view">
+                  <section className="job-detail-titlebar">
+                    <div>
+                      <span className="breadcrumb">Customers / {customerName(selectedEstimate.customer)} / Estimates / Estimate #{selectedEstimate.estimateNumber}</span>
+                      <h1>Estimate #{selectedEstimate.estimateNumber} • {selectedEstimate.title}</h1>
+                      <span className={`status-pill job-status-${selectedEstimate.status.toLowerCase()}`}>{statusLabel(selectedEstimate.status)}</span>
+                    </div>
+                    <div className="job-detail-actions">
+                      <button className="outline-button" type="button" onClick={() => updateEstimate(selectedEstimate, { status: "SENT" })}>Mark Sent</button>
+                      <button className="outline-button" type="button" onClick={() => declineEstimate(selectedEstimate)}>Decline</button>
+                      <button className="primary" type="button" onClick={() => approveEstimate(selectedEstimate)}>Approve</button>
+                      <button className="primary" type="button" disabled={selectedEstimate.status !== "APPROVED"} onClick={() => convertEstimateToJob(selectedEstimate)}>Convert to Job</button>
+                    </div>
+                  </section>
+                  <div className="job-detail-layout">
+                    <aside className="job-detail-side">
+                      <section className="panel job-detail-customer">
+                        <div className="panel-header"><h2><Users size={18} /> Customer</h2><button className="outline-button" type="button" onClick={() => openCustomerProfile(selectedEstimate.customer)}>View details</button></div>
+                        <div className="street-preview"><strong>Street view</strong><span>{selectedEstimate.address?.city || selectedEstimate.customer.addresses?.[0]?.city || "Service area"}</span></div>
+                        <h3>{customerName(selectedEstimate.customer)}</h3>
+                        <p><MapPin size={16} /> {addressLine(selectedEstimate.address ?? selectedEstimate.customer.addresses?.[0])}</p>
+                        <p><Phone size={16} /> {selectedEstimate.customer.phone}</p>
+                        {selectedEstimate.customer.email && <p><Mail size={16} /> {selectedEstimate.customer.email}</p>}
+                      </section>
+                    </aside>
+                    <main className="job-detail-main">
+                      <section className="panel approval-panel">
+                        <div className="panel-header"><h2>Customer approval</h2><CheckCheck size={18} /></div>
+                        {selectedEstimate.approvalSignature ? (
+                          <div className="signature-result">
+                            <img src={selectedEstimate.approvalSignature} alt="Customer approval signature" />
+                            <span>Approved by {selectedEstimate.approvalName || customerName(selectedEstimate.customer)} on {formatDateTime(selectedEstimate.approvedAt)}</span>
+                          </div>
+                        ) : (
+                          <>
+                            <input placeholder="Signer name" value={signatureName} onChange={(event) => setSignatureName(event.target.value)} />
+                            <canvas
+                              ref={signatureCanvasRef}
+                              className="signature-pad"
+                              width={720}
+                              height={220}
+                              onPointerDown={beginSignature}
+                              onPointerMove={drawSignature}
+                              onPointerUp={endSignature}
+                              onPointerCancel={endSignature}
+                            />
+                            <div className="action-buttons"><button className="outline-button" type="button" onClick={clearSignature}>Clear signature</button><button className="primary" type="button" onClick={() => approveEstimate(selectedEstimate)}>Approve estimate</button></div>
+                          </>
+                        )}
+                        {selectedEstimate.status === "DECLINED" && <p className="inline-confirm danger">This estimate was declined on {formatDateTime(selectedEstimate.declinedAt)}.</p>}
+                      </section>
+                      <section className="panel invoice-summary-card">
+                        <div className="panel-header"><h2>Estimate line items</h2><ReceiptText size={18} /></div>
+                        <div className="profile-table">
+                          {(selectedEstimate.lineItems ?? []).map((item) => <article key={item.id}><strong>{item.name}</strong><span>{item.category} / Qty {item.quantity} / {money.format(item.unitPrice / 100)}</span></article>)}
+                          {!(selectedEstimate.lineItems?.length) && <p className="empty">No line items on this estimate yet.</p>}
+                        </div>
+                        <div className="invoice-lines">
+                          <span>Subtotal</span><strong>{money.format(calculateEstimateSubtotal(selectedEstimate) / 100)}</strong>
+                          <span>Tax</span><strong>{money.format(calculateEstimateTax(selectedEstimate) / 100)}</strong>
+                          <span>Total</span><strong>{money.format(estimateTotal(selectedEstimate) / 100)}</strong>
+                        </div>
+                      </section>
+                      <section className="panel">
+                        <div className="panel-header"><h2>Estimate details</h2><FileText size={18} /></div>
+                        <p>{selectedEstimate.description || "No visible description yet."}</p>
+                        <div className="job-detail-tags">{(selectedEstimate.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>
+                        <p className="muted">Flow: estimate approval creates the quote record; converting creates the job/work order. The invoice is generated from the job when you are ready to bill or take payment.</p>
+                      </section>
+                    </main>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="job-summary-panel">
+                    {[
+                      ["DRAFT", "Draft", estimateCounts.draft],
+                      ["SENT", "Sent", estimateCounts.sent],
+                      ["APPROVED", "Approved", estimateCounts.approved],
+                      ["DECLINED", "Declined", estimateCounts.declined],
+                      ["CONVERTED", "Converted", estimateCounts.converted]
+                    ].map(([status, label, count]) => <button key={status} onClick={() => setEstimateStatusFilter(status as string)} className={estimateStatusFilter === status ? "selected" : ""}><FileText size={21} /><strong>{count}</strong><span>{label}</span></button>)}
+                  </div>
+                  <div className="jobs-table-panel">
+                    <div className="jobs-tools"><div className="search-box table-search"><Search size={18} /><input placeholder="Search estimates, clients, addresses" value={estimateSearch} onChange={(event) => setEstimateSearch(event.target.value)} /></div><button className="outline-button" onClick={() => setEstimateStatusFilter("all")}>All</button></div>
+                    <div className="jobs-table">
+                      <div className="jobs-table-row jobs-table-head"><span>Estimate #</span><span>Client</span><span>Created</span><span>Address</span><span>Status</span><span>Total</span><span>Converted Job</span></div>
+                      {filteredEstimates.map((estimate) => (
+                        <div className="jobs-table-row clickable-row estimate-row" key={estimate.id} role="button" tabIndex={0} onClick={() => setSelectedEstimateId(estimate.id)}>
+                          <strong>{estimate.estimateNumber}</strong>
+                          <span>{customerName(estimate.customer)}</span>
+                          <span>{formatDate(estimate.createdAt)}</span>
+                          <span>{addressLine(estimate.address ?? estimate.customer.addresses?.[0])}</span>
+                          <span className={`status-pill job-status-${estimate.status.toLowerCase()}`}>{statusLabel(estimate.status)}</span>
+                          <strong>{money.format(estimateTotal(estimate) / 100)}</strong>
+                          <span>{estimate.convertedJob ? `#${estimate.convertedJob.jobNumber}` : "-"}</span>
+                        </div>
+                      ))}
+                      {filteredEstimates.length === 0 && <p className="empty table-empty">No estimates match this search.</p>}
+                    </div>
+                  </div>
+                </>
+              )}
             </section>
           )
         )}

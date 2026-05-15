@@ -4823,11 +4823,52 @@ button:disabled {
     padding: 22px;
   }
 
-  .invoice-preview-head,
-  .invoice-parties,
-  .invoice-setting-preview,
-  .invoice-setting-preview-lines > div,
-  .invoice-detail-card dl {
-    grid-template-columns: 1fr;
-  }
+.invoice-preview-head,
+.invoice-parties,
+.invoice-setting-preview,
+.invoice-setting-preview-lines > div,
+.invoice-detail-card dl {
+  grid-template-columns: 1fr;
+}
+}
+
+.approval-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.signature-pad {
+  width: 100%;
+  height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(transparent 88%, rgba(71, 85, 105, 0.14) 89%),
+    #fff;
+  touch-action: none;
+}
+
+.signature-result {
+  display: grid;
+  gap: 10px;
+}
+
+.signature-result img {
+  max-width: 360px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.inline-confirm.danger {
+  color: #b42318;
+}
+
+.estimate-row {
+  grid-template-columns: 110px 1.1fr 1fr 1.7fr 1fr 1fr 1fr;
+}
+
+.estimate-tag-editor {
+  margin-top: 14px;
 }
