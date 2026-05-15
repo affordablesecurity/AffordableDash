@@ -33,7 +33,7 @@ function stripeCallbackUrl() {
 }
 
 function stripeSettingsUrl(status: string) {
-  return `${env.CLIENT_URL.replace(/\/+$/, "")}/settings?stripe=${encodeURIComponent(status)}`;
+  return `${env.CLIENT_URL.replace(/\/+$/, "")}/settings/stripe?stripe=${encodeURIComponent(status)}`;
 }
 
 integrationsRouter.get("/status", asyncHandler(async (req, res) => {
