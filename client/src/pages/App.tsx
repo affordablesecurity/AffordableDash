@@ -49,7 +49,7 @@ import {
 } from "lucide-react";
 import { Fragment, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import { api, clearToken, getToken, login, setToken, signup } from "../api/client";
+import { ApiError, api, clearToken, getToken, login, setToken, signup } from "../api/client";
 import { StatCard } from "../components/StatCard";
 
 type Summary = {
@@ -1167,6 +1167,24 @@ export function App() {
   const selectedSettings = settingsSections.find((section) => section.id === settingsSection);
   const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
   const activeLocationAccess = locations.find((item) => item.location.id === activeLocationId) ?? locations[0];
+
+  function clearSession(message = "") {
+    clearToken();
+    updateToken(null);
+    setCurrentRole("");
+    setLocations([]);
+    setActiveLocationId("");
+    if (message) setError(message);
+  }
+
+  function handleApiError(err: unknown, fallback = "Request failed") {
+    if (err instanceof ApiError && err.status === 401) {
+      clearSession("Your session expired. Please sign in again.");
+      return;
+    }
+    setError(err instanceof Error ? err.message : fallback);
+  }
+
   const reportItems = reports?.sections.flatMap((section) => section.items) ?? [];
   const selectedReport = reportItems.find((item) => item.id === selectedReportId) ?? reportItems[0];
   const activeCharts = reportDashboard === "leads"
@@ -1270,7 +1288,7 @@ export function App() {
 
   useEffect(() => {
     if (!token) return;
-    loadDashboard().catch((err: Error) => setError(err.message));
+    loadDashboard().catch((err: unknown) => handleApiError(err, "Unable to load dashboard"));
   }, [token, dashboardDateRange, dashboardDate]);
 
   useEffect(() => {
@@ -1301,7 +1319,7 @@ export function App() {
       setReports(null);
       return;
     }
-    loadReports().catch((err: Error) => setError(err.message));
+    loadReports().catch((err: unknown) => handleApiError(err, "Unable to load reports"));
   }, [token, currentRole, reportDateRange, reportShowBy]);
 
   useEffect(() => {
@@ -2854,7 +2872,7 @@ export function App() {
           <button><Headphones size={18} /> Support</button>
           <button><BookOpen size={18} /> Training</button>
         </nav>
-        <button className="ghost" onClick={() => { clearToken(); updateToken(null); }}>
+        <button className="ghost" onClick={() => clearSession()}>
           <LogOut size={18} /> Sign out
         </button>
       </aside>

@@ -20,14 +20,29 @@ export function clearToken() {
   localStorage.removeItem("crm_token");
 }
 
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+type ApiOptions = RequestInit & {
+  skipAuth?: boolean;
+};
+
+export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
+  const { skipAuth, headers, ...fetchOptions } = options;
+  const token = skipAuth ? null : getToken();
   const response = await fetch(`${API_URL}${path}`, {
-    ...options,
+    ...fetchOptions,
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers
+      ...headers
     }
   });
 
@@ -38,7 +53,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
           .flatMap(([field, messages]) => Array.isArray(messages) ? messages.map((message) => `${field}: ${message}`) : [])
           .join(" ")
       : "";
-    throw new Error(fieldErrors || body.error || "Request failed");
+    throw new ApiError(fieldErrors || body.error || "Request failed", response.status);
   }
 
   if (response.status === 204) {
@@ -50,6 +65,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 
 export function login(identifier: string, password: string) {
   return api<LoginResponse>("/api/auth/login", {
+    skipAuth: true,
     method: "POST",
     body: JSON.stringify({ identifier, password })
   });
@@ -68,6 +84,7 @@ export function signup(input: {
 }) {
   const username = input.username.trim().toLowerCase();
   return api<LoginResponse>("/api/auth/signup", {
+    skipAuth: true,
     method: "POST",
     body: JSON.stringify({ ...input, username })
   });
