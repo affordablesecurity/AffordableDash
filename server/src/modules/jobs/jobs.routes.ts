@@ -1,4 +1,4 @@
-import { JobStatus } from "@prisma/client";
+import { InvoiceStatus, JobStatus } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
@@ -33,19 +33,83 @@ const jobSchema = z.object({
   })).default([])
 });
 
+const jobInclude = {
+  customer: { include: { addresses: true } },
+  address: true,
+  technician: true,
+  notes: { orderBy: { createdAt: "desc" as const } },
+  lineItems: true,
+  invoices: { include: { payments: true } }
+};
+
+const lineItemSchema = z.object({
+  category: z.enum(["service", "material"]).default("service"),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  quantity: z.number().positive().default(1),
+  unitPrice: z.number().int().default(0),
+  unitCost: z.number().int().default(0),
+  taxable: z.boolean().default(true)
+});
+
+async function findLocationJob(jobId: string, locationId: string) {
+  return prisma.job.findFirst({ where: { id: jobId, locationId } });
+}
+
+function jobLineAmount(lineItem: { quantity: unknown; unitPrice: number }) {
+  return Math.round(Number(lineItem.quantity || 0) * lineItem.unitPrice);
+}
+
+async function syncJobInvoices(jobId: string) {
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    include: { lineItems: true, invoices: true }
+  });
+  if (!job) return;
+
+  const subtotal = job.lineItems.reduce((sum, item) => sum + jobLineAmount(item), 0);
+  const taxableSubtotal = job.lineItems.reduce((sum, item) => {
+    if (item.category !== "material" || item.taxable === false) return sum;
+    return sum + jobLineAmount(item);
+  }, 0);
+  const tax = Math.round(taxableSubtotal * 0.094);
+  const total = subtotal + tax;
+  const invoicesToSync = job.invoices.filter((invoice) => invoice.status !== InvoiceStatus.PAID);
+
+  await Promise.all(invoicesToSync.map((invoice) => prisma.invoice.update({
+    where: { id: invoice.id },
+    data: {
+      subtotal,
+      tax,
+      total,
+      items: {
+        deleteMany: {},
+        create: job.lineItems.map((item) => ({
+          category: item.category,
+          name: item.name,
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          taxable: item.category === "material" && item.taxable !== false
+        }))
+      }
+    }
+  })));
+}
+
+async function getJobResponse(jobId: string, locationId: string) {
+  return prisma.job.findFirst({
+    where: { id: jobId, locationId },
+    include: jobInclude
+  });
+}
+
 jobsRouter.get("/", asyncHandler(async (req, res) => {
   const status = typeof req.query.status === "string" ? req.query.status as JobStatus : undefined;
   const locationId = activeLocationId(req);
   const jobs = await prisma.job.findMany({
     where: { locationId, ...(status ? { status } : {}) },
-    include: {
-      customer: { include: { addresses: true } },
-      address: true,
-      technician: true,
-      notes: { orderBy: { createdAt: "desc" } },
-      lineItems: true,
-      invoices: { include: { payments: true } }
-    },
+    include: jobInclude,
     orderBy: [{ scheduledStart: "asc" }, { createdAt: "desc" }],
     take: 150
   });
@@ -79,13 +143,7 @@ jobsRouter.post("/", asyncHandler(async (req, res) => {
       scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined,
       lineItems: input.lineItems.length ? { create: input.lineItems } : undefined
     },
-    include: {
-      customer: { include: { addresses: true } },
-      address: true,
-      technician: true,
-      lineItems: true,
-      invoices: { include: { payments: true } }
-    }
+    include: jobInclude
   });
   if (optionNames.length) {
     await Promise.all(optionNames.map((option) => prisma.crmOption.upsert({
@@ -101,14 +159,7 @@ jobsRouter.get("/:id", asyncHandler(async (req, res) => {
   const jobId = String(req.params.id);
   const job = await prisma.job.findFirst({
     where: { id: jobId, locationId: activeLocationId(req) },
-    include: {
-      customer: { include: { addresses: true } },
-      address: true,
-      technician: true,
-      notes: { orderBy: { createdAt: "desc" } },
-      lineItems: true,
-      invoices: { include: { payments: true } }
-    }
+    include: jobInclude
   });
   if (!job) return res.status(404).json({ error: "Job not found" });
   res.json({ job });
@@ -127,14 +178,7 @@ jobsRouter.patch("/:id", asyncHandler(async (req, res) => {
       scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
       scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined
     },
-    include: {
-      customer: { include: { addresses: true } },
-      address: true,
-      technician: true,
-      notes: { orderBy: { createdAt: "desc" } },
-      lineItems: true,
-      invoices: { include: { payments: true } }
-    }
+    include: jobInclude
   });
   res.json({ job });
 }));
@@ -150,17 +194,41 @@ jobsRouter.post("/:id/notes", asyncHandler(async (req, res) => {
 
 jobsRouter.post("/:id/line-items", asyncHandler(async (req, res) => {
   const jobId = String(req.params.id);
-  const input = z.object({
-    category: z.enum(["service", "material"]).default("service"),
-    name: z.string().min(1),
-    description: z.string().optional(),
-    quantity: z.number().positive().default(1),
-    unitPrice: z.number().int().default(0),
-    unitCost: z.number().int().default(0),
-    taxable: z.boolean().default(true)
-  }).parse(req.body);
-  const job = await prisma.job.findFirst({ where: { id: jobId, locationId: activeLocationId(req) } });
+  const locationId = activeLocationId(req);
+  const input = lineItemSchema.parse(req.body);
+  const job = await findLocationJob(jobId, locationId);
   if (!job) return res.status(404).json({ error: "Job not found" });
-  const lineItem = await prisma.jobLineItem.create({ data: { jobId, ...input } });
-  res.status(201).json({ lineItem });
+  await prisma.jobLineItem.create({ data: { jobId, ...input } });
+  await syncJobInvoices(jobId);
+  const updatedJob = await getJobResponse(jobId, locationId);
+  res.status(201).json({ job: updatedJob });
+}));
+
+jobsRouter.patch("/:id/line-items/:lineItemId", asyncHandler(async (req, res) => {
+  const jobId = String(req.params.id);
+  const lineItemId = String(req.params.lineItemId);
+  const locationId = activeLocationId(req);
+  const input = lineItemSchema.partial().parse(req.body);
+  const job = await findLocationJob(jobId, locationId);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  const lineItem = await prisma.jobLineItem.findFirst({ where: { id: lineItemId, jobId } });
+  if (!lineItem) return res.status(404).json({ error: "Line item not found" });
+  await prisma.jobLineItem.update({ where: { id: lineItemId }, data: input });
+  await syncJobInvoices(jobId);
+  const updatedJob = await getJobResponse(jobId, locationId);
+  res.json({ job: updatedJob });
+}));
+
+jobsRouter.delete("/:id/line-items/:lineItemId", asyncHandler(async (req, res) => {
+  const jobId = String(req.params.id);
+  const lineItemId = String(req.params.lineItemId);
+  const locationId = activeLocationId(req);
+  const job = await findLocationJob(jobId, locationId);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  const lineItem = await prisma.jobLineItem.findFirst({ where: { id: lineItemId, jobId } });
+  if (!lineItem) return res.status(404).json({ error: "Line item not found" });
+  await prisma.jobLineItem.delete({ where: { id: lineItemId } });
+  await syncJobInvoices(jobId);
+  const updatedJob = await getJobResponse(jobId, locationId);
+  res.json({ job: updatedJob });
 }));

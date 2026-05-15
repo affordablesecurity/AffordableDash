@@ -170,6 +170,23 @@ type PriceBookItem = {
   category?: PriceBookCategory;
 };
 
+type JobLineItem = {
+  id: string;
+  category: "service" | "material" | string;
+  name: string;
+  description?: string;
+  quantity: string;
+  unitPrice: number;
+  unitCost?: number;
+  taxable?: boolean;
+};
+
+type JobLineDialogState = {
+  mode: "add" | "edit";
+  category: "service" | "material";
+  itemId?: string;
+};
+
 type ServicePlanAddOn = {
   item: string;
   unitPrice: number;
@@ -240,7 +257,7 @@ type Job = {
   customer: Customer;
   address?: Address;
   technician?: Technician;
-  lineItems?: Array<{ id: string; category: string; name: string; quantity: string; unitPrice: number; taxable?: boolean }>;
+  lineItems?: JobLineItem[];
   invoices?: Invoice[];
   notes?: Array<{ id: string; author: string; content: string; createdAt: string }>;
 };
@@ -910,6 +927,16 @@ export function App() {
   });
   const [templateLineItems, setTemplateLineItems] = useState<JobLineDraft[]>([]);
   const [jobLines, setJobLines] = useState<JobLineDraft[]>([]);
+  const [jobLineDialog, setJobLineDialog] = useState<JobLineDialogState | null>(null);
+  const [jobLineForm, setJobLineForm] = useState({
+    name: "",
+    search: "",
+    description: "",
+    quantity: "1",
+    unitPrice: "0.00",
+    unitCost: "0.00",
+    taxable: false
+  });
   const [jobAttachments, setJobAttachments] = useState<string[]>([]);
   const [priceBookItems, setPriceBookItems] = useState<PriceBookItem[]>([]);
   const [priceBookCategories, setPriceBookCategories] = useState<PriceBookCategory[]>([]);
@@ -2382,6 +2409,13 @@ export function App() {
 
   function mergeJob(job: Job) {
     setJobs((current) => current.map((item) => item.id === job.id ? { ...item, ...job } : item));
+    if (job.invoices?.length) {
+      setInvoices((current) => {
+        const updatedInvoices = job.invoices ?? [];
+        const updatedIds = new Set(updatedInvoices.map((invoice) => invoice.id));
+        return [...updatedInvoices, ...current.filter((invoice) => !updatedIds.has(invoice.id))];
+      });
+    }
   }
 
   async function updateJobStatus(job: Job, status: string) {
@@ -2463,6 +2497,73 @@ export function App() {
     await loadDashboard();
     setDetailPrivateNote("");
     setDetailSavedMessage("Private note added");
+  }
+
+  function openJobLineDialog(category: "service" | "material", item?: JobLineItem) {
+    setError("");
+    setJobLineDialog({ mode: item ? "edit" : "add", category, itemId: item?.id });
+    setJobLineForm({
+      name: item?.name ?? "",
+      search: item?.name ?? "",
+      description: item?.description ?? "",
+      quantity: String(item?.quantity ?? "1"),
+      unitPrice: centsToDollarInput(item?.unitPrice ?? 0),
+      unitCost: centsToDollarInput(item?.unitCost ?? 0),
+      taxable: category === "material" && item?.taxable !== false
+    });
+  }
+
+  function chooseJobPriceBookItem(item: PriceBookItem) {
+    setJobLineForm((current) => ({
+      ...current,
+      name: item.name,
+      search: item.name,
+      description: item.description ?? "",
+      unitPrice: centsToDollarInput(item.price),
+      unitCost: centsToDollarInput(item.cost),
+      taxable: item.itemType === "material" && item.taxable
+    }));
+    setJobLineDialog((current) => current ? { ...current, category: item.itemType } : current);
+  }
+
+  async function saveJobLineItem(job: Job) {
+    if (!jobLineDialog) return;
+    const name = jobLineForm.name.trim() || jobLineForm.search.trim();
+    if (!name) {
+      setError("Enter a line item name before saving.");
+      return;
+    }
+    const payload = {
+      category: jobLineDialog.category,
+      name,
+      description: jobLineForm.description.trim() || undefined,
+      quantity: Number(jobLineForm.quantity || "1"),
+      unitPrice: dollarsToCents(jobLineForm.unitPrice),
+      unitCost: dollarsToCents(jobLineForm.unitCost),
+      taxable: jobLineDialog.category === "material" && jobLineForm.taxable
+    };
+    const endpoint = jobLineDialog.mode === "edit" && jobLineDialog.itemId
+      ? `/api/jobs/${job.id}/line-items/${jobLineDialog.itemId}`
+      : `/api/jobs/${job.id}/line-items`;
+    const result = await api<{ job: Job }>(endpoint, {
+      method: jobLineDialog.mode === "edit" ? "PATCH" : "POST",
+      body: JSON.stringify(payload)
+    });
+    mergeJob(result.job);
+    setSelectedJobId(job.id);
+    setJobLineDialog(null);
+    setDetailSavedMessage(jobLineDialog.mode === "edit" ? "Line item updated" : "Line item added");
+    await loadDashboard();
+  }
+
+  async function deleteJobLineItem(job: Job, item: JobLineItem) {
+    const confirmed = window.confirm(`Delete ${item.name} from this job?`);
+    if (!confirmed) return;
+    const result = await api<{ job: Job }>(`/api/jobs/${job.id}/line-items/${item.id}`, { method: "DELETE" });
+    mergeJob(result.job);
+    setSelectedJobId(job.id);
+    setDetailSavedMessage("Line item deleted");
+    await loadDashboard();
   }
 
   async function assignJobTechnician(job: Job, technicianId: string) {
@@ -3749,17 +3850,65 @@ export function App() {
                         <p className="muted">Invoices are linked to the job, so payments and reporting stay tied back to the work order.</p>
                       </section>
 
-                      <section className="panel">
-                        <div className="panel-header"><h2>Line Items</h2><ReceiptText size={18} /></div>
-                        <div className="profile-table">
-                          {(selectedJob.lineItems ?? []).map((item) => (
-                            <article key={item.id}>
-                              <strong>{item.name}</strong>
-                              <span>{item.category} / Qty {item.quantity} / {money.format(item.unitPrice / 100)}{item.category === "material" && item.taxable !== false ? " / taxable" : ""}</span>
-                            </article>
-                          ))}
-                          {!(selectedJob.lineItems?.length) && <p className="empty">No line items on this job yet.</p>}
+                      <section className="panel line-items-panel job-detail-line-items">
+                        <div className="line-items-header">
+                          <h2>Line Items</h2>
+                          <div className="action-buttons">
+                            <button className="outline-button" type="button" onClick={() => openJobLineDialog("service")}><Plus size={16} /> Service</button>
+                            <button className="outline-button" type="button" onClick={() => openJobLineDialog("material")}><Plus size={16} /> Material</button>
+                          </div>
                         </div>
+                        {(["service", "material"] as const).map((category) => {
+                          const items = (selectedJob.lineItems ?? []).filter((item) => item.category === category);
+                          return (
+                            <div className="line-category" key={category}>
+                              <div className="line-category-head">
+                                <strong>{category === "service" ? "Services" : "Materials"}</strong>
+                                <button className="text-add-button" type="button" onClick={() => openJobLineDialog(category)}>
+                                  <Plus size={16} /> Add {category}
+                                </button>
+                              </div>
+                              {items.map((item) => {
+                                const total = Number(item.quantity || "0") * item.unitPrice;
+                                return (
+                                  <article className="line-item-row detail-line-item-row" key={item.id}>
+                                    <div>
+                                      <strong>{item.name}</strong>
+                                      {item.description && <span>{item.description}</span>}
+                                      {item.unitCost ? <small>Unit cost {money.format(item.unitCost / 100)}</small> : null}
+                                    </div>
+                                    <span>{category === "material" && item.taxable !== false ? "Taxable material" : category === "material" ? "Non-taxable material" : "Service"}</span>
+                                    <span>Qty {item.quantity}</span>
+                                    <strong>{money.format(item.unitPrice / 100)}</strong>
+                                    <strong>{money.format(total / 100)}</strong>
+                                    <div className="icon-actions">
+                                      <button className="icon-button" type="button" aria-label={`Edit ${item.name}`} onClick={() => openJobLineDialog(category, item)}><Pencil size={16} /></button>
+                                      <button className="icon-button danger" type="button" aria-label={`Delete ${item.name}`} onClick={() => deleteJobLineItem(selectedJob, item)}><Trash2 size={16} /></button>
+                                    </div>
+                                  </article>
+                                );
+                              })}
+                              {!items.length && <p className="empty line-empty">No {category} line items yet.</p>}
+                            </div>
+                          );
+                        })}
+                        <div className="line-category-head">
+                          <button className="text-add-button" type="button" onClick={() => {
+                            openJobLineDialog("service");
+                            setJobLineForm((current) => ({ ...current, name: "Discount", search: "Discount", unitPrice: "0.00" }));
+                          }}>Add discount</button>
+                          <button className="text-add-button" type="button" onClick={() => openJobPayment(selectedJob)}>Add deposit</button>
+                          <button className="text-add-button" type="button" onClick={() => {
+                            openJobLineDialog("service");
+                            setJobLineForm((current) => ({ ...current, name: "Service plan", search: "Service plan" }));
+                          }}>Add service plan</button>
+                        </div>
+                        <div className="totals-box">
+                          <span><span>Subtotal</span><strong>{money.format(calculateJobLineSubtotal(selectedJob) / 100)}</strong></span>
+                          <span><span>Tax rate <em>Materials only</em></span><strong>{money.format(calculateJobLineTax(selectedJob) / 100)}</strong></span>
+                          <span className="grand-total"><span>Total</span><strong>{money.format((calculateJobLineSubtotal(selectedJob) + calculateJobLineTax(selectedJob)) / 100)}</strong></span>
+                        </div>
+                        {["Line item added", "Line item updated", "Line item deleted"].includes(detailSavedMessage) && <p className="inline-confirm line-save-confirm">{detailSavedMessage}</p>}
                       </section>
 
                       <section className="panel">
@@ -5833,6 +5982,82 @@ export function App() {
                   </div>
                 </form>
               )}
+            </div>
+          </div>
+        )}
+
+        {jobLineDialog && selectedJob && (
+          <div className="modal-backdrop">
+            <div className="line-item-modal">
+              <header>
+                <div>
+                  <h2>{jobLineDialog.mode === "edit" ? "Edit" : "Add"} {jobLineDialog.category}</h2>
+                  <p>Choose from the price book or save a one-off item for this job.</p>
+                </div>
+                <button className="icon-button" type="button" onClick={() => setJobLineDialog(null)} aria-label="Close line item"><X size={20} /></button>
+              </header>
+              <label>{jobLineDialog.category === "service" ? "Service name" : "Material name"}
+                <input
+                  autoFocus
+                  value={jobLineForm.search}
+                  onChange={(event) => setJobLineForm((current) => ({ ...current, search: event.target.value, name: event.target.value }))}
+                  placeholder="Search price book or type a new line item"
+                />
+              </label>
+              {jobLineForm.search.trim() && (
+                <div className="line-item-search-results">
+                  {priceBookItems
+                    .filter((item) => item.itemType === jobLineDialog.category)
+                    .filter((item) => {
+                      const query = jobLineForm.search.trim().toLowerCase();
+                      return item.name.toLowerCase().includes(query) || (item.description ?? "").toLowerCase().includes(query);
+                    })
+                    .slice(0, 6)
+                    .map((item) => (
+                      <button type="button" key={item.id} onClick={() => chooseJobPriceBookItem(item)}>
+                        <span>
+                          <strong>{item.name}</strong>
+                          <small>{item.category?.name ?? (item.itemType === "service" ? "Service" : "Material")}</small>
+                        </span>
+                        <strong>{money.format(item.price / 100)}</strong>
+                      </button>
+                    ))}
+                  {!priceBookItems.some((item) => item.itemType === jobLineDialog.category && item.name.toLowerCase().includes(jobLineForm.search.trim().toLowerCase())) && (
+                    <p className="empty">No price book match. This will save as a one-off item.</p>
+                  )}
+                </div>
+              )}
+              <div className="line-item-form-grid">
+                <label>Quantity
+                  <input inputMode="decimal" value={jobLineForm.quantity} onChange={(event) => setJobLineForm((current) => ({ ...current, quantity: event.target.value }))} />
+                </label>
+                <label>Unit price
+                  <input inputMode="decimal" value={jobLineForm.unitPrice} onChange={(event) => setJobLineForm((current) => ({ ...current, unitPrice: event.target.value }))} />
+                </label>
+                <label>Unit cost
+                  <input inputMode="decimal" value={jobLineForm.unitCost} onChange={(event) => setJobLineForm((current) => ({ ...current, unitCost: event.target.value }))} />
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={jobLineDialog.category === "material" && jobLineForm.taxable}
+                    disabled={jobLineDialog.category !== "material"}
+                    onChange={(event) => setJobLineForm((current) => ({ ...current, taxable: event.target.checked }))}
+                  />
+                  Taxable material
+                </label>
+              </div>
+              <label>Description
+                <textarea value={jobLineForm.description} onChange={(event) => setJobLineForm((current) => ({ ...current, description: event.target.value }))} placeholder="Description shown on the job and invoice" />
+              </label>
+              <div className="line-item-modal-summary">
+                <span>Line total</span>
+                <strong>{money.format((Number(jobLineForm.quantity || "0") * dollarsToCents(jobLineForm.unitPrice)) / 100)}</strong>
+              </div>
+              <div className="modal-actions">
+                <button className="outline-button" type="button" onClick={() => setJobLineDialog(null)}>Cancel</button>
+                <button className="primary" type="button" disabled={!jobLineForm.name.trim() && !jobLineForm.search.trim()} onClick={() => saveJobLineItem(selectedJob)}>Save line item</button>
+              </div>
             </div>
           </div>
         )}
