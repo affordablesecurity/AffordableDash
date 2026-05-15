@@ -485,6 +485,7 @@ const customerMmsTypes: Record<string, string> = {
   ".gif": "image/gif",
   ".webp": "image/webp"
 };
+const customerMmsMaxBytes = 1_300_000;
 
 type MessageThread = {
   id: string;
@@ -3431,9 +3432,9 @@ export function App() {
     const selectedFiles = Array.from(files ?? []);
     if (!selectedFiles.length) return;
     const acceptedFiles = selectedFiles.slice(0, Math.max(0, 5 - messageAttachments.length));
-    const oversized = acceptedFiles.find((file) => file.size > 2_000_000);
+    const oversized = acceptedFiles.find((file) => file.size > customerMmsMaxBytes);
     if (oversized) {
-      setError("Message attachments must be 2MB or smaller.");
+      setError("Customer MMS attachments must be 1.3MB or smaller.");
       return;
     }
     const loaded = await Promise.all(acceptedFiles.map(readCustomerMmsAttachment)).catch((error: Error) => {
@@ -3441,9 +3442,9 @@ export function App() {
       return null;
     });
     if (!loaded) return;
-    const convertedOversized = loaded.find((file) => (file.size ?? 0) > 2_000_000);
+    const convertedOversized = loaded.find((file) => (file.size ?? 0) > customerMmsMaxBytes);
     if (convertedOversized) {
-      setError(`${convertedOversized.name} is too large after MMS preparation. Please use an image under 2MB.`);
+      setError(`${convertedOversized.name} is too large after MMS preparation. Please use an image under 1.3MB.`);
       return;
     }
     setMessageAttachments((current) => [...current, ...loaded].slice(0, 5));

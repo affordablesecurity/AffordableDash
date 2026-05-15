@@ -114,11 +114,16 @@ function attachmentMedia(value: string) {
     // Plain URLs and base64 payloads are accepted below.
   }
 
-  const dataUrlMatch = /^data:[^;]+;base64,(.+)$/i.exec(rawValue);
-  if (dataUrlMatch?.[1]) return dataUrlMatch[1];
+  if (/^data:[^;]+;base64,[A-Za-z0-9+/]+={0,2}$/i.test(rawValue)) return rawValue;
   if (/^https?:\/\//i.test(rawValue)) return rawValue;
   if (/^[A-Za-z0-9+/]+={0,2}$/.test(rawValue) && rawValue.length > 200) return rawValue;
   return "";
+}
+
+function voipmsPhoneNumber(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+  return digits || value.trim();
 }
 
 export async function sendSms(to: string, message: string, config: VoipmsSmsConfig = {}) {
@@ -135,9 +140,10 @@ export async function sendSms(to: string, message: string, config: VoipmsSmsConf
     api_username: username,
     api_password: apiPassword,
     method: "sendSMS",
-    did,
-    dst: to,
-    message
+    did: voipmsPhoneNumber(did),
+    dst: voipmsPhoneNumber(to),
+    message,
+    content_type: "json"
   });
 
   const response = await fetch(`${baseUrl}?${params.toString()}`);
@@ -166,9 +172,10 @@ export async function sendMms(to: string, message: string, attachments: string[]
     api_username: username,
     api_password: apiPassword,
     method: "sendMMS",
-    did,
-    dst: to,
-    message
+    did: voipmsPhoneNumber(did),
+    dst: voipmsPhoneNumber(to),
+    message,
+    content_type: "json"
   });
 
   media.forEach((item, index) => {
