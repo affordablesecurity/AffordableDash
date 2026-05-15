@@ -697,11 +697,11 @@ function customerName(customer?: Customer) {
   return [customer.firstName, customer.lastName].filter(Boolean).join(" ") || customer.companyName || "Unnamed customer";
 }
 
-function formatDate(value?: string) {
+function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleDateString([], { month: "2-digit", day: "2-digit", year: "numeric" }) : "Not recorded";
 }
 
-function formatDateTime(value?: string) {
+function formatDateTime(value?: string | null) {
   return value ? new Date(value).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Not recorded";
 }
 
