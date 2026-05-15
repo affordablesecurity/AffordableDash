@@ -251,6 +251,23 @@ export async function sendLocationSms(input: {
     });
   }
 
+  if ((input.attachments ?? []).length > 0) {
+    return createMessage({
+      locationId: input.locationId,
+      customerId: input.customerId,
+      jobId: input.jobId,
+      invoiceId: input.invoiceId,
+      fromNumber,
+      toNumber: input.to,
+      body: input.body,
+      status: "FAILED",
+      error: "VoIP.ms outbound MMS is not configured yet. The attachment was saved in the CRM, but only text messages can be sent to phones right now.",
+      templateKey: input.templateKey,
+      attachments: input.attachments,
+      channel: "mms"
+    });
+  }
+
   try {
     const result = await sendSms(input.to, input.body, {
       username: settings.username,

@@ -66,6 +66,92 @@ function customerPhoneNumbers(customer: Pick<Customer, "phone" | "alternatePhone
   return phones.filter(Boolean);
 }
 
+function attachmentNameFromUrl(url: string, fallback: string): string {
+  try {
+    const parsed = new URL(url);
+    const name = parsed.pathname.split("/").filter(Boolean).pop();
+    return name || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function collectAttachment(value: unknown, attachments: string[], fallbackIndex = attachments.length + 1) {
+  if (!value) return;
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectAttachment(item, attachments, fallbackIndex + index));
+    return;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        collectAttachment(JSON.parse(trimmed), attachments, fallbackIndex);
+        return;
+      } catch {
+        // Fall through and treat it as a plain URL/string.
+      }
+    }
+    for (const url of trimmed.split(",").map((item) => item.trim()).filter(Boolean)) {
+      attachments.push(JSON.stringify({
+        name: attachmentNameFromUrl(url, `MMS attachment ${attachments.length + 1}`),
+        dataUrl: url,
+        size: 0
+      }));
+    }
+    return;
+  }
+
+  if (typeof value === "object") {
+    const item = value as Record<string, unknown>;
+    const url = payloadValue(item.url)
+      || payloadValue(item.href)
+      || payloadValue(item.link)
+      || payloadValue(item.media_url)
+      || payloadValue(item.mediaUrl)
+      || payloadValue(item.content_url)
+      || payloadValue(item.contentUrl);
+    if (!url) return;
+    attachments.push(JSON.stringify({
+      name: payloadValue(item.name) || payloadValue(item.filename) || attachmentNameFromUrl(url, `MMS attachment ${fallbackIndex}`),
+      type: payloadValue(item.type) || payloadValue(item.content_type) || payloadValue(item.contentType) || undefined,
+      dataUrl: url,
+      size: 0
+    }));
+  }
+}
+
+function payloadAttachments(payload: SmsWebhookPayload): string[] {
+  const normalizedPayload = new Map(Object.entries(payload).map(([key, value]) => [key.toLowerCase(), value]));
+  const keys = [
+    "media",
+    "media_url",
+    "mediaUrl",
+    "media_urls",
+    "mediaUrls",
+    "mms",
+    "mms_url",
+    "attachment",
+    "attachment_url",
+    "attachments",
+    "file",
+    "file_url",
+    "image",
+    "image_url",
+    "imageUrl",
+    "picture",
+    "url"
+  ];
+  const attachments: string[] = [];
+  for (const key of keys) {
+    collectAttachment(payload[key] ?? normalizedPayload.get(key.toLowerCase()), attachments);
+  }
+  return [...new Set(attachments)];
+}
+
 webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
   if (!stripe || !env.STRIPE_WEBHOOK_SECRET) {
     return res.status(400).json({ error: "Stripe webhook is not configured" });
@@ -141,7 +227,9 @@ async function receiveVoipmsSms(req: Request, res: Response) {
     "dst_number",
     "local_number"
   ]) || env.VOIPMS_DID || "";
-  const body = firstPayloadValue(payload, ["message", "sms", "body", "text", "msg", "content", "message_body"]);
+  const attachments = payloadAttachments(payload);
+  const body = firstPayloadValue(payload, ["message", "sms", "body", "text", "msg", "content", "message_body"])
+    || (attachments.length ? "MMS attachment" : "");
   const providerRef = firstPayloadValue(payload, ["sms_id", "id", "message_id", "message_uuid", "uuid", "reference"]);
 
   if (!fromNumber || !body) {
@@ -184,7 +272,9 @@ async function receiveVoipmsSms(req: Request, res: Response) {
       fromNumber,
       toNumber,
       body,
+      channel: attachments.length ? "mms" : "sms",
       status: "RECEIVED",
+      attachments,
       providerRef
     }
   });

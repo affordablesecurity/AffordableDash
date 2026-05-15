@@ -5726,6 +5726,45 @@ button:disabled {
   gap: 18px;
 }
 
+.message-mode-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.message-mode-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: #34405c;
+  padding: 9px 14px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.message-mode-tabs button.active {
+  background: #eef2ff;
+  color: #3c41e9;
+  border-color: #cfd7ff;
+}
+
+.message-mode-tabs span,
+.thread-unread-badge {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: #3c41e9;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .messages-layout {
   min-height: calc(100vh - 210px);
   display: grid;
@@ -5774,6 +5813,28 @@ button:disabled {
 .message-thread:hover,
 .message-thread.active {
   background: #f5f4ff;
+}
+
+.message-thread.unread {
+  background: #faf9ff;
+}
+
+.message-thread-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.message-thread-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-thread.unread .message-thread-title span {
+  color: #2430c7;
 }
 
 .message-thread span {
@@ -5849,6 +5910,14 @@ button:disabled {
   font-weight: 800;
 }
 
+.message-bubble small {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .message-bubble strong {
   display: block;
   color: #b42318;
@@ -5897,6 +5966,13 @@ button:disabled {
   align-self: flex-start;
   background: #fff;
   border: 1px solid var(--line);
+}
+
+.message-bubble.internal {
+  align-self: flex-start;
+  max-width: min(760px, 80%);
+  background: #fff;
+  border-color: #dde4ef;
 }
 
 .message-composer {
@@ -5963,6 +6039,24 @@ button:disabled {
   line-height: 1;
 }
 
+.internal-messages-layout {
+  min-height: calc(100vh - 260px);
+  display: grid;
+}
+
+.internal-channel-select {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.internal-composer {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
 .empty-state.small {
   min-height: 180px;
   padding: 24px;
@@ -6020,6 +6114,10 @@ button:disabled {
   }
 
   .message-composer {
+    grid-template-columns: 1fr;
+  }
+
+  .internal-composer {
     grid-template-columns: 1fr;
   }
 }

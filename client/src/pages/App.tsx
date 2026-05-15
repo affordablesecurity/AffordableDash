@@ -474,6 +474,7 @@ type MessageAttachment = {
   type?: string;
   size?: number;
   dataUrl?: string;
+  url?: string;
 };
 
 type MessageThread = {
@@ -1153,6 +1154,12 @@ export function App() {
   const [selectedMessageThread, setSelectedMessageThread] = useState("");
   const [messageDraft, setMessageDraft] = useState("");
   const [messageAttachments, setMessageAttachments] = useState<MessageAttachment[]>([]);
+  const [messageMode, setMessageMode] = useState<"customers" | "internal">("customers");
+  const [internalMessages, setInternalMessages] = useState<CrmMessage[]>([]);
+  const [internalDraft, setInternalDraft] = useState("");
+  const [internalAttachments, setInternalAttachments] = useState<MessageAttachment[]>([]);
+  const [internalAudience, setInternalAudience] = useState<"team" | "admin">("team");
+  const [readMessageIds, setReadMessageIds] = useState<string[]>([]);
   const [messagingSettings, setMessagingSettings] = useState<MessagingSettings>(defaultMessagingSettings);
   const [messagingSettingsMessage, setMessagingSettingsMessage] = useState("");
   const [companySettingsForm, setCompanySettingsForm] = useState({
@@ -1434,6 +1441,9 @@ export function App() {
     return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits || phone || "unknown";
   }
 
+  const canUseAdminChannel = ["OWNER", "ADMIN"].includes(currentRole);
+  const readMessageIdSet = useMemo(() => new globalThis.Set(readMessageIds), [readMessageIds]);
+
   const messageThreads = useMemo<MessageThread[]>(() => {
     const grouped = new globalThis.Map<string, MessageThread>();
     [...messages]
@@ -1446,12 +1456,18 @@ export function App() {
         const current = grouped.get(id) ?? { id, label, phone, customer, messages: [], latest: "", unread: 0 };
         current.messages.push(message);
         current.latest = message.createdAt;
-        if (message.direction === "INBOUND") current.unread += 1;
+        if (message.direction === "INBOUND" && !readMessageIdSet.has(message.id)) current.unread += 1;
         grouped.set(id, current);
       });
     return [...grouped.values()].sort((a, b) => new Date(b.latest).getTime() - new Date(a.latest).getTime());
-  }, [messages, customers]);
+  }, [messages, customers, readMessageIdSet]);
   const selectedThread = messageThreads.find((thread) => thread.id === selectedMessageThread) ?? messageThreads[0] ?? null;
+  const customerUnreadTotal = messageThreads.reduce((sum, thread) => sum + thread.unread, 0);
+  const internalMessageChannel = internalAudience === "admin" ? "internal-admin" : "internal-team";
+  const visibleInternalMessages = useMemo(() => internalMessages
+    .filter((message) => message.channel === internalMessageChannel)
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()), [internalMessages, internalMessageChannel]);
+  const messageReadStorageKey = activeLocationId ? `affordable-crm:read-messages:${activeLocationId}` : "";
 
   function locationDisplayName(location?: { name?: string; displayName?: string | null }) {
     return location?.displayName?.trim() || location?.name || "Location";
@@ -1531,7 +1547,7 @@ export function App() {
   async function loadDashboard() {
     const dashboardQuery = new URLSearchParams({ dateRange: dashboardDateRange });
     if (dashboardDateRange === "selectedDay") dashboardQuery.set("date", dashboardDate);
-    const [summaryResult, customersResult, jobsResult, eventsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult, stripeStatusResult, messagesResult, messagingSettingsResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, eventsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult, stripeStatusResult, messagesResult, internalMessagesResult, messagingSettingsResult] = await Promise.all([
       api<Summary>(`/api/settings/summary?${dashboardQuery.toString()}`),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
@@ -1546,6 +1562,7 @@ export function App() {
       api<{ settings: InvoiceSettings }>("/api/settings/invoice-settings"),
       api<StripeStatus>("/api/integrations/stripe/status"),
       api<{ messages: CrmMessage[] }>("/api/messages"),
+      api<{ messages: CrmMessage[] }>("/api/messages/internal"),
       api<{ settings: MessagingSettings }>("/api/messages/settings")
     ]);
 
@@ -1569,6 +1586,7 @@ export function App() {
     setInvoiceSettings({ ...defaultInvoiceSettings, ...invoiceSettingsResult.settings });
     setStripeStatus(stripeStatusResult);
     setMessages(messagesResult.messages);
+    setInternalMessages(internalMessagesResult.messages);
     setMessagingSettings(mergeMessagingSettings(messagingSettingsResult.settings));
 
     const [locationResult, apiKeyResult, meResult] = await Promise.all([
@@ -1634,12 +1652,44 @@ export function App() {
   useEffect(() => {
     if (!token || activeView !== "messages") return;
     const intervalId = window.setInterval(() => {
-      api<{ messages: CrmMessage[] }>("/api/messages")
-        .then((result) => setMessages(result.messages))
+      Promise.all([
+        api<{ messages: CrmMessage[] }>("/api/messages"),
+        api<{ messages: CrmMessage[] }>("/api/messages/internal")
+      ])
+        .then(([customerResult, internalResult]) => {
+          setMessages(customerResult.messages);
+          setInternalMessages(internalResult.messages);
+        })
         .catch((err: unknown) => handleApiError(err, "Unable to refresh messages"));
     }, 10000);
     return () => window.clearInterval(intervalId);
   }, [token, activeView]);
+
+  useEffect(() => {
+    if (!messageReadStorageKey || typeof window === "undefined") return;
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(messageReadStorageKey) ?? "[]");
+      setReadMessageIds(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : []);
+    } catch {
+      setReadMessageIds([]);
+    }
+  }, [messageReadStorageKey]);
+
+  useEffect(() => {
+    if (!messageReadStorageKey || typeof window === "undefined" || activeView !== "messages" || messageMode !== "customers" || !selectedThread) return;
+    const inboundIds = selectedThread.messages.filter((message) => message.direction === "INBOUND").map((message) => message.id);
+    if (!inboundIds.length) return;
+    setReadMessageIds((current) => {
+      const next = Array.from(new globalThis.Set([...current, ...inboundIds]));
+      window.localStorage.setItem(messageReadStorageKey, JSON.stringify(next));
+      return next;
+    });
+  }, [activeView, messageMode, messageReadStorageKey, selectedThread?.id, selectedThread?.latest]);
+
+  useEffect(() => {
+    if (canUseAdminChannel || internalAudience !== "admin") return;
+    setInternalAudience("team");
+  }, [canUseAdminChannel, internalAudience]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3193,7 +3243,8 @@ export function App() {
 
   async function sendManualMessage(event: FormEvent) {
     event.preventDefault();
-    if (!selectedThread || !messageDraft.trim()) return;
+    const trimmedBody = messageDraft.trim();
+    if (!selectedThread || (!trimmedBody && !messageAttachments.length)) return;
     setError("");
     try {
       const result = await api<{ message: CrmMessage }>("/api/messages/sms", {
@@ -3201,7 +3252,7 @@ export function App() {
         body: JSON.stringify({
           customerId: selectedThread.customer?.id,
           to: selectedThread.phone,
-          body: messageDraft.trim(),
+          body: trimmedBody || "Attachment",
           attachments: messageAttachments.map((attachment) => JSON.stringify(attachment))
         })
       });
@@ -3214,7 +3265,35 @@ export function App() {
     }
   }
 
+  async function sendInternalMessage(event: FormEvent) {
+    event.preventDefault();
+    const trimmedBody = internalDraft.trim();
+    if (!trimmedBody && !internalAttachments.length) return;
+    setError("");
+    try {
+      const result = await api<{ message: CrmMessage }>("/api/messages/internal", {
+        method: "POST",
+        body: JSON.stringify({
+          body: trimmedBody || "Attachment",
+          audience: internalAudience,
+          attachments: internalAttachments.map((attachment) => JSON.stringify(attachment))
+        })
+      });
+      setInternalMessages((current) => [result.message, ...current.filter((message) => message.id !== result.message.id)]);
+      setInternalDraft("");
+      setInternalAttachments([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to send in-house message.");
+    }
+  }
+
   function handleMessageComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+
+  function handleInternalComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     event.currentTarget.form?.requestSubmit();
@@ -3223,9 +3302,19 @@ export function App() {
   function parseMessageAttachment(value: string): MessageAttachment {
     try {
       const parsed = JSON.parse(value) as MessageAttachment;
-      if (parsed?.name) return parsed;
+      const dataUrl = parsed.dataUrl ?? parsed.url;
+      if (parsed?.name || dataUrl) {
+        return {
+          ...parsed,
+          name: parsed.name || (dataUrl ? dataUrl.split("/").filter(Boolean).pop() || "Attachment" : "Attachment"),
+          dataUrl
+        };
+      }
     } catch {
       // Older messages may only have a saved filename.
+    }
+    if (/^https?:\/\//i.test(value)) {
+      return { name: value.split("/").filter(Boolean).pop() || "Attachment", dataUrl: value };
     }
     return { name: value };
   }
@@ -3255,6 +3344,33 @@ export function App() {
 
   function removeMessageAttachment(name: string) {
     setMessageAttachments((current) => current.filter((item) => item.name !== name));
+  }
+
+  async function addInternalAttachments(files: FileList | null) {
+    const selectedFiles = Array.from(files ?? []);
+    if (!selectedFiles.length) return;
+    const acceptedFiles = selectedFiles.slice(0, Math.max(0, 5 - internalAttachments.length));
+    const oversized = acceptedFiles.find((file) => file.size > 2_000_000);
+    if (oversized) {
+      setError("In-house message attachments must be 2MB or smaller.");
+      return;
+    }
+    const loaded = await Promise.all(acceptedFiles.map((file) => new Promise<MessageAttachment>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        dataUrl: typeof reader.result === "string" ? reader.result : undefined
+      });
+      reader.onerror = () => reject(new Error(`Unable to read ${file.name}.`));
+      reader.readAsDataURL(file);
+    })));
+    setInternalAttachments((current) => [...current, ...loaded].slice(0, 5));
+  }
+
+  function removeInternalAttachment(name: string) {
+    setInternalAttachments((current) => current.filter((item) => item.name !== name));
   }
 
   function updateMessagingTemplate(key: MessagingTemplateKey, value: string) {
@@ -4137,6 +4253,15 @@ export function App() {
               <div className="breadcrumb"><MessageSquareText size={17} /> Messages</div>
               <button className="outline-button" type="button" onClick={() => { setSettingsSection("messagingSettings"); setActiveView("settings"); }}>SMS Settings</button>
             </div>
+            <div className="message-mode-tabs">
+              <button type="button" className={messageMode === "customers" ? "active" : ""} onClick={() => setMessageMode("customers")}>
+                Customer texts {customerUnreadTotal > 0 && <span>{customerUnreadTotal > 99 ? "99+" : customerUnreadTotal}</span>}
+              </button>
+              <button type="button" className={messageMode === "internal" ? "active" : ""} onClick={() => setMessageMode("internal")}>
+                In-house
+              </button>
+            </div>
+            {messageMode === "customers" && (
             <div className="messages-layout">
               <aside className="message-thread-list">
                 <div className="thread-list-head">
@@ -4146,8 +4271,16 @@ export function App() {
                 {messageThreads.length ? messageThreads.map((thread) => {
                   const lastMessage = thread.messages[thread.messages.length - 1];
                   return (
-                    <button key={thread.id} type="button" className={selectedThread?.id === thread.id ? "message-thread active" : "message-thread"} onClick={() => setSelectedMessageThread(thread.id)}>
-                      <span>{thread.label}</span>
+                    <button
+                      key={thread.id}
+                      type="button"
+                      className={["message-thread", selectedThread?.id === thread.id ? "active" : "", thread.unread ? "unread" : ""].filter(Boolean).join(" ")}
+                      onClick={() => setSelectedMessageThread(thread.id)}
+                    >
+                      <div className="message-thread-title">
+                        <span>{thread.label}</span>
+                        {thread.unread > 0 && <strong className="thread-unread-badge">{thread.unread > 99 ? "99+" : thread.unread}</strong>}
+                      </div>
                       <small>{lastMessage?.body ?? "No messages yet"}</small>
                       <em>{lastMessage ? formatDateTime(lastMessage.createdAt) : ""}</em>
                     </button>
@@ -4219,7 +4352,7 @@ export function App() {
                           </div>
                         )}
                       </div>
-                      <button className="primary" type="submit" disabled={!messageDraft.trim()}>Send text</button>
+                      <button className="primary" type="submit" disabled={!messageDraft.trim() && !messageAttachments.length}>Send text</button>
                     </form>
                   </>
                 ) : (
@@ -4231,6 +4364,77 @@ export function App() {
                 )}
               </div>
             </div>
+            )}
+            {messageMode === "internal" && (
+              <div className="internal-messages-layout">
+                <div className="message-conversation">
+                  <div className="conversation-head">
+                    <div>
+                      <h2>In-house messages</h2>
+                      <span>Team chat stays inside this location.</span>
+                    </div>
+                    {canUseAdminChannel && (
+                      <select className="internal-channel-select" value={internalAudience} onChange={(event) => setInternalAudience(event.target.value as "team" | "admin")}>
+                        <option value="team">Team channel</option>
+                        <option value="admin">Admin channel</option>
+                      </select>
+                    )}
+                  </div>
+                  <div className="message-list">
+                    {visibleInternalMessages.length ? visibleInternalMessages.map((message) => (
+                      <div key={message.id} className="message-bubble internal">
+                        <small>{message.templateKey || "Team member"}</small>
+                        <p>{message.body}</p>
+                        {(message.attachments ?? []).length > 0 && (
+                          <div className="message-attachments">
+                            {(message.attachments ?? []).map((attachment) => {
+                              const parsedAttachment = parseMessageAttachment(attachment);
+                              return parsedAttachment.dataUrl ? (
+                                <a key={attachment} href={parsedAttachment.dataUrl} download={parsedAttachment.name}>
+                                  <Paperclip size={13} /> {parsedAttachment.name}
+                                </a>
+                              ) : (
+                                <span key={attachment}><Paperclip size={13} /> {parsedAttachment.name}</span>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <span>{formatDateTime(message.createdAt)} · Internal</span>
+                      </div>
+                    )) : (
+                      <div className="empty-state small">No in-house messages yet.</div>
+                    )}
+                  </div>
+                  <form className="message-composer internal-composer" onSubmit={sendInternalMessage}>
+                    <label className="composer-attach-button" title="Attach files">
+                      <Paperclip size={18} />
+                      <input type="file" multiple onChange={(event) => {
+                        void addInternalAttachments(event.currentTarget.files);
+                        event.currentTarget.value = "";
+                      }} />
+                    </label>
+                    <div className="composer-input-stack">
+                      <textarea
+                        value={internalDraft}
+                        onChange={(event) => setInternalDraft(event.target.value)}
+                        onKeyDown={handleInternalComposerKeyDown}
+                        placeholder={internalAudience === "admin" ? "Message owners and admins..." : "Message the team..."}
+                      />
+                      {internalAttachments.length > 0 && (
+                        <div className="composer-attachments">
+                          {internalAttachments.map((attachment) => (
+                            <button key={attachment.name} type="button" onClick={() => removeInternalAttachment(attachment.name)}>
+                              <Paperclip size={13} /> {attachment.name} <span>×</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button className="primary" type="submit" disabled={!internalDraft.trim() && !internalAttachments.length}>Send</button>
+                  </form>
+                </div>
+              </div>
+            )}
           </section>
         )}
 

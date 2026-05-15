@@ -41,10 +41,26 @@ const messagingSettingsSchema = z.object({
 
 messagingRouter.get("/", asyncHandler(async (req, res) => {
   const messages = await prisma.message.findMany({
-    where: { locationId: activeLocationId(req) },
+    where: {
+      locationId: activeLocationId(req),
+      channel: { notIn: ["internal-team", "internal-admin"] }
+    },
     include: { customer: true },
     orderBy: { createdAt: "desc" },
     take: 200
+  });
+  res.json({ messages });
+}));
+
+messagingRouter.get("/internal", asyncHandler(async (req, res) => {
+  const isAdminChannelVisible = ["OWNER", "ADMIN"].includes(req.user?.role ?? "");
+  const messages = await prisma.message.findMany({
+    where: {
+      locationId: activeLocationId(req),
+      channel: { in: isAdminChannelVisible ? ["internal-team", "internal-admin"] : ["internal-team"] }
+    },
+    orderBy: { createdAt: "desc" },
+    take: 300
   });
   res.json({ messages });
 }));
@@ -83,6 +99,35 @@ messagingRouter.post("/sms", asyncHandler(async (req, res) => {
     body: input.body,
     attachments: input.attachments,
     customer
+  });
+
+  res.status(201).json({ message });
+}));
+
+messagingRouter.post("/internal", asyncHandler(async (req, res) => {
+  const input = z.object({
+    body: z.string().trim().min(1).max(2500),
+    audience: z.enum(["team", "admin"]).default("team"),
+    attachments: z.array(z.string().trim().min(1).max(4_000_000)).max(5).default([])
+  }).parse(req.body);
+
+  if (input.audience === "admin" && !["OWNER", "ADMIN"].includes(req.user?.role ?? "")) {
+    return res.status(403).json({ error: "Only owners and admins can use the admin message channel." });
+  }
+
+  const message = await prisma.message.create({
+    data: {
+      locationId: activeLocationId(req),
+      direction: "OUTBOUND",
+      fromNumber: req.user?.id ?? "system",
+      toNumber: input.audience,
+      body: input.body,
+      channel: input.audience === "admin" ? "internal-admin" : "internal-team",
+      status: "SENT",
+      templateKey: req.user?.username ?? req.user?.email ?? "Team member",
+      attachments: input.attachments,
+      provider: "internal"
+    }
   });
 
   res.status(201).json({ message });
