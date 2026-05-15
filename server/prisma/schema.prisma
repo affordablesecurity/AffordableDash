@@ -103,6 +103,7 @@ model Location {
   customers      Customer[]
   technicians    Technician[]
   jobs           Job[]
+  events         Event[]
   estimates      Estimate[]
   invoices       Invoice[]
   messages       Message[]
@@ -222,6 +223,7 @@ model Technician {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   jobs           Job[]
+  events         Event[]
   estimates      Estimate[]
   location       Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
@@ -258,6 +260,26 @@ model Job {
   lineItems      JobLineItem[]
   invoices       Invoice[]
   convertedFromEstimate Estimate? @relation("EstimateConvertedJob")
+}
+
+model Event {
+  id             String      @id @default(cuid())
+  locationId     String
+  technicianId   String?
+  name           String
+  notes          String?
+  eventLocation  String?
+  latitude       Decimal?
+  longitude      Decimal?
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  location       Location    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  technician     Technician? @relation(fields: [technicianId], references: [id], onDelete: SetNull)
+
+  @@index([locationId, scheduledStart])
+  @@index([technicianId])
 }
 
 model Estimate {

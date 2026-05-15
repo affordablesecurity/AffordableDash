@@ -128,6 +128,31 @@ type Technician = {
   active: boolean;
 };
 
+type CalendarEvent = {
+  id: string;
+  locationId?: string;
+  technicianId?: string | null;
+  name: string;
+  notes?: string | null;
+  eventLocation?: string | null;
+  latitude?: string | number | null;
+  longitude?: string | number | null;
+  scheduledStart: string;
+  scheduledEnd: string;
+  technician?: Technician | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type EventForm = {
+  name: string;
+  notes: string;
+  eventLocation: string;
+  technicianId: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+};
+
 type JobLineDraft = {
   id: string;
   category: "service" | "material";
@@ -350,7 +375,7 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "settings" | "api";
+type View = "dispatch" | "schedule" | "map" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "events" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number; minute: number; technicianId?: string } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
@@ -478,6 +503,7 @@ const dashboardDateRanges = [
 const viewPathMap: Record<View, string> = {
   dispatch: "/dashboard",
   schedule: "/schedule",
+  map: "/map",
   customers: "/customers",
   jobs: "/jobs",
   estimates: "/estimates",
@@ -486,6 +512,7 @@ const viewPathMap: Record<View, string> = {
   reports: "/reports",
   pricebook: "/pricebook",
   servicePlans: "/service-plans",
+  events: "/events",
   settings: "/settings",
   api: "/api-access"
 };
@@ -603,6 +630,35 @@ function toInputDate(date: Date) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
+function formDatePart(value: string) {
+  return value ? value.slice(0, 10) : "";
+}
+
+function formTimePart(value: string) {
+  return value ? value.slice(11, 16) : "";
+}
+
+function mergeDateAndTime(current: string, part: "date" | "time", nextValue: string) {
+  const fallback = current || toDateTimeLocal(new Date());
+  const [date, time] = fallback.split("T");
+  return part === "date" ? `${nextValue}T${time || "09:00"}` : `${date || toInputDate(new Date())}T${nextValue}`;
+}
+
+function blankEventForm(): EventForm {
+  const start = new Date();
+  start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0);
+  const end = new Date(start);
+  end.setHours(start.getHours() + 1);
+  return {
+    name: "",
+    notes: "",
+    eventLocation: "",
+    technicianId: "",
+    scheduledStart: toDateTimeLocal(start),
+    scheduledEnd: toDateTimeLocal(end)
+  };
+}
+
 function sameCalendarDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
@@ -703,6 +759,10 @@ function formatDate(value?: string | null) {
 
 function formatDateTime(value?: string | null) {
   return value ? new Date(value).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Not recorded";
+}
+
+function eventTimeLabel(calendarEvent: CalendarEvent) {
+  return `${formatDateTime(calendarEvent.scheduledStart)} - ${new Date(calendarEvent.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
 function dollarsToCents(value: string) {
@@ -851,6 +911,11 @@ export function App() {
   const [scheduleDate, setScheduleDate] = useState(() => new Date());
   const [slotPrompt, setSlotPrompt] = useState<SlotPrompt>(null);
   const [selectedScheduleJob, setSelectedScheduleJob] = useState<Job | null>(null);
+  const [selectedScheduleEvent, setSelectedScheduleEvent] = useState<CalendarEvent | null>(null);
+  const [eventDialogOpen, setEventDialogOpen] = useState(false);
+  const [eventEditingId, setEventEditingId] = useState("");
+  const [eventSearch, setEventSearch] = useState("");
+  const [eventForm, setEventForm] = useState<EventForm>(() => blankEventForm());
   const [jobPageMode, setJobPageMode] = useState<"list" | "create">("list");
   const [selectedJobId, setSelectedJobId] = useState("");
   const [jobSearch, setJobSearch] = useState("");
@@ -1029,6 +1094,7 @@ export function App() {
   const [customerAddressForm, setCustomerAddressForm] = useState({ label: "Service", street1: "", street2: "", city: "", state: "CA", postalCode: "" });
   const [customerAttachmentName, setCustomerAttachmentName] = useState("");
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [estimates, setEstimates] = useState<Estimate[]>([]);
   const [estimatePageMode, setEstimatePageMode] = useState<"list" | "create">("list");
   const [selectedEstimateId, setSelectedEstimateId] = useState("");
@@ -1074,6 +1140,7 @@ export function App() {
   const [error, setError] = useState("");
 
   const scheduledJobs = useMemo(() => jobs.filter((job) => job.status !== "COMPLETED" && job.status !== "CANCELED"), [jobs]);
+  const scheduledEvents = useMemo(() => events, [events]);
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? null;
   const selectedJobInvoice = selectedJob?.invoices?.[0] ?? null;
   const selectedEstimate = estimates.find((estimate) => estimate.id === selectedEstimateId) ?? null;
@@ -1273,6 +1340,42 @@ export function App() {
     .filter((job) => job.scheduledStart)
     .sort((a, b) => new Date(a.scheduledStart ?? "").getTime() - new Date(b.scheduledStart ?? "").getTime())
     .slice(0, 6), [scheduledJobs]);
+  const filteredEvents = useMemo(() => {
+    const query = eventSearch.trim().toLowerCase();
+    if (!query) return events;
+    return events.filter((calendarEvent) => [
+      calendarEvent.name,
+      calendarEvent.notes ?? "",
+      calendarEvent.eventLocation ?? "",
+      calendarEvent.technician?.name ?? ""
+    ].some((value) => value.toLowerCase().includes(query)));
+  }, [events, eventSearch]);
+  const dispatchStops = useMemo(() => {
+    const jobStops = scheduledJobs
+      .filter((job) => job.scheduledStart)
+      .map((job) => ({
+        id: `job-${job.id}`,
+        type: "job" as const,
+        time: job.scheduledStart ?? "",
+        title: `Job #${job.jobNumber} - ${customerName(job.customer)}`,
+        detail: job.title || job.jobType,
+        location: addressLine(job.address ?? job.customer.addresses?.[0]),
+        technician: job.technician?.name ?? "Unassigned",
+        onOpen: () => openJobDetail(job)
+      }));
+    const eventStops = scheduledEvents.map((calendarEvent) => ({
+      id: `event-${calendarEvent.id}`,
+      type: "event" as const,
+      time: calendarEvent.scheduledStart,
+      title: calendarEvent.name,
+      detail: calendarEvent.notes || "Event",
+      location: calendarEvent.eventLocation || "No location saved",
+      technician: calendarEvent.technician?.name ?? "Unassigned",
+      onOpen: () => setSelectedScheduleEvent(calendarEvent)
+    }));
+    return [...jobStops, ...eventStops].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+  }, [scheduledJobs, scheduledEvents]);
+  const todaysDispatchStops = useMemo(() => dispatchStops.filter((stop) => sameCalendarDay(new Date(stop.time), new Date())), [dispatchStops]);
   const companyAddressPreview = [
     activeLocationAccess?.location.street1,
     activeLocationAccess?.location.city,
@@ -1283,10 +1386,11 @@ export function App() {
   async function loadDashboard() {
     const dashboardQuery = new URLSearchParams({ dateRange: dashboardDateRange });
     if (dashboardDateRange === "selectedDay") dashboardQuery.set("date", dashboardDate);
-    const [summaryResult, customersResult, jobsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult, stripeStatusResult] = await Promise.all([
+    const [summaryResult, customersResult, jobsResult, eventsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult, stripeStatusResult] = await Promise.all([
       api<Summary>(`/api/settings/summary?${dashboardQuery.toString()}`),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
+      api<{ events: CalendarEvent[] }>("/api/events"),
       api<{ estimates: Estimate[] }>("/api/estimates"),
       api<{ invoices: Invoice[] }>("/api/invoices"),
       api<{ technicians: Technician[] }>("/api/technicians"),
@@ -1301,6 +1405,7 @@ export function App() {
     setSummary(summaryResult);
     setCustomers(customersResult.customers);
     setJobs(jobsResult.jobs);
+    setEvents(eventsResult.events);
     setEstimates(estimatesResult.estimates);
     setInvoices(invoicesResult.invoices);
     setTechnicians(techniciansResult.technicians);
@@ -2934,6 +3039,94 @@ export function App() {
     setActiveView("jobs");
   }
 
+  function mergeEventRecord(calendarEvent: CalendarEvent) {
+    setEvents((current) => [calendarEvent, ...current.filter((item) => item.id !== calendarEvent.id)]
+      .sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime()));
+    if (selectedScheduleEvent?.id === calendarEvent.id) setSelectedScheduleEvent(calendarEvent);
+  }
+
+  function openEventEditor(calendarEvent?: CalendarEvent, slot?: { date: Date; hour: number; minute: number; technicianId?: string }) {
+    if (calendarEvent) {
+      setEventEditingId(calendarEvent.id);
+      setEventForm({
+        name: calendarEvent.name,
+        notes: calendarEvent.notes ?? "",
+        eventLocation: calendarEvent.eventLocation ?? "",
+        technicianId: calendarEvent.technicianId ?? calendarEvent.technician?.id ?? "",
+        scheduledStart: toDateTimeLocal(new Date(calendarEvent.scheduledStart)),
+        scheduledEnd: toDateTimeLocal(new Date(calendarEvent.scheduledEnd))
+      });
+    } else if (slot) {
+      const start = new Date(slot.date);
+      start.setHours(slot.hour, slot.minute, 0, 0);
+      const end = new Date(start);
+      end.setHours(start.getHours() + 1);
+      setEventEditingId("");
+      setEventForm({
+        ...blankEventForm(),
+        technicianId: slot.technicianId ?? "",
+        scheduledStart: toDateTimeLocal(start),
+        scheduledEnd: toDateTimeLocal(end)
+      });
+    } else {
+      setEventEditingId("");
+      setEventForm(blankEventForm());
+    }
+    setSlotPrompt(null);
+    setSelectedScheduleEvent(null);
+    setEventDialogOpen(true);
+  }
+
+  function openEventFromSlot(slot: { date: Date; hour: number; minute: number; technicianId?: string }) {
+    openEventEditor(undefined, slot);
+  }
+
+  async function saveEvent(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    if (!eventForm.name.trim()) {
+      setError("Event name is required.");
+      return;
+    }
+    const start = new Date(eventForm.scheduledStart);
+    const end = new Date(eventForm.scheduledEnd);
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+      setError("Event end time must be after the start time.");
+      return;
+    }
+    try {
+      const result = await api<{ event: CalendarEvent }>(eventEditingId ? `/api/events/${eventEditingId}` : "/api/events", {
+        method: eventEditingId ? "PATCH" : "POST",
+        body: JSON.stringify({
+          name: eventForm.name.trim(),
+          notes: eventForm.notes.trim() || null,
+          eventLocation: eventForm.eventLocation.trim() || null,
+          technicianId: eventForm.technicianId || null,
+          scheduledStart: start.toISOString(),
+          scheduledEnd: end.toISOString()
+        })
+      });
+      mergeEventRecord(result.event);
+      setEventDialogOpen(false);
+      setEventEditingId("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to save event.");
+    }
+  }
+
+  async function deleteEvent(calendarEvent: CalendarEvent) {
+    if (!window.confirm(`Delete event "${calendarEvent.name}"?`)) return;
+    setError("");
+    try {
+      await api(`/api/events/${calendarEvent.id}`, { method: "DELETE" });
+      setEvents((current) => current.filter((item) => item.id !== calendarEvent.id));
+      setSelectedScheduleEvent(null);
+      setEventDialogOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete event.");
+    }
+  }
+
   function moveSchedule(direction: -1 | 1) {
     setScheduleDate((current) => {
       if (calendarMode === "month") return addMonths(current, direction);
@@ -3159,7 +3352,7 @@ export function App() {
           <span className="nav-section">Main Menu</span>
           <button className={activeView === "dispatch" ? "active" : ""} onClick={() => setActiveView("dispatch")}><Home size={18} /> Dashboard</button>
           <button className={activeView === "schedule" ? "active" : ""} onClick={() => setActiveView("schedule")}><CalendarDays size={18} /> Schedule</button>
-          <button><Map size={18} /> Map</button>
+          <button className={activeView === "map" ? "active" : ""} onClick={() => setActiveView("map")}><Map size={18} /> Map</button>
 
           <span className="nav-section">Communication</span>
           <button><MessageSquareText size={18} /> Messages</button>
@@ -3173,7 +3366,7 @@ export function App() {
           <button className={activeView === "invoices" ? "active" : ""} onClick={() => setActiveView("invoices")}><ReceiptText size={18} /> Invoices</button>
           <button className={activeView === "estimates" ? "active" : ""} onClick={() => setActiveView("estimates")}><FileText size={18} /> Estimates</button>
           <button><WalletCards size={18} /> Payments</button>
-          <button><CalendarDays size={18} /> Events</button>
+          <button className={activeView === "events" ? "active" : ""} onClick={() => setActiveView("events")}><CalendarDays size={18} /> Events</button>
           <button><Clock3 size={18} /> Time Clock</button>
           <button><Laptop size={18} /> Online Booking</button>
           <button className={activeView === "pricebook" ? "active" : ""} onClick={() => setActiveView("pricebook")}><Tag size={18} /> Pricebook</button>
@@ -3206,7 +3399,7 @@ export function App() {
               <button onClick={() => { setActiveView("jobs"); setJobPageMode("create"); setAddMenuOpen(false); }}><Wrench size={16} /> Job</button>
               <button onClick={() => { setActiveView("invoices"); setAddMenuOpen(false); }}><ReceiptText size={16} /> Invoice</button>
               <button onClick={() => { setActiveView("estimates"); setEstimatePageMode("create"); setSelectedEstimateId(""); setAddMenuOpen(false); }}><FileText size={16} /> Estimate</button>
-              <button onClick={() => { setActiveView("schedule"); setAddMenuOpen(false); }}><CalendarDays size={16} /> Event</button>
+              <button onClick={() => { openEventEditor(); setAddMenuOpen(false); }}><CalendarDays size={16} /> Event</button>
             </div>
           </div>
           <div className="topbar-spacer" />
@@ -3384,13 +3577,19 @@ export function App() {
               <div className="month-calendar-grid">
                 {monthDays.map((day) => {
                   const dayJobs = scheduledJobs.filter((job) => job.scheduledStart && sameCalendarDay(new Date(job.scheduledStart), day));
+                  const dayEvents = scheduledEvents.filter((calendarEvent) => sameCalendarDay(new Date(calendarEvent.scheduledStart), day));
+                  const visibleEventSlots = Math.max(0, 4 - dayJobs.length);
+                  const hiddenItems = Math.max(0, dayJobs.length + dayEvents.length - 4);
                   return (
                     <button className={day.getMonth() === scheduleDate.getMonth() ? "month-day" : "month-day muted"} key={day.toISOString()} onClick={() => { setScheduleDate(day); setCalendarMode("day"); }}>
                       <span>{dayLabels[day.getDay()]} {day.getDate()}</span>
                       {dayJobs.slice(0, 4).map((job) => (
                         <em key={job.id} onClick={(event) => { event.stopPropagation(); setSelectedScheduleJob(job); }}>{job.customer.firstName} {job.customer.lastName}</em>
                       ))}
-                      {dayJobs.length > 4 && <small>+{dayJobs.length - 4} more</small>}
+                      {dayEvents.slice(0, visibleEventSlots).map((calendarEvent) => (
+                        <em className="month-event" key={calendarEvent.id} onClick={(event) => { event.stopPropagation(); setSelectedScheduleEvent(calendarEvent); }}>{calendarEvent.name}</em>
+                      ))}
+                      {hiddenItems > 0 && <small>+{hiddenItems} more</small>}
                     </button>
                   );
                 })}
@@ -3416,6 +3615,12 @@ export function App() {
                         if (!job.scheduledStart) return false;
                         const start = new Date(job.scheduledStart);
                         const techMatches = calendarMode !== "employees" || (column.technicianId ? job.technician?.id === column.technicianId : !job.technician?.id);
+                        return techMatches && sameCalendarDay(start, column.date) && sameCalendarSlot(start, hour, minute);
+                      });
+                      const slotEvents = scheduledEvents.filter((calendarEvent) => {
+                        const start = new Date(calendarEvent.scheduledStart);
+                        const eventTechId = calendarEvent.technicianId ?? calendarEvent.technician?.id;
+                        const techMatches = calendarMode !== "employees" || (column.technicianId ? eventTechId === column.technicianId : !eventTechId);
                         return techMatches && sameCalendarDay(start, column.date) && sameCalendarSlot(start, hour, minute);
                       });
                       const now = new Date();
@@ -3447,6 +3652,29 @@ export function App() {
                               <small>#{job.jobNumber}</small>
                             </span>
                           ))}
+                          {slotEvents.map((calendarEvent) => (
+                            <span
+                              className="calendar-job calendar-event"
+                              key={calendarEvent.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedScheduleEvent(calendarEvent);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  setSelectedScheduleEvent(calendarEvent);
+                                }
+                              }}
+                            >
+                              <strong>{calendarEvent.name}</strong>
+                              <em>{new Date(calendarEvent.scheduledStart).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}-{new Date(calendarEvent.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</em>
+                              <small>{calendarEvent.technician?.name ?? "Unassigned"}</small>
+                            </span>
+                          ))}
                         </button>
                       );
                     })}
@@ -3464,7 +3692,7 @@ export function App() {
               <p>{slotPrompt.date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} at {formatHour(slotPrompt.hour, slotPrompt.minute)}</p>
               <div className="create-options">
                 <button onClick={() => openJobFromSlot(slotPrompt)}><Wrench size={18} /> Job</button>
-                <button onClick={() => setSlotPrompt(null)}><CalendarDays size={18} /> Event</button>
+                <button onClick={() => openEventFromSlot(slotPrompt)}><CalendarDays size={18} /> Event</button>
               </div>
             </div>
           </div>
@@ -3499,6 +3727,141 @@ export function App() {
               {selectedScheduleJob.internalNotes && <p className="schedule-job-note">{selectedScheduleJob.internalNotes}</p>}
             </div>
           </div>
+        )}
+
+        {selectedScheduleEvent && (
+          <div className="modal-backdrop" onClick={() => setSelectedScheduleEvent(null)}>
+            <div className="schedule-job-modal schedule-event-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="schedule-job-title">
+                <div>
+                  <h2><CalendarDays size={22} /> {selectedScheduleEvent.name}</h2>
+                  <p>{eventTimeLabel(selectedScheduleEvent)}</p>
+                </div>
+                <div className="table-actions">
+                  <button className="link-button" type="button" onClick={() => openEventEditor(selectedScheduleEvent)}>Edit</button>
+                  <button className="danger-link" type="button" onClick={() => deleteEvent(selectedScheduleEvent)}>Delete</button>
+                </div>
+              </div>
+              <div className="schedule-job-details">
+                <span><MapPin size={18} /> {selectedScheduleEvent.eventLocation || "No location saved"}</span>
+                <span><UserPlus size={18} /> {selectedScheduleEvent.technician?.name ?? "Unassigned"}</span>
+                <span><StickyNote size={18} /> {selectedScheduleEvent.notes || "No notes"}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {eventDialogOpen && (
+          <div className="event-create-overlay">
+            <form className="event-create-shell" onSubmit={saveEvent}>
+              <header className="event-create-header">
+                <button type="button" className="icon-button" onClick={() => setEventDialogOpen(false)} aria-label="Close event editor"><X size={20} /></button>
+                <h1>{eventEditingId ? "Edit event" : "New event"}</h1>
+                <button className="primary" type="submit" disabled={!eventForm.name.trim()}>Save event</button>
+              </header>
+              <div className="event-create-grid">
+                <section className="panel event-card">
+                  <div className="panel-header"><h2><CalendarDays size={20} /> Schedule</h2></div>
+                  <div className="event-schedule-row">
+                    <span>From</span>
+                    <input type="date" value={formDatePart(eventForm.scheduledStart)} onChange={(event) => setEventForm((current) => ({ ...current, scheduledStart: mergeDateAndTime(current.scheduledStart, "date", event.target.value) }))} required />
+                    <input type="time" step={900} value={formTimePart(eventForm.scheduledStart)} onChange={(event) => setEventForm((current) => ({ ...current, scheduledStart: mergeDateAndTime(current.scheduledStart, "time", event.target.value) }))} required />
+                  </div>
+                  <div className="event-schedule-row">
+                    <span>To</span>
+                    <input type="date" value={formDatePart(eventForm.scheduledEnd)} onChange={(event) => setEventForm((current) => ({ ...current, scheduledEnd: mergeDateAndTime(current.scheduledEnd, "date", event.target.value) }))} required />
+                    <input type="time" step={900} value={formTimePart(eventForm.scheduledEnd)} onChange={(event) => setEventForm((current) => ({ ...current, scheduledEnd: mergeDateAndTime(current.scheduledEnd, "time", event.target.value) }))} required />
+                  </div>
+                  <p className="timezone-note">Timezone: {activeLocationAccess?.location.timezone ?? "America/Phoenix"}</p>
+                  <div className="event-team-row">
+                    <UserPlus size={20} />
+                    <select value={eventForm.technicianId} onChange={(event) => setEventForm((current) => ({ ...current, technicianId: event.target.value }))}>
+                      <option value="">Unassigned</option>
+                      {technicians.filter((tech) => tech.active).map((tech) => <option key={tech.id} value={tech.id}>{tech.name}</option>)}
+                    </select>
+                  </div>
+                  <span className="assignment-chip">{technicians.find((tech) => tech.id === eventForm.technicianId)?.name ?? "Unassigned"}</span>
+                </section>
+
+                <section className="panel event-card event-details-card">
+                  <div className="panel-header"><h2><ListChecks size={20} /> Event details</h2></div>
+                  <label>Name<input value={eventForm.name} onChange={(event) => setEventForm((current) => ({ ...current, name: event.target.value }))} autoFocus required /></label>
+                  <label>Note<textarea value={eventForm.notes} onChange={(event) => setEventForm((current) => ({ ...current, notes: event.target.value }))} /></label>
+                  <label>Location<input value={eventForm.eventLocation} onChange={(event) => setEventForm((current) => ({ ...current, eventLocation: event.target.value }))} placeholder="Street address, city, or place" /></label>
+                </section>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {activeView === "map" && (
+          <section className="map-page">
+            <div className="section-actions">
+              <div className="breadcrumb"><Map size={17} /> Map</div>
+              <button className="primary" onClick={() => setActiveView("schedule")}><CalendarDays size={18} /> View schedule</button>
+            </div>
+            <div className="map-page-grid">
+              <section className="panel route-map-board">
+                <div className="panel-header"><h2>Today's route map</h2><span>{todaysDispatchStops.length} stops</span></div>
+                <div className="map-stop-list">
+                  {(todaysDispatchStops.length ? todaysDispatchStops : dispatchStops.slice(0, 8)).map((stop, index) => (
+                    <button key={stop.id} className={stop.type === "event" ? "map-stop-card event-stop" : "map-stop-card"} onClick={stop.onOpen}>
+                      <strong>{index + 1}. {stop.title}</strong>
+                      <span>{new Date(stop.time).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })} - {stop.technician}</span>
+                      <small>{stop.location}</small>
+                    </button>
+                  ))}
+                  {!dispatchStops.length && <p className="empty-state">Create jobs or events with locations to build the route map.</p>}
+                </div>
+              </section>
+              <section className="panel">
+                <div className="panel-header"><h2>Stops</h2></div>
+                <div className="record-list">
+                  {dispatchStops.slice(0, 12).map((stop) => (
+                    <button key={stop.id} className="record-row" onClick={stop.onOpen}>
+                      <strong>{stop.title}</strong>
+                      <span>{stop.detail}</span>
+                      <small>{stop.location}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </section>
+        )}
+
+        {activeView === "events" && (
+          <section className="events-page">
+            <div className="section-actions">
+              <div className="breadcrumb"><CalendarDays size={17} /> Events</div>
+              <button className="primary" onClick={() => openEventEditor()}><Plus size={18} /> Create Event</button>
+            </div>
+            <section className="panel events-panel">
+              <div className="toolbar-line">
+                <label className="search-control"><Search size={17} /><input placeholder="Search events..." value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} /></label>
+              </div>
+              <table className="record-table">
+                <thead><tr><th>Name</th><th>Scheduled</th><th>Location</th><th>Team member</th><th>Actions</th></tr></thead>
+                <tbody>
+                  {filteredEvents.map((calendarEvent) => (
+                    <tr key={calendarEvent.id}>
+                      <td><div className="event-title-cell"><strong>{calendarEvent.name}</strong><small>{calendarEvent.notes || "No notes"}</small></div></td>
+                      <td>{eventTimeLabel(calendarEvent)}</td>
+                      <td>{calendarEvent.eventLocation || "No location"}</td>
+                      <td>{calendarEvent.technician?.name ?? "Unassigned"}</td>
+                      <td>
+                        <div className="table-actions">
+                          <button className="icon-button" onClick={() => openEventEditor(calendarEvent)} aria-label={`Edit ${calendarEvent.name}`}><Pencil size={16} /></button>
+                          <button className="icon-button danger" onClick={() => deleteEvent(calendarEvent)} aria-label={`Delete ${calendarEvent.name}`}><Trash2 size={16} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {!filteredEvents.length && <tr><td colSpan={5}>No events yet.</td></tr>}
+                </tbody>
+              </table>
+            </section>
+          </section>
         )}
 
         {activeView === "customers" && (

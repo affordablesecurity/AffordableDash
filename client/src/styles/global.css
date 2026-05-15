@@ -4942,6 +4942,17 @@ button:disabled {
   color: #272d3d;
 }
 
+.calendar-event {
+  background: #e0f2fe;
+  border-color: #0284c7;
+  color: #075985;
+}
+
+.calendar-event em,
+.calendar-event small {
+  color: #075985;
+}
+
 .month-calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(150px, 1fr));
@@ -4981,6 +4992,11 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.month-day em.month-event {
+  background: #e0f2fe;
+  color: #075985;
 }
 
 .month-day small {
@@ -5051,6 +5067,232 @@ button:disabled {
   color: #4f5a72;
   padding: 12px;
   white-space: pre-wrap;
+}
+
+.schedule-event-modal .schedule-job-title h2 svg {
+  color: #0284c7;
+}
+
+.danger-link {
+  border: 0;
+  background: transparent;
+  color: #e11d48;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.icon-button.danger {
+  color: #e11d48;
+}
+
+.events-page,
+.map-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.events-panel .record-table td {
+  vertical-align: top;
+}
+
+.event-title-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.event-title-cell small {
+  color: #718096;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.map-page-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(340px, 0.7fr);
+  gap: 20px;
+}
+
+.route-map-board {
+  min-height: 420px;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.map-stop-list,
+.record-list {
+  display: grid;
+  gap: 10px;
+}
+
+.map-stop-card,
+.record-row {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.map-stop-card {
+  border-left: 4px solid #3f3df2;
+}
+
+.map-stop-card:hover,
+.record-row:hover {
+  border-color: #3f3df2;
+  background: #f8f7ff;
+}
+
+.map-stop-card span,
+.map-stop-card small,
+.record-row span,
+.record-row small {
+  color: #64748b;
+}
+
+.map-stop-card.event-stop {
+  border-left-color: #0284c7;
+}
+
+.event-create-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: #f8fafc;
+  overflow: auto;
+}
+
+.event-create-shell {
+  min-height: 100%;
+}
+
+.event-create-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 28px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.event-create-header h1 {
+  margin: 0 auto 0 0;
+  font-size: 28px;
+}
+
+.event-create-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 480px) minmax(0, 1fr);
+  gap: 24px;
+  padding: 28px;
+}
+
+.event-card {
+  align-self: start;
+}
+
+.event-card .panel-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.event-schedule-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 136px;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.event-schedule-row span,
+.event-details-card label {
+  font-weight: 800;
+  color: #334155;
+}
+
+.event-schedule-row input,
+.event-team-row select,
+.event-details-card input,
+.event-details-card textarea {
+  width: 100%;
+  border: 1px solid #dbe1ec;
+  border-radius: 10px;
+  padding: 12px;
+  font: inherit;
+  background: #ffffff;
+  color: #101421;
+}
+
+.event-details-card {
+  display: grid;
+  gap: 14px;
+}
+
+.event-details-card label {
+  display: grid;
+  gap: 7px;
+}
+
+.event-details-card textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+
+.timezone-note {
+  text-align: right;
+  color: #64748b;
+  margin: 4px 0 18px;
+}
+
+.event-team-row {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 12px;
+  align-items: center;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 18px;
+}
+
+.assignment-chip {
+  display: inline-flex;
+  width: max-content;
+  margin: 10px 0 0 48px;
+  border-radius: 999px;
+  background: #edf0f5;
+  color: #4b5563;
+  padding: 7px 12px;
+  font-weight: 800;
+}
+
+@media (max-width: 960px) {
+  .event-create-grid,
+  .map-page-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .event-schedule-row {
+    grid-template-columns: 1fr;
+  }
+
+  .timezone-note {
+    text-align: left;
+  }
 }
 
 .modal-backdrop {
