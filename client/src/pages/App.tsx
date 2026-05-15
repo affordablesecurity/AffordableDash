@@ -285,6 +285,17 @@ type Invoice = {
   items?: Array<{ id: string; category?: string; name: string; description?: string; quantity: number | string; unitPrice: number; taxable?: boolean }>;
 };
 
+type PaymentRecord = {
+  id: string;
+  invoiceId: string;
+  amount: number;
+  status: string;
+  provider: string;
+  providerRef?: string;
+  paidAt?: string;
+  createdAt: string;
+};
+
 type LocationAccess = {
   role: string;
   organization: { id: string; name: string };
@@ -687,6 +698,10 @@ function currencyToCents(value: string) {
   return Number.isFinite(amount) ? Math.round(amount * 100) : 0;
 }
 
+function centsToDollarInput(value: number) {
+  return (value / 100).toFixed(2);
+}
+
 function percentToNumber(value: string) {
   const normalized = value.replace(/[%\s]/g, "");
   const amount = Number(normalized || "0");
@@ -867,6 +882,20 @@ export function App() {
   const [invoiceSendTo, setInvoiceSendTo] = useState("");
   const [invoiceSendSubject, setInvoiceSendSubject] = useState("");
   const [invoiceSendMessage, setInvoiceSendMessage] = useState("");
+  const [paymentDialogInvoice, setPaymentDialogInvoice] = useState<Invoice | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<"credit" | "cash" | "check" | "other">("credit");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentReceiptEmail, setPaymentReceiptEmail] = useState("");
+  const [paymentNotifyCustomer, setPaymentNotifyCustomer] = useState(true);
+  const [paymentNote, setPaymentNote] = useState("");
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [paymentBillingForm, setPaymentBillingForm] = useState({
+    nameOnCard: "",
+    street: "",
+    city: "",
+    state: "AZ",
+    postalCode: ""
+  });
   const [jobTemplateId, setJobTemplateId] = useState("");
   const [jobTemplates, setJobTemplates] = useState<JobTemplate[]>(defaultJobTemplates);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
@@ -2532,22 +2561,69 @@ export function App() {
   }
 
   async function openInvoicePayment(invoice: Invoice) {
+    const address = invoice.customer.addresses?.[0];
+    setSelectedInvoiceId(invoice.id);
+    setPaymentDialogInvoice(invoice);
+    setPaymentAmount(centsToDollarInput(invoice.total));
+    setPaymentReceiptEmail(invoice.customer.email || "");
+    setPaymentMethod(invoiceSettings.acceptCreditCard ? "credit" : "cash");
+    setPaymentNote("");
+    setPaymentBillingForm({
+      nameOnCard: customerName(invoice.customer),
+      street: address?.street1 ?? "",
+      city: address?.city ?? "",
+      state: address?.state ?? "AZ",
+      postalCode: address?.postalCode ?? ""
+    });
+  }
+
+  async function confirmPayment() {
+    if (!paymentDialogInvoice) return;
+    const amount = currencyToCents(paymentAmount);
+    if (amount <= 0) {
+      setInvoiceActionMessage("Enter a payment amount greater than $0.00.");
+      return;
+    }
     try {
-      if (!invoiceSettings.acceptCreditCard) {
-        setSelectedInvoiceId(invoice.id);
-        setActiveView("invoices");
-        setInvoiceActionMessage("Credit card payments are disabled in invoice settings for this location.");
+      setPaymentProcessing(true);
+      setInvoiceActionMessage("");
+      if (paymentMethod === "credit") {
+        if (!invoiceSettings.acceptCreditCard) {
+          setInvoiceActionMessage("Credit card payments are disabled in invoice settings for this location.");
+          return;
+        }
+        const result = await api<{ url?: string }>(`/api/payments/invoices/${paymentDialogInvoice.id}/checkout-session`, { method: "POST" });
+        if (result.url) {
+          const opened = window.open(result.url, "_blank", "noopener,noreferrer");
+          if (!opened) window.location.assign(result.url);
+          setPaymentDialogInvoice(null);
+          setInvoiceActionMessage("Stripe checkout opened in a secure payment window.");
+          return;
+        }
+        setInvoiceActionMessage("Stripe did not return a checkout URL.");
         return;
       }
-      const result = await api<{ url?: string }>(`/api/payments/invoices/${invoice.id}/checkout-session`, { method: "POST" });
-      if (result.url) {
-        window.location.assign(result.url);
-        return;
-      }
-      setSelectedInvoiceId(invoice.id);
-      setActiveView("invoices");
+
+      const result = await api<{ payment: PaymentRecord; invoice: Invoice }>(`/api/payments/invoices/${paymentDialogInvoice.id}/manual`, {
+        method: "POST",
+        body: JSON.stringify({
+          amount,
+          method: paymentMethod,
+          note: paymentNote,
+          notifyCustomer: paymentNotifyCustomer
+        })
+      });
+      setInvoices((current) => current.map((invoice) => invoice.id === result.invoice.id ? result.invoice : invoice));
+      setJobs((current) => current.map((job) => job.id === result.invoice.job?.id
+        ? { ...job, invoices: [result.invoice, ...(job.invoices ?? []).filter((invoice) => invoice.id !== result.invoice.id)] }
+        : job));
+      setPaymentDialogInvoice(null);
+      setInvoiceActionMessage(`${statusLabel(paymentMethod.toUpperCase())} payment recorded for invoice #${result.invoice.invoiceNumber}.`);
+      await loadDashboard();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to open Stripe payment checkout");
+      setError(err instanceof Error ? err.message : "Unable to record payment");
+    } finally {
+      setPaymentProcessing(false);
     }
   }
 
@@ -5071,7 +5147,7 @@ export function App() {
 
                   {!stripeStatus?.configured && (
                     <div className="info-banner">
-                      Add `STRIPE_CONNECT_CLIENT_ID` in Render and configure the Stripe OAuth redirect URL as `{window.location.origin}/api/integrations/stripe/oauth/callback`.
+                      Start setup is locked until Render has `STRIPE_SECRET_KEY` and `STRIPE_CONNECT_CLIENT_ID`. In Stripe, configure the OAuth redirect URL as `{window.location.origin}/api/integrations/stripe/oauth/callback`.
                     </div>
                   )}
                 </div>
@@ -5790,6 +5866,86 @@ export function App() {
               <div className="modal-actions">
                 <button className="outline-button" type="button" onClick={() => setInvoiceSendDialogOpen(false)}>Cancel</button>
                 <button className="primary" type="button" disabled={!invoiceSendTo.trim()} onClick={confirmInvoiceSend}>Send</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {paymentDialogInvoice && (
+          <div className="modal-backdrop">
+            <div className="payment-modal">
+              <header>
+                <h2>Payment</h2>
+                <button className="icon-button" type="button" onClick={() => setPaymentDialogInvoice(null)} aria-label="Close payment"><X size={20} /></button>
+              </header>
+              {invoiceActionMessage && <div className="info-banner">{invoiceActionMessage}</div>}
+              <div className="payment-field-stack">
+                <label>Amount
+                  <input inputMode="decimal" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} />
+                </label>
+                <label>Email receipt
+                  <input type="email" value={paymentReceiptEmail} onChange={(event) => setPaymentReceiptEmail(event.target.value)} placeholder="customer@email.com" />
+                </label>
+              </div>
+              <div className="payment-tabs" role="tablist" aria-label="Payment method">
+                {(["credit", "cash", "check", "other"] as const).map((method) => (
+                  <button
+                    key={method}
+                    className={paymentMethod === method ? "active" : ""}
+                    type="button"
+                    onClick={() => setPaymentMethod(method)}
+                  >
+                    {method === "credit" ? "Credit" : statusLabel(method.toUpperCase())}
+                  </button>
+                ))}
+              </div>
+              {paymentMethod === "credit" ? (
+                <div className="payment-card-entry">
+                  <div className="secure-payment-card">
+                    <CreditCard size={22} />
+                    <div>
+                      <strong>Secure card checkout</strong>
+                      <span>Card number, expiration date, CVC, Apple Pay, and saved-card handling are collected by Stripe in a secure checkout window.</span>
+                    </div>
+                  </div>
+                  <div className="payment-grid">
+                    <label>Name on card
+                      <input value={paymentBillingForm.nameOnCard} onChange={(event) => setPaymentBillingForm({ ...paymentBillingForm, nameOnCard: event.target.value })} />
+                    </label>
+                    <label>Postal code
+                      <input value={paymentBillingForm.postalCode} onChange={(event) => setPaymentBillingForm({ ...paymentBillingForm, postalCode: event.target.value })} />
+                    </label>
+                    <label className="span-2">Street
+                      <input value={paymentBillingForm.street} onChange={(event) => setPaymentBillingForm({ ...paymentBillingForm, street: event.target.value })} />
+                    </label>
+                    <label>City
+                      <input value={paymentBillingForm.city} onChange={(event) => setPaymentBillingForm({ ...paymentBillingForm, city: event.target.value })} />
+                    </label>
+                    <label>State
+                      <input value={paymentBillingForm.state} onChange={(event) => setPaymentBillingForm({ ...paymentBillingForm, state: event.target.value })} />
+                    </label>
+                  </div>
+                  {!stripeStatus?.connected && (
+                    <div className="info-banner">Connect this location to Stripe before charging cards. Cash, check, and other payments can still be recorded.</div>
+                  )}
+                </div>
+              ) : (
+                <div className="manual-payment-entry">
+                  <label>{paymentMethod === "cash" ? "Cash note" : paymentMethod === "check" ? "Check number or note" : "Payment note"}
+                    <input value={paymentNote} onChange={(event) => setPaymentNote(event.target.value)} placeholder={paymentMethod === "check" ? "Check #, bank, or memo" : "Optional"} />
+                  </label>
+                  <p className="muted">This records a successful {paymentMethod} payment in the CRM and marks the invoice paid when the recorded payments cover the invoice total.</p>
+                </div>
+              )}
+              <label className="check-row payment-notify">
+                <input type="checkbox" checked={paymentNotifyCustomer} onChange={(event) => setPaymentNotifyCustomer(event.target.checked)} />
+                Notify customer
+              </label>
+              <div className="modal-actions">
+                <button className="outline-button" type="button" onClick={() => setPaymentDialogInvoice(null)}>Cancel</button>
+                <button className="primary" type="button" disabled={paymentProcessing || (paymentMethod === "credit" && (!invoiceSettings.acceptCreditCard || !stripeStatus?.connected))} onClick={confirmPayment}>
+                  {paymentProcessing ? "Processing..." : paymentMethod === "credit" && !stripeStatus?.connected ? "Connect Stripe first" : paymentMethod === "credit" ? "Charge card" : `Record ${paymentMethod} payment`}
+                </button>
               </div>
             </div>
           </div>
