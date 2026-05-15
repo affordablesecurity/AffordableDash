@@ -662,6 +662,20 @@ textarea {
   color: #2b3143;
 }
 
+.dashboard-date-input {
+  cursor: pointer;
+}
+
+.dashboard-date-input input {
+  width: 100%;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  color: #2b3143;
+  background: transparent;
+  font: inherit;
+}
+
 .segmented {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -706,6 +720,23 @@ textarea {
   padding: 24px;
 }
 
+button.stat-card {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+}
+
+.stat-card-clickable {
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.stat-card-clickable:hover {
+  border-color: #cfd5ff;
+  box-shadow: 0 12px 30px rgba(35, 40, 58, 0.08);
+  transform: translateY(-1px);
+}
+
 .stat-card svg {
   align-self: flex-start;
   color: #101421;
@@ -722,6 +753,103 @@ textarea {
   display: block;
   margin-top: 14px;
   font-size: 24px;
+}
+
+.stat-card small {
+  display: block;
+  margin-top: 8px;
+  color: #6e7ba0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dashboard-page {
+  display: grid;
+  gap: 20px;
+}
+
+.dashboard-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.dashboard-hero h1 {
+  margin: 0;
+  font-size: 32px;
+  letter-spacing: 0;
+}
+
+.dashboard-hero p {
+  margin: 8px 0 0;
+  color: #7380a4;
+}
+
+.dashboard-range-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dashboard-range-controls select {
+  width: 180px;
+}
+
+.dashboard-kpi-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dashboard-secondary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dashboard-content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
+  gap: 20px;
+}
+
+.dashboard-schedule-list {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard-schedule-row,
+.metric-row-button {
+  width: 100%;
+  border: 1px solid #eef1f6;
+  background: #ffffff;
+  color: #272d3d;
+  text-align: left;
+}
+
+.dashboard-schedule-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 64px;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.dashboard-schedule-row:hover,
+.metric-row-button:hover {
+  background: #f7f8ff;
+  border-color: #d7dcff;
+}
+
+.dashboard-schedule-row span {
+  color: #202637;
+  font-weight: 800;
+}
+
+.dashboard-schedule-row small {
+  color: #7380a4;
+  font-weight: 700;
 }
 
 .content-grid {
@@ -905,6 +1033,18 @@ textarea {
   border: 1px solid #eef1f6;
   border-radius: 12px;
   padding: 12px;
+}
+
+.source-row span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.source-row i {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
 }
 
 .metric-row span {
@@ -4654,12 +4794,21 @@ button:disabled {
   .api-key-form,
   .settings-layout,
   .settings-input-row,
-  .source-chart {
+  .source-chart,
+  .dashboard-kpi-grid,
+  .dashboard-secondary-grid,
+  .dashboard-content-grid,
+  .dashboard-schedule-row {
     grid-template-columns: 1fr;
   }
 
-  .settings-panel-head {
+  .settings-panel-head,
+  .dashboard-hero {
     flex-direction: column;
+  }
+
+  .dashboard-range-controls {
+    justify-content: flex-start;
   }
 
   .invoice-send-topbar,

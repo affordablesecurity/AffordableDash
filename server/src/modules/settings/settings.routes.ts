@@ -1,4 +1,3 @@
-import type { Prisma } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
@@ -7,8 +6,62 @@ import { asyncHandler } from "../../utils/async-handler.js";
 
 export const settingsRouter = Router();
 
+function startOfUtcDay(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setUTCMonth(next.getUTCMonth() + months);
+  return next;
+}
+
+function addYears(date: Date, years: number) {
+  const next = new Date(date);
+  next.setUTCFullYear(next.getUTCFullYear() + years);
+  return next;
+}
+
+function startOfWeek(date: Date) {
+  return addDays(date, -date.getUTCDay());
+}
+
+function rangeBounds(range: string, selectedDate?: string) {
+  const parsedDate = selectedDate ? new Date(`${selectedDate}T00:00:00.000Z`) : new Date();
+  const anchor = Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+  const today = startOfUtcDay(anchor);
+  const tomorrow = addDays(today, 1);
+  if (range === "selectedDay") return { start: today, end: tomorrow };
+  if (range === "today") return { start: startOfUtcDay(new Date()), end: addDays(startOfUtcDay(new Date()), 1) };
+  if (range === "weekToDate") return { start: startOfWeek(today), end: tomorrow };
+  if (range === "quarterToDate") return { start: new Date(Date.UTC(today.getUTCFullYear(), Math.floor(today.getUTCMonth() / 3) * 3, 1)), end: tomorrow };
+  if (range === "yearToDate") return { start: new Date(Date.UTC(today.getUTCFullYear(), 0, 1)), end: tomorrow };
+  if (range === "lastWeek") {
+    const thisWeek = startOfWeek(today);
+    return { start: addDays(thisWeek, -7), end: thisWeek };
+  }
+  if (range === "lastMonth") {
+    const thisMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    return { start: addMonths(thisMonth, -1), end: thisMonth };
+  }
+  if (range === "lastYear") return { start: addYears(new Date(Date.UTC(today.getUTCFullYear(), 0, 1)), -1), end: new Date(Date.UTC(today.getUTCFullYear(), 0, 1)) };
+  return { start: new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)), end: tomorrow };
+}
+
 settingsRouter.get("/summary", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
+  const dateRange = typeof req.query.dateRange === "string" ? req.query.dateRange : "monthToDate";
+  const selectedDate = typeof req.query.date === "string" ? req.query.date : undefined;
+  const { start, end } = rangeBounds(dateRange, selectedDate);
+  const createdInRange = { gte: start, lt: end };
+  const scheduledInRange = { gte: start, lt: end };
+  const completedInRange = { gte: start, lt: end };
   const [
     customers,
     openJobs,
@@ -23,18 +76,25 @@ settingsRouter.get("/summary", asyncHandler(async (req, res) => {
     jobsByTypeRows,
     jobsBySourceRows
   ] = await Promise.all([
-    prisma.customer.count({ where: { locationId } }),
+    prisma.customer.count({ where: { locationId, createdAt: createdInRange } }),
     prisma.job.count({ where: { locationId, status: { in: ["LEAD", "SCHEDULED", "DISPATCHED", "IN_PROGRESS"] } } }),
-    prisma.job.count({ where: { locationId } }),
-    prisma.job.count({ where: { locationId, status: "COMPLETED" } }),
-    prisma.job.count({ where: { locationId, status: "CANCELED" } }),
-    prisma.job.count({ where: { locationId, status: "LEAD" } }),
-    prisma.job.count({ where: { locationId, status: { in: ["SCHEDULED", "DISPATCHED", "IN_PROGRESS", "COMPLETED"] } } }),
-    prisma.invoice.count({ where: { locationId } }),
-    prisma.invoice.aggregate({ where: { locationId, status: { not: "VOID" } }, _sum: { total: true }, _avg: { total: true } }),
-    prisma.payment.aggregate({ where: { status: "SUCCEEDED", invoice: { locationId } }, _sum: { amount: true } }),
-    prisma.job.groupBy({ by: ["jobType"], where: { locationId }, _count: { _all: true } }),
-    prisma.job.groupBy({ by: ["leadSource"], where: { locationId }, _count: { _all: true } })
+    prisma.job.count({ where: { locationId, createdAt: createdInRange } }),
+    prisma.job.count({ where: { locationId, status: "COMPLETED", completedAt: completedInRange } }),
+    prisma.job.count({ where: { locationId, status: "CANCELED", updatedAt: createdInRange } }),
+    prisma.job.count({ where: { locationId, status: "LEAD", createdAt: createdInRange } }),
+    prisma.job.count({ where: { locationId, status: { in: ["SCHEDULED", "DISPATCHED", "IN_PROGRESS", "COMPLETED"] }, createdAt: createdInRange } }),
+    prisma.invoice.count({ where: { locationId, createdAt: createdInRange } }),
+    prisma.invoice.aggregate({ where: { locationId, status: { not: "VOID" }, createdAt: createdInRange }, _sum: { total: true }, _avg: { total: true } }),
+    prisma.payment.aggregate({
+      where: {
+        status: "SUCCEEDED",
+        invoice: { locationId },
+        OR: [{ paidAt: scheduledInRange }, { paidAt: null, createdAt: createdInRange }]
+      },
+      _sum: { amount: true }
+    }),
+    prisma.job.groupBy({ by: ["jobType"], where: { locationId, createdAt: createdInRange }, _count: { _all: true } }),
+    prisma.job.groupBy({ by: ["leadSource"], where: { locationId, createdAt: createdInRange }, _count: { _all: true } })
   ]);
 
   const salesCents = invoiceTotals._sum.total ?? 0;
@@ -72,7 +132,8 @@ settingsRouter.get("/summary", asyncHandler(async (req, res) => {
     closeRate,
     estimateWinRatio: { won: completedJobs, total: invoices },
     jobsByType,
-    jobsBySource
+    jobsBySource,
+    range: { start, end, dateRange }
   });
 }));
 

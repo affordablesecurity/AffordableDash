@@ -396,6 +396,17 @@ const reportDateRanges = [
   { value: "lastMonth", label: "Last month" },
   { value: "lastYear", label: "Last year" }
 ];
+const dashboardDateRanges = [
+  { value: "today", label: "Today" },
+  { value: "selectedDay", label: "Selected day" },
+  { value: "weekToDate", label: "Week to date" },
+  { value: "monthToDate", label: "Month to date" },
+  { value: "quarterToDate", label: "Quarter to date" },
+  { value: "yearToDate", label: "Year to date" },
+  { value: "lastWeek", label: "Last week" },
+  { value: "lastMonth", label: "Last month" },
+  { value: "lastYear", label: "Last year" }
+];
 const reportGroupings = [
   { value: "day", label: "Day" },
   { value: "week", label: "Week" },
@@ -491,6 +502,11 @@ function formatHour(hour: number) {
 function toDateTimeLocal(date: Date) {
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function toInputDate(date: Date) {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
 function sameCalendarDay(a: Date, b: Date) {
@@ -827,6 +843,8 @@ export function App() {
   const [reportDashboard, setReportDashboard] = useState<"businessOwner" | "leads" | "jobs">("businessOwner");
   const [reportDateRange, setReportDateRange] = useState("monthToDate");
   const [reportShowBy, setReportShowBy] = useState("year");
+  const [dashboardDateRange, setDashboardDateRange] = useState("monthToDate");
+  const [dashboardDate, setDashboardDate] = useState(() => toInputDate(new Date()));
   const [priceBookItemForm, setPriceBookItemForm] = useState({
     name: "",
     modelNumber: "",
@@ -1044,6 +1062,11 @@ export function App() {
     ? reports?.dashboards.leads ?? []
     : reports?.dashboards.businessOwner ?? [];
   const reportTitle = reportDashboard === "leads" ? "Leads" : reportDashboard === "jobs" ? "Jobs" : "Business Owner";
+  const dashboardDateRangeLabel = dashboardDateRanges.find((item) => item.value === dashboardDateRange)?.label ?? "Month to date";
+  const dashboardScheduledJobs = useMemo(() => [...scheduledJobs]
+    .filter((job) => job.scheduledStart)
+    .sort((a, b) => new Date(a.scheduledStart ?? "").getTime() - new Date(b.scheduledStart ?? "").getTime())
+    .slice(0, 6), [scheduledJobs]);
   const companyAddressPreview = [
     activeLocationAccess?.location.street1,
     activeLocationAccess?.location.city,
@@ -1052,8 +1075,10 @@ export function App() {
   ].filter(Boolean).join(", ") || "No company address saved yet";
 
   async function loadDashboard() {
+    const dashboardQuery = new URLSearchParams({ dateRange: dashboardDateRange });
+    if (dashboardDateRange === "selectedDay") dashboardQuery.set("date", dashboardDate);
     const [summaryResult, customersResult, jobsResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult] = await Promise.all([
-      api<Summary>("/api/settings/summary"),
+      api<Summary>(`/api/settings/summary?${dashboardQuery.toString()}`),
       api<{ customers: Customer[] }>("/api/customers"),
       api<{ jobs: Job[] }>("/api/jobs"),
       api<{ invoices: Invoice[] }>("/api/invoices"),
@@ -1099,10 +1124,24 @@ export function App() {
     setReports(result);
   }
 
+  function openDashboardReport(reportId: string, dashboard: "businessOwner" | "leads" | "jobs" = "businessOwner") {
+    setSelectedReportId(reportId);
+    setReportDashboard(dashboard);
+    if (dashboardDateRange !== "selectedDay") setReportDateRange(dashboardDateRange);
+    setActiveView("reports");
+  }
+
+  function openJobsFiltered(status: string) {
+    setJobStatusFilter(status);
+    setSelectedJobId("");
+    setJobPageMode("list");
+    setActiveView("jobs");
+  }
+
   useEffect(() => {
     if (!token) return;
     loadDashboard().catch((err: Error) => setError(err.message));
-  }, [token]);
+  }, [token, dashboardDateRange, dashboardDate]);
 
   useEffect(() => {
     if (!selectedJob) return;
@@ -2545,79 +2584,144 @@ export function App() {
                 </option>
               ))}
             </select>
-            <div className="date-pill">05/13/2026 <CalendarDays size={16} /></div>
+            {activeView === "dispatch" ? (
+              <label className="date-pill dashboard-date-input">
+                <input
+                  aria-label="Dashboard date"
+                  type="date"
+                  value={dashboardDate}
+                  onChange={(event) => {
+                    setDashboardDate(event.target.value);
+                    setDashboardDateRange("selectedDay");
+                  }}
+                />
+                <CalendarDays size={16} />
+              </label>
+            ) : (
+              <div className="date-pill">{new Date().toLocaleDateString([], { month: "2-digit", day: "2-digit", year: "numeric" })} <CalendarDays size={16} /></div>
+            )}
           </div>
         </div>
 
         {error && <div className="error">{error}</div>}
 
-        {activeView === "dispatch" && <div className="stats-grid">
-          <StatCard label="Sales" value={money.format((summary?.salesCents ?? 0) / 100)} icon={CircleDollarSign} />
-          <StatCard label="Collected Payments" value={money.format((summary?.collectedCents ?? 0) / 100)} icon={BadgeDollarSign} />
-          <StatCard label="Jobs Completed" value={String(summary?.completedJobs ?? 0)} icon={CheckCheck} />
-          <StatCard label="Cancellation Rate" value={percent.format(summary?.cancellationRate ?? 0)} icon={Percent} />
-          <StatCard label="Average Job Size" value={money.format((summary?.averageJobSizeCents ?? 0) / 100)} icon={TrendingUp} />
-          <StatCard label="New Clients" value={String(summary?.customers ?? 0)} icon={Users} />
-          <StatCard label="New Leads" value={String(summary?.leadJobs ?? 0)} icon={UserPlus} />
-          <StatCard label="Booking Rate" value={percent.format(summary?.bookingRate ?? 0)} icon={Percent} />
-        </div>}
-
-        {activeView === "dispatch" && <div className="content-grid">
-          <section className="panel wide">
-            <div className="panel-header">
-              <h2>Scheduled Work</h2>
-              <button className="icon-button" aria-label="Add job"><Plus size={18} /></button>
-            </div>
-            <div className="job-list">
-              {scheduledJobs.map((job) => (
-                <article className="job-row" key={job.id}>
-                  <div className="job-time">
-                    <strong>#{job.jobNumber}</strong>
-                    <span>{job.scheduledStart ? new Date(job.scheduledStart).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "Unscheduled"}</span>
-                  </div>
-                  <div>
-                    <h3>{job.title}</h3>
-                    <p>{job.customer.firstName} {job.customer.lastName} / {job.jobType}</p>
-                  </div>
-                  <span className="status-pill">{job.status.replace(/_/g, " ")}</span>
-                </article>
-              ))}
-              {scheduledJobs.length === 0 && <p className="empty">No scheduled jobs yet.</p>}
-            </div>
-          </section>
-
-          <section className="panel chart-panel">
-            <div className="panel-header">
-              <h2>Jobs by Type</h2>
-            </div>
-            {summary?.jobsByType.length ? (
-              <div className="metric-list">
-                {summary.jobsByType.map((item) => (
-                  <div className="metric-row" key={item.label}>
-                    <span>{item.label}</span>
-                    <strong>{item.count}</strong>
-                    <em>{percent.format(item.percent)}</em>
-                  </div>
-                ))}
+        {activeView === "dispatch" && (
+          <section className="dashboard-page">
+            <div className="dashboard-hero">
+              <div>
+                <h1>Business snapshot</h1>
+                <p>{dashboardDateRangeLabel} performance for {activeLocationAccess?.location.name ?? "this location"}.</p>
               </div>
-            ) : <div className="empty-chart"><span>!</span> No data available</div>}
-          </section>
-
-          <section className="panel chart-panel">
-            <div className="panel-header">
-              <h2>Jobs by Source</h2>
-              <button className="link-button">View All</button>
-            </div>
-            <div className="source-chart">
-              <div className="pie-chart" />
-              <div className="legend-list">
-                {(summary?.jobsBySource.length ? summary.jobsBySource : [{ label: "Unknown", count: 0, percent: 0 }]).map((item, index) => (
-                  <span key={item.label}><i className={sourceColor(index)} /> {item.label} <b>{item.count} ({percent.format(item.percent)})</b></span>
-                ))}
+              <div className="dashboard-range-controls">
+                <select
+                  aria-label="Dashboard date range"
+                  value={dashboardDateRange}
+                  onChange={(event) => setDashboardDateRange(event.target.value)}
+                >
+                  {dashboardDateRanges.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+                <button className="outline-button" type="button" onClick={() => setDashboardDateRange("today")}>Today</button>
+                <button className="outline-button" type="button" onClick={() => setDashboardDateRange("weekToDate")}>Week</button>
+                <button className="outline-button" type="button" onClick={() => setDashboardDateRange("monthToDate")}>Month</button>
+                <button className="outline-button" type="button" onClick={() => setDashboardDateRange("quarterToDate")}>Quarter</button>
+                <button className="outline-button" type="button" onClick={() => setDashboardDateRange("yearToDate")}>Year</button>
               </div>
             </div>
+
+            <div className="stats-grid dashboard-kpi-grid">
+              <StatCard
+                label="Job revenue earned"
+                value={money.format((summary?.salesCents ?? 0) / 100)}
+                caption="Open revenue report"
+                icon={CircleDollarSign}
+                onClick={() => openDashboardReport("job-revenue-earned")}
+              />
+              <StatCard
+                label="Jobs completed"
+                value={String(summary?.completedJobs ?? 0)}
+                caption="View completed jobs"
+                icon={CheckCheck}
+                onClick={() => openJobsFiltered("COMPLETED")}
+              />
+              <StatCard
+                label="Average job size"
+                value={money.format((summary?.averageJobSizeCents ?? 0) / 100)}
+                caption="Open average job report"
+                icon={TrendingUp}
+                onClick={() => openDashboardReport("average-job-size")}
+              />
+              <StatCard
+                label="New jobs booked"
+                value={String(summary?.bookedJobs ?? 0)}
+                caption="View scheduled jobs"
+                icon={Wrench}
+                onClick={() => openJobsFiltered("SCHEDULED")}
+              />
+            </div>
+
+            <div className="stats-grid dashboard-secondary-grid">
+              <StatCard label="Collected payments" value={money.format((summary?.collectedCents ?? 0) / 100)} caption="Open invoices" icon={BadgeDollarSign} onClick={() => setActiveView("invoices")} />
+              <StatCard label="Cancellation rate" value={percent.format(summary?.cancellationRate ?? 0)} caption={`${summary?.canceledJobs ?? 0} canceled jobs`} icon={Percent} onClick={() => openJobsFiltered("CANCELED")} />
+              <StatCard label="New clients" value={String(summary?.customers ?? 0)} caption="Open client list" icon={Users} onClick={() => setActiveView("customers")} />
+              <StatCard label="New leads" value={String(summary?.leadJobs ?? 0)} caption="View lead jobs" icon={UserPlus} onClick={() => openJobsFiltered("LEAD")} />
+            </div>
+
+            <div className="dashboard-content-grid">
+              <section className="panel wide">
+                <div className="panel-header">
+                  <h2>Schedule</h2>
+                  <button className="link-button" onClick={() => setActiveView("schedule")}>View schedule</button>
+                </div>
+                <div className="dashboard-schedule-list">
+                  {dashboardScheduledJobs.map((job) => (
+                    <button className="dashboard-schedule-row" type="button" key={job.id} onClick={() => openJobDetail(job)}>
+                      <strong>{job.scheduledStart ? new Date(job.scheduledStart).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "Unscheduled"}</strong>
+                      <span>Job {job.jobNumber} / {customerName(job.customer)}</span>
+                      <small>{job.technician?.name ?? "Unassigned"}</small>
+                    </button>
+                  ))}
+                  {dashboardScheduledJobs.length === 0 && <p className="empty">No scheduled jobs for this location.</p>}
+                </div>
+              </section>
+
+              <section className="panel chart-panel">
+                <div className="panel-header">
+                  <h2>Jobs by type</h2>
+                  <button className="link-button" onClick={() => openDashboardReport("job-type", "jobs")}>View report</button>
+                </div>
+                {summary?.jobsByType.length ? (
+                  <div className="metric-list">
+                    {summary.jobsByType.map((item) => (
+                      <button className="metric-row metric-row-button" type="button" key={item.label} onClick={() => openDashboardReport("job-type", "jobs")}>
+                        <span>{item.label}</span>
+                        <strong>{item.count}</strong>
+                        <em>{percent.format(item.percent)}</em>
+                      </button>
+                    ))}
+                  </div>
+                ) : <div className="empty-chart"><span>!</span> No jobs in this range</div>}
+              </section>
+
+              <section className="panel chart-panel">
+                <div className="panel-header">
+                  <h2>Jobs by source</h2>
+                  <button className="link-button" onClick={() => openDashboardReport("job-lead-source", "leads")}>View report</button>
+                </div>
+                {summary?.jobsBySource.length ? (
+                  <div className="metric-list">
+                    {summary.jobsBySource.map((item, index) => (
+                      <button className="metric-row metric-row-button source-row" type="button" key={item.label} onClick={() => openDashboardReport("job-lead-source", "leads")}>
+                        <span><i className={sourceColor(index)} /> {item.label}</span>
+                        <strong>{item.count}</strong>
+                        <em>{percent.format(item.percent)}</em>
+                      </button>
+                    ))}
+                  </div>
+                ) : <div className="empty-chart"><span>!</span> No job sources in this range</div>}
+              </section>
+            </div>
           </section>
-        </div>}
+        )}
 
         {activeView === "schedule" && (
           <section className="schedule-shell">
