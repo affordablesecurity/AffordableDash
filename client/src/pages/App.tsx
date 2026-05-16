@@ -105,6 +105,8 @@ type Address = {
   city: string;
   state: string;
   postalCode: string;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
 };
 
 type CustomerNote = {
@@ -150,6 +152,8 @@ type EventForm = {
   name: string;
   notes: string;
   eventLocation: string;
+  latitude: string;
+  longitude: string;
   technicianId: string;
   scheduledStart: string;
   scheduledEnd: string;
@@ -261,6 +265,8 @@ type CustomerForm = {
   city: string;
   state: string;
   postalCode: string;
+  latitude: string;
+  longitude: string;
   communicationSms: boolean;
   communicationEmail: boolean;
   communicationPhone: boolean;
@@ -750,6 +756,8 @@ function blankEventForm(): EventForm {
     name: "",
     notes: "",
     eventLocation: "",
+    latitude: "",
+    longitude: "",
     technicianId: "",
     scheduledStart: toDateTimeLocal(start),
     scheduledEnd: toDateTimeLocal(end)
@@ -772,9 +780,69 @@ function statusLabel(status: string) {
   return status.split("_").map((part) => part[0] + part.slice(1).toLowerCase()).join(" ");
 }
 
-function addressLine(address?: Address) {
+function addressLine(address?: Partial<Pick<Address, "street1" | "city" | "state" | "postalCode">>) {
   if (!address) return "No address selected";
   return [address.street1, address.city, address.state, address.postalCode].filter(Boolean).join(", ");
+}
+
+type AddressSuggestion = {
+  placeId: string;
+  description: string;
+  mainText?: string;
+  secondaryText?: string;
+};
+
+type PlaceAddress = {
+  placeId: string;
+  formattedAddress: string;
+  street1: string;
+  street2?: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  latitude?: number;
+  longitude?: number;
+};
+
+function placeToAddressPatch(place: PlaceAddress) {
+  return {
+    street1: place.street1,
+    street2: place.street2 ?? "",
+    city: place.city,
+    state: place.state,
+    postalCode: place.postalCode,
+    latitude: place.latitude === undefined ? "" : String(place.latitude),
+    longitude: place.longitude === undefined ? "" : String(place.longitude)
+  };
+}
+
+function hasCoordinate(value: unknown) {
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+type StreetViewAddress = Partial<Pick<Address, "street1" | "street2" | "city" | "state" | "postalCode" | "latitude" | "longitude">>;
+
+function streetViewUrl(address?: Pick<StreetViewAddress, "latitude" | "longitude"> | null, size = "640x320") {
+  if (!address || !hasCoordinate(address.latitude) || !hasCoordinate(address.longitude)) return "";
+  return `/api/places/street-view?lat=${encodeURIComponent(String(address.latitude))}&lng=${encodeURIComponent(String(address.longitude))}&size=${encodeURIComponent(size)}`;
+}
+
+function StreetViewPreview({ address, fallback, className = "street-preview" }: { address?: StreetViewAddress | null; fallback?: string; className?: string }) {
+  const imageUrl = streetViewUrl(address);
+  if (imageUrl) {
+    return (
+      <div className={`${className} street-view-ready`}>
+        <img className="street-view-image" src={imageUrl} alt={`Street view for ${addressLine(address ?? undefined)}`} loading="lazy" />
+      </div>
+    );
+  }
+
+  return (
+    <div className={className}>
+      <strong>Street view</strong>
+      <span>{fallback ?? "Service area"}</span>
+    </div>
+  );
 }
 
 function jobInvoiceTotal(job: Job) {
@@ -839,6 +907,8 @@ function blankCustomerForm(): CustomerForm {
     city: "",
     state: "CA",
     postalCode: "",
+    latitude: "",
+    longitude: "",
     communicationSms: true,
     communicationEmail: true,
     communicationPhone: true
@@ -1257,7 +1327,7 @@ export function App() {
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [customerProfileTab, setCustomerProfileTab] = useState<"profile" | "leads" | "estimates" | "jobs" | "invoices" | "attachments" | "notes">("profile");
   const [customerNoteDraft, setCustomerNoteDraft] = useState("");
-  const [customerAddressForm, setCustomerAddressForm] = useState({ label: "Service", street1: "", street2: "", city: "", state: "CA", postalCode: "" });
+  const [customerAddressForm, setCustomerAddressForm] = useState({ label: "Service", street1: "", street2: "", city: "", state: "CA", postalCode: "", latitude: "", longitude: "" });
   const [customerAttachmentName, setCustomerAttachmentName] = useState("");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -1304,6 +1374,8 @@ export function App() {
     tax: "0"
   });
   const [error, setError] = useState("");
+  const [addressSuggestions, setAddressSuggestions] = useState<Record<string, AddressSuggestion[]>>({});
+  const [addressLoadingKey, setAddressLoadingKey] = useState("");
 
   const scheduledJobs = useMemo(() => jobs.filter((job) => job.status !== "COMPLETED" && job.status !== "CANCELED"), [jobs]);
   const scheduledEvents = useMemo(() => events, [events]);
@@ -1326,6 +1398,87 @@ export function App() {
     : scheduleDays.map((day) => ({ id: day.toISOString(), label: dayLabels[day.getDay()], date: day, technicianId: undefined as string | undefined }));
   const selectedJobCustomer = customers.find((customer) => customer.id === jobForm.customerId);
   const selectedJobAddresses = selectedJobCustomer?.addresses ?? [];
+
+  function clearAddressSuggestions(key: string) {
+    setAddressSuggestions((current) => ({ ...current, [key]: [] }));
+  }
+
+  async function loadAddressSuggestions(key: string, input: string) {
+    const trimmed = input.trim();
+    if (trimmed.length < 3) {
+      clearAddressSuggestions(key);
+      return;
+    }
+
+    setAddressLoadingKey(key);
+    try {
+      const result = await api<{ suggestions: AddressSuggestion[] }>(`/api/places/autocomplete?input=${encodeURIComponent(trimmed)}`);
+      setAddressSuggestions((current) => ({ ...current, [key]: result.suggestions }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Address lookup failed.");
+    } finally {
+      setAddressLoadingKey((current) => current === key ? "" : current);
+    }
+  }
+
+  async function selectAddressSuggestion(key: string, placeId: string, apply: (place: PlaceAddress) => void) {
+    setAddressLoadingKey(key);
+    try {
+      const result = await api<{ address: PlaceAddress }>(`/api/places/details?placeId=${encodeURIComponent(placeId)}`);
+      apply(result.address);
+      clearAddressSuggestions(key);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Address lookup failed.");
+    } finally {
+      setAddressLoadingKey((current) => current === key ? "" : current);
+    }
+  }
+
+  function renderAddressAutocomplete(args: {
+    lookupKey: string;
+    value: string;
+    placeholder: string;
+    required?: boolean;
+    className?: string;
+    onChange: (value: string) => void;
+    onSelect: (place: PlaceAddress) => void;
+  }) {
+    const suggestions = addressSuggestions[args.lookupKey] ?? [];
+    return (
+      <div className={`typeahead address-autocomplete ${args.className ?? ""}`}>
+        <input
+          className="address-autocomplete-input"
+          placeholder={args.placeholder}
+          value={args.value}
+          required={args.required}
+          onChange={(event) => {
+            const next = event.target.value;
+            args.onChange(next);
+            void loadAddressSuggestions(args.lookupKey, next);
+          }}
+          onBlur={() => window.setTimeout(() => clearAddressSuggestions(args.lookupKey), 150)}
+        />
+        {suggestions.length > 0 ? (
+          <div className="typeahead-results address-results">
+            {suggestions.map((suggestion) => (
+              <button
+                type="button"
+                key={suggestion.placeId}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => void selectAddressSuggestion(args.lookupKey, suggestion.placeId, args.onSelect)}
+              >
+                <strong>{suggestion.mainText ?? suggestion.description}</strong>
+                <span>{suggestion.secondaryText ?? suggestion.description}</span>
+              </button>
+            ))}
+          </div>
+        ) : addressLoadingKey === args.lookupKey ? (
+          <div className="typeahead-results address-results"><span className="typeahead-empty">Searching addresses...</span></div>
+        ) : null}
+      </div>
+    );
+  }
+
   const clientMatches = useMemo(() => {
     const query = jobClientSearch.trim().toLowerCase();
     if (!query) return customers.slice(0, 8);
@@ -2031,7 +2184,9 @@ export function App() {
           street2: customerForm.street2 || undefined,
           city: customerForm.city,
           state: customerForm.state,
-          postalCode: customerForm.postalCode
+          postalCode: customerForm.postalCode,
+          latitude: customerForm.latitude ? Number(customerForm.latitude) : undefined,
+          longitude: customerForm.longitude ? Number(customerForm.longitude) : undefined
         } : undefined
       })
     });
@@ -2072,10 +2227,14 @@ export function App() {
     setError("");
     const result = await api<{ customer: Customer }>(`/api/customers/${selectedCustomer.id}/addresses`, {
       method: "POST",
-      body: JSON.stringify(customerAddressForm)
+      body: JSON.stringify({
+        ...customerAddressForm,
+        latitude: customerAddressForm.latitude ? Number(customerAddressForm.latitude) : undefined,
+        longitude: customerAddressForm.longitude ? Number(customerAddressForm.longitude) : undefined
+      })
     });
     updateCustomerInState(result.customer);
-    setCustomerAddressForm({ label: "Service", street1: "", street2: "", city: "", state: "CA", postalCode: "" });
+    setCustomerAddressForm({ label: "Service", street1: "", street2: "", city: "", state: "CA", postalCode: "", latitude: "", longitude: "" });
   }
 
   async function addCustomerAttachment(event: FormEvent) {
@@ -2222,7 +2381,9 @@ export function App() {
           street2: jobClientForm.street2 || undefined,
           city: jobClientForm.city,
           state: jobClientForm.state,
-          postalCode: jobClientForm.postalCode
+          postalCode: jobClientForm.postalCode,
+          latitude: jobClientForm.latitude ? Number(jobClientForm.latitude) : undefined,
+          longitude: jobClientForm.longitude ? Number(jobClientForm.longitude) : undefined
         } : undefined
       })
     });
@@ -2532,7 +2693,9 @@ export function App() {
             street2: jobClientForm.street2 || undefined,
             city: jobClientForm.city,
             state: jobClientForm.state,
-            postalCode: jobClientForm.postalCode
+            postalCode: jobClientForm.postalCode,
+            latitude: jobClientForm.latitude ? Number(jobClientForm.latitude) : undefined,
+            longitude: jobClientForm.longitude ? Number(jobClientForm.longitude) : undefined
           } : undefined
         })
       });
@@ -2630,7 +2793,9 @@ export function App() {
             street2: jobClientForm.street2 || undefined,
             city: jobClientForm.city,
             state: jobClientForm.state,
-            postalCode: jobClientForm.postalCode
+            postalCode: jobClientForm.postalCode,
+            latitude: jobClientForm.latitude ? Number(jobClientForm.latitude) : undefined,
+            longitude: jobClientForm.longitude ? Number(jobClientForm.longitude) : undefined
           } : undefined
         })
       });
@@ -3713,6 +3878,8 @@ export function App() {
         name: calendarEvent.name,
         notes: calendarEvent.notes ?? "",
         eventLocation: calendarEvent.eventLocation ?? "",
+        latitude: calendarEvent.latitude === undefined || calendarEvent.latitude === null ? "" : String(calendarEvent.latitude),
+        longitude: calendarEvent.longitude === undefined || calendarEvent.longitude === null ? "" : String(calendarEvent.longitude),
         technicianId: calendarEvent.technicianId ?? calendarEvent.technician?.id ?? "",
         scheduledStart: toDateTimeLocal(new Date(calendarEvent.scheduledStart)),
         scheduledEnd: toDateTimeLocal(new Date(calendarEvent.scheduledEnd))
@@ -3762,6 +3929,8 @@ export function App() {
           name: eventForm.name.trim(),
           notes: eventForm.notes.trim() || null,
           eventLocation: eventForm.eventLocation.trim() || null,
+          latitude: eventForm.latitude ? Number(eventForm.latitude) : null,
+          longitude: eventForm.longitude ? Number(eventForm.longitude) : null,
           technicianId: eventForm.technicianId || null,
           scheduledStart: start.toISOString(),
           scheduledEnd: end.toISOString()
@@ -4448,7 +4617,21 @@ export function App() {
                   <div className="panel-header"><h2><ListChecks size={20} /> Event details</h2></div>
                   <label>Name<input value={eventForm.name} onChange={(event) => setEventForm((current) => ({ ...current, name: event.target.value }))} autoFocus required /></label>
                   <label>Note<textarea value={eventForm.notes} onChange={(event) => setEventForm((current) => ({ ...current, notes: event.target.value }))} /></label>
-                  <label>Location<input value={eventForm.eventLocation} onChange={(event) => setEventForm((current) => ({ ...current, eventLocation: event.target.value }))} placeholder="Street address, city, or place" /></label>
+                  <label>
+                    Location
+                    {renderAddressAutocomplete({
+                      lookupKey: "event-location",
+                      value: eventForm.eventLocation,
+                      placeholder: "Street address, city, or place",
+                      onChange: (value) => setEventForm((current) => ({ ...current, eventLocation: value, latitude: "", longitude: "" })),
+                      onSelect: (place) => setEventForm((current) => ({
+                        ...current,
+                        eventLocation: place.formattedAddress,
+                        latitude: place.latitude === undefined ? "" : String(place.latitude),
+                        longitude: place.longitude === undefined ? "" : String(place.longitude)
+                      }))
+                    })}
+                  </label>
                 </section>
               </div>
             </form>
@@ -4757,7 +4940,14 @@ export function App() {
                       {crmOptions.leadSources.map((source) => <option key={source} value={source}>{source}</option>)}
                     </select>
                     <input placeholder="Customer tags, comma separated" value={customerForm.tags} onChange={(event) => setCustomerForm({ ...customerForm, tags: event.target.value })} />
-                    <input className="span-2" placeholder="Street address" value={customerForm.street1} onChange={(event) => setCustomerForm({ ...customerForm, street1: event.target.value })} />
+                    {renderAddressAutocomplete({
+                      lookupKey: "customer-create-address",
+                      value: customerForm.street1,
+                      placeholder: "Street address",
+                      className: "span-2",
+                      onChange: (value) => setCustomerForm((current) => ({ ...current, street1: value, latitude: "", longitude: "" })),
+                      onSelect: (place) => setCustomerForm((current) => ({ ...current, ...placeToAddressPatch(place) }))
+                    })}
                     <input placeholder="Unit, suite, gate code" value={customerForm.street2} onChange={(event) => setCustomerForm({ ...customerForm, street2: event.target.value })} />
                     <input placeholder="City" value={customerForm.city} onChange={(event) => setCustomerForm({ ...customerForm, city: event.target.value })} />
                     <input placeholder="State" value={customerForm.state} onChange={(event) => setCustomerForm({ ...customerForm, state: event.target.value })} />
@@ -4849,7 +5039,7 @@ export function App() {
 
                     <div className="customer-main-stack">
                       <section className="panel customer-map-panel">
-                        <div className="customer-map-placeholder"><MapPin size={28} /><span>{addressLine(selectedCustomer.addresses?.[0])}</span></div>
+                        <StreetViewPreview className="customer-map-placeholder" address={selectedCustomer.addresses?.[0]} fallback={addressLine(selectedCustomer.addresses?.[0])} />
                         <div className="panel-header">
                           <h2>{selectedCustomer.addresses?.length ?? 0} address{(selectedCustomer.addresses?.length ?? 0) === 1 ? "" : "es"}</h2>
                         </div>
@@ -4863,7 +5053,14 @@ export function App() {
                         </div>
                         <form className="inline-address-form" onSubmit={addCustomerAddress}>
                           <input placeholder="Label" value={customerAddressForm.label} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, label: event.target.value })} />
-                          <input placeholder="Street address" value={customerAddressForm.street1} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, street1: event.target.value })} required />
+                          {renderAddressAutocomplete({
+                            lookupKey: "customer-profile-address",
+                            value: customerAddressForm.street1,
+                            placeholder: "Street address",
+                            required: true,
+                            onChange: (value) => setCustomerAddressForm((current) => ({ ...current, street1: value, latitude: "", longitude: "" })),
+                            onSelect: (place) => setCustomerAddressForm((current) => ({ ...current, ...placeToAddressPatch(place) }))
+                          })}
                           <input placeholder="Unit" value={customerAddressForm.street2} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, street2: event.target.value })} />
                           <input placeholder="City" value={customerAddressForm.city} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, city: event.target.value })} required />
                           <input placeholder="State" value={customerAddressForm.state} onChange={(event) => setCustomerAddressForm({ ...customerAddressForm, state: event.target.value })} required />
@@ -5009,7 +5206,7 @@ export function App() {
                           <h2><Users size={18} /> Customer</h2>
                           <button className="outline-button" type="button" onClick={() => openCustomerProfile(selectedJob.customer)}>View details</button>
                         </div>
-                        <div className="street-preview"><strong>Street view</strong><span>{selectedJob.address?.city || selectedJob.customer.addresses?.[0]?.city || "Service area"}</span></div>
+                        <StreetViewPreview address={selectedJob.address ?? selectedJob.customer.addresses?.[0]} fallback={selectedJob.address?.city || selectedJob.customer.addresses?.[0]?.city || "Service area"} />
                         <h3>{customerName(selectedJob.customer)}</h3>
                         <p><MapPin size={16} /> {addressLine(selectedJob.address ?? selectedJob.customer.addresses?.[0])}</p>
                         <p><Phone size={16} /> {selectedJob.customer.phone}</p>
@@ -5442,10 +5639,11 @@ export function App() {
 
                     {!createClientInline && selectedJobCustomer && (
                       <div className="job-customer-card">
-                        <div className="job-customer-map">
-                          <span>Street view</span>
-                          <strong>{selectedJobCustomer.addresses?.[0]?.city || "Service address"}</strong>
-                        </div>
+                        <StreetViewPreview
+                          className="job-customer-map"
+                          address={selectedJobCustomer.addresses?.find((address) => address.id === jobForm.addressId) ?? selectedJobCustomer.addresses?.[0]}
+                          fallback={selectedJobCustomer.addresses?.[0]?.city || "Service address"}
+                        />
                         <div className="job-customer-body">
                           <div className="job-customer-title">
                             <strong>{customerName(selectedJobCustomer)}</strong>
@@ -5494,7 +5692,15 @@ export function App() {
                         <input placeholder="Last name" value={jobClientForm.lastName} onChange={(event) => setJobClientForm({ ...jobClientForm, lastName: event.target.value })} required />
                         <input placeholder="Phone" value={jobClientForm.phone} onChange={(event) => setJobClientForm({ ...jobClientForm, phone: event.target.value })} required />
                         <input placeholder="Email" value={jobClientForm.email} onChange={(event) => setJobClientForm({ ...jobClientForm, email: event.target.value })} />
-                        <input className="span-2" placeholder="Street address" value={jobClientForm.street1} onChange={(event) => setJobClientForm({ ...jobClientForm, street1: event.target.value })} required />
+                        {renderAddressAutocomplete({
+                          lookupKey: "job-inline-address",
+                          value: jobClientForm.street1,
+                          placeholder: "Street address",
+                          className: "span-2",
+                          required: true,
+                          onChange: (value) => setJobClientForm((current) => ({ ...current, street1: value, latitude: "", longitude: "" })),
+                          onSelect: (place) => setJobClientForm((current) => ({ ...current, ...placeToAddressPatch(place) }))
+                        })}
                         <input placeholder="City" value={jobClientForm.city} onChange={(event) => setJobClientForm({ ...jobClientForm, city: event.target.value })} required />
                         <input placeholder="State" value={jobClientForm.state} onChange={(event) => setJobClientForm({ ...jobClientForm, state: event.target.value })} required />
                         <input placeholder="Postal code" value={jobClientForm.postalCode} onChange={(event) => setJobClientForm({ ...jobClientForm, postalCode: event.target.value })} required />
@@ -5772,7 +5978,11 @@ export function App() {
                     )}
                     {!createClientInline && selectedJobCustomer && (
                       <div className="job-customer-card">
-                        <div className="job-customer-map"><span>Street view</span><strong>{selectedJobCustomer.addresses?.[0]?.city || "Service address"}</strong></div>
+                        <StreetViewPreview
+                          className="job-customer-map"
+                          address={selectedJobCustomer.addresses?.find((address) => address.id === jobForm.addressId) ?? selectedJobCustomer.addresses?.[0]}
+                          fallback={selectedJobCustomer.addresses?.[0]?.city || "Service address"}
+                        />
                         <div className="job-customer-body">
                           <div className="job-customer-title"><strong>{customerName(selectedJobCustomer)}</strong><button className="outline-button" type="button" onClick={() => openCustomerProfile(selectedJobCustomer)}>View details</button></div>
                           <p>{addressLine(selectedJobCustomer.addresses?.find((address) => address.id === jobForm.addressId) ?? selectedJobCustomer.addresses?.[0])}</p>
@@ -5788,7 +5998,14 @@ export function App() {
                         <input placeholder="Last name" value={jobClientForm.lastName} onChange={(event) => setJobClientForm({ ...jobClientForm, lastName: event.target.value })} required />
                         <input placeholder="Phone" value={jobClientForm.phone} onChange={(event) => setJobClientForm({ ...jobClientForm, phone: event.target.value })} required />
                         <input placeholder="Email" value={jobClientForm.email} onChange={(event) => setJobClientForm({ ...jobClientForm, email: event.target.value })} />
-                        <input className="span-2" placeholder="Street address" value={jobClientForm.street1} onChange={(event) => setJobClientForm({ ...jobClientForm, street1: event.target.value })} />
+                        {renderAddressAutocomplete({
+                          lookupKey: "estimate-inline-address",
+                          value: jobClientForm.street1,
+                          placeholder: "Street address",
+                          className: "span-2",
+                          onChange: (value) => setJobClientForm((current) => ({ ...current, street1: value, latitude: "", longitude: "" })),
+                          onSelect: (place) => setJobClientForm((current) => ({ ...current, ...placeToAddressPatch(place) }))
+                        })}
                         <input placeholder="City" value={jobClientForm.city} onChange={(event) => setJobClientForm({ ...jobClientForm, city: event.target.value })} />
                         <input placeholder="State" value={jobClientForm.state} onChange={(event) => setJobClientForm({ ...jobClientForm, state: event.target.value })} />
                         <input placeholder="Postal code" value={jobClientForm.postalCode} onChange={(event) => setJobClientForm({ ...jobClientForm, postalCode: event.target.value })} />
@@ -5898,7 +6115,7 @@ export function App() {
                     <aside className="job-detail-side">
                       <section className="panel job-detail-customer">
                         <div className="panel-header"><h2><Users size={18} /> Customer</h2><button className="outline-button" type="button" onClick={() => openCustomerProfile(selectedEstimate.customer)}>View details</button></div>
-                        <div className="street-preview"><strong>Street view</strong><span>{selectedEstimate.address?.city || selectedEstimate.customer.addresses?.[0]?.city || "Service area"}</span></div>
+                        <StreetViewPreview address={selectedEstimate.address ?? selectedEstimate.customer.addresses?.[0]} fallback={selectedEstimate.address?.city || selectedEstimate.customer.addresses?.[0]?.city || "Service area"} />
                         <h3>{customerName(selectedEstimate.customer)}</h3>
                         <p><MapPin size={16} /> {addressLine(selectedEstimate.address ?? selectedEstimate.customer.addresses?.[0])}</p>
                         <p><Phone size={16} /> {selectedEstimate.customer.phone}</p>

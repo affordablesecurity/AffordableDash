@@ -23,7 +23,9 @@ const addressSchema = z.object({
   street2: z.string().optional(),
   city: z.string().min(1),
   state: z.string().min(2),
-  postalCode: z.string().min(3)
+  postalCode: z.string().min(3),
+  latitude: z.coerce.number().optional(),
+  longitude: z.coerce.number().optional()
 });
 
 const customerSchema = z.object({

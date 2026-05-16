@@ -18,6 +18,7 @@ import { jobsRouter } from "./modules/jobs/jobs.routes.js";
 import { locationsRouter } from "./modules/locations/locations.routes.js";
 import { messagingRouter } from "./modules/messaging/messaging.routes.js";
 import { paymentsRouter } from "./modules/payments/payments.routes.js";
+import { placesRouter } from "./modules/places/places.routes.js";
 import { priceBookRouter } from "./modules/pricebook/pricebook.routes.js";
 import { publicApiRouter } from "./modules/public-api/public-api.routes.js";
 import { reportsRouter } from "./modules/reports/reports.routes.js";
@@ -57,6 +58,7 @@ app.use("/api/reports", requireAuth, requireRoles(["OWNER", "ADMIN"]), reportsRo
 app.use("/api/messages", requireAuth, messagingRouter);
 app.use("/api/integrations", requireAuth, integrationsRouter);
 app.use("/api/settings", requireAuth, settingsRouter);
+app.use("/api/places", placesRouter);
 app.use("/api/webhooks", webhooksRouter);
 app.use("/location-api/v1", publicApiRouter);
 
