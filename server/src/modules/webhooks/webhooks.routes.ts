@@ -11,6 +11,10 @@ export const webhooksRouter = Router();
 
 type SmsWebhookPayload = Record<string, unknown>;
 
+function objectPayload(value: unknown): SmsWebhookPayload {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as SmsWebhookPayload : {};
+}
+
 function payloadValue(value: unknown): string {
   if (Array.isArray(value)) return payloadValue(value[0]);
   if (typeof value === "number") return String(value);
@@ -143,11 +147,15 @@ function payloadAttachments(payload: SmsWebhookPayload): string[] {
     "attachment_url",
     "attachments",
     "file",
+    "files",
     "file_url",
     "image",
+    "images",
     "image_url",
     "imageUrl",
     "picture",
+    "pictures",
+    "urls",
     "url"
   ];
   for (const prefix of ["media", "media_url", "mms", "mms_url", "attachment", "attachment_url", "file", "file_url", "image", "image_url"]) {
@@ -178,12 +186,29 @@ function payloadLooksLikeMms(payload: SmsWebhookPayload): boolean {
     "image_url",
     "imageUrl",
     "picture",
+    "pictures",
     "file",
+    "files",
     "file_url",
-    "fileUrl"
+    "fileUrl",
+    "urls"
   ])) return true;
   const type = firstPayloadValue(payload, ["type", "message_type", "messageType", "sms_type", "smsType", "channel"]);
   return type.toLowerCase().includes("mms");
+}
+
+function voipmsPayloads(bodyPayload: SmsWebhookPayload): SmsWebhookPayload[] {
+  const data = objectPayload(bodyPayload.data);
+  const eventPayload = objectPayload(data.payload);
+  const directPayload = objectPayload(bodyPayload.payload);
+  const payloads = [bodyPayload, data, eventPayload, directPayload];
+  const nestedPayloads = payloads.flatMap((payload) => [
+    objectPayload(payload.message),
+    objectPayload(payload.sms),
+    objectPayload(payload.mms),
+    objectPayload(payload.media)
+  ]);
+  return [...payloads, ...nestedPayloads].filter((payload) => Object.keys(payload).length);
 }
 
 webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
@@ -235,8 +260,8 @@ webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
 }));
 
 async function receiveVoipmsSms(req: Request, res: Response) {
-  const bodyPayload = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body as SmsWebhookPayload : {};
-  const payload = { ...req.query, ...bodyPayload } as SmsWebhookPayload;
+  const bodyPayload = objectPayload(req.body);
+  const payload = { ...req.query, ...Object.assign({}, ...voipmsPayloads(bodyPayload)) } as SmsWebhookPayload;
   const fromNumber = firstPayloadValue(payload, [
     "from",
     "from_number",
