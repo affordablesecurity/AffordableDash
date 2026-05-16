@@ -107,6 +107,26 @@ function attachmentNameFromUrl(url: string, fallback: string): string {
   }
 }
 
+function attachmentTypeFromName(value: string): string {
+  const normalized = value.toLowerCase().split(/[?#]/)[0] ?? "";
+  if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) return "image/jpeg";
+  if (normalized.endsWith(".png")) return "image/png";
+  if (normalized.endsWith(".gif")) return "image/gif";
+  if (normalized.endsWith(".webp")) return "image/webp";
+  if (normalized.endsWith(".bmp")) return "image/bmp";
+  if (normalized.endsWith(".svg")) return "image/svg+xml";
+  return "";
+}
+
+function normalizeAttachmentType(explicitType: string, nameOrUrl: string): string | undefined {
+  const type = explicitType.toLowerCase();
+  if (type.startsWith("image/") || type.startsWith("video/") || type.startsWith("audio/") || type === "application/pdf") return type;
+  if (["jpg", "jpeg"].includes(type)) return "image/jpeg";
+  if (["png", "gif", "webp", "bmp"].includes(type)) return `image/${type}`;
+  if (type === "svg") return "image/svg+xml";
+  return attachmentTypeFromName(nameOrUrl) || undefined;
+}
+
 function collectAttachment(value: unknown, attachments: string[], fallbackIndex = attachments.length + 1) {
   if (!value) return;
 
@@ -127,8 +147,10 @@ function collectAttachment(value: unknown, attachments: string[], fallbackIndex 
       }
     }
     for (const url of trimmed.split(",").map((item) => item.trim()).filter(Boolean)) {
+      const name = attachmentNameFromUrl(url, `MMS attachment ${attachments.length + 1}`);
       attachments.push(JSON.stringify({
-        name: attachmentNameFromUrl(url, `MMS attachment ${attachments.length + 1}`),
+        name,
+        type: normalizeAttachmentType("", name || url),
         dataUrl: url,
         size: 0
       }));
@@ -146,9 +168,13 @@ function collectAttachment(value: unknown, attachments: string[], fallbackIndex 
       || payloadValue(item.content_url)
       || payloadValue(item.contentUrl);
     if (!url) return;
+    const name = payloadValue(item.name) || payloadValue(item.filename) || attachmentNameFromUrl(url, `MMS attachment ${fallbackIndex}`);
     attachments.push(JSON.stringify({
-      name: payloadValue(item.name) || payloadValue(item.filename) || attachmentNameFromUrl(url, `MMS attachment ${fallbackIndex}`),
-      type: payloadValue(item.type) || payloadValue(item.content_type) || payloadValue(item.contentType) || undefined,
+      name,
+      type: normalizeAttachmentType(
+        payloadValue(item.type) || payloadValue(item.content_type) || payloadValue(item.contentType),
+        name || url
+      ),
       dataUrl: url,
       size: 0
     }));
@@ -269,6 +295,18 @@ function attachmentData(attachment: string) {
   }
 }
 
+async function sendRemoteMedia(url: string, media: { name: string; type: string }, res: Response) {
+  const response = await fetch(url);
+  if (!response.ok) return res.status(response.status).send("Media unavailable");
+
+  const contentType = response.headers.get("content-type") || normalizeAttachmentType(media.type, media.name || url) || "application/octet-stream";
+  const buffer = Buffer.from(await response.arrayBuffer());
+  res.setHeader("content-type", contentType);
+  res.setHeader("cache-control", "private, max-age=86400");
+  res.setHeader("content-length", String(buffer.length));
+  return res.send(buffer);
+}
+
 webhooksRouter.get("/voipms/media/:messageId/:index", asyncHandler(async (req, res) => {
   const messageId = payloadValue(req.params.messageId);
   const index = Number(req.params.index);
@@ -282,12 +320,12 @@ webhooksRouter.get("/voipms/media/:messageId/:index", asyncHandler(async (req, r
   if (!attachment) return res.status(404).send("Not found");
 
   const media = attachmentData(attachment);
-  if (/^https?:\/\//i.test(media.url)) return res.redirect(media.url);
+  if (/^https?:\/\//i.test(media.url)) return sendRemoteMedia(media.url, media, res);
 
   const match = /^data:([^;]+);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(media.url);
   if (!match) return res.status(404).send("Not found");
 
-  res.setHeader("content-type", media.type || match[1]);
+  res.setHeader("content-type", normalizeAttachmentType(media.type, media.name || media.url) || match[1]);
   res.setHeader("cache-control", "public, max-age=86400");
   res.send(Buffer.from(match[2], "base64"));
 }));

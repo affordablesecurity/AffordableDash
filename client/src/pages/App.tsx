@@ -3373,31 +3373,45 @@ export function App() {
 
   function isImageAttachment(attachment: MessageAttachment) {
     const type = attachment.type?.toLowerCase() ?? "";
-    const url = attachment.dataUrl ?? "";
+    const url = attachment.dataUrl ?? attachment.url ?? "";
+    const name = attachment.name ?? "";
+    const imageSource = `${name} ${url}`;
     return Boolean(url && (
       type.startsWith("image/")
+      || ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].includes(type)
       || /^data:image\//i.test(url)
-      || /\.(png|jpe?g|gif|webp|bmp|svg)(?:[?#].*)?$/i.test(url)
+      || /\.(png|jpe?g|gif|webp|bmp|svg)(?:[?#].*)?/i.test(imageSource)
     ));
   }
 
-  function renderMessageAttachment(value: string) {
+  function messageAttachmentUrl(attachment: MessageAttachment, messageId?: string, index?: number) {
+    const url = attachment.dataUrl ?? attachment.url ?? "";
+    if (!url) return "";
+    if (messageId && typeof index === "number") {
+      return `/api/webhooks/voipms/media/${encodeURIComponent(messageId)}/${index}`;
+    }
+    return url;
+  }
+
+  function renderMessageAttachment(value: string, messageId?: string, index?: number) {
     const parsedAttachment = parseMessageAttachment(value);
+    const attachmentUrl = messageAttachmentUrl(parsedAttachment, messageId, index);
     const imageAttachment = isImageAttachment(parsedAttachment);
-    if (!parsedAttachment.dataUrl) {
-      return <span key={value}><Paperclip size={13} /> {parsedAttachment.name}</span>;
+    const attachmentKey = `${messageId ?? "attachment"}-${index ?? value}`;
+    if (!attachmentUrl) {
+      return <span key={attachmentKey}><Paperclip size={13} /> {parsedAttachment.name}</span>;
     }
 
     return (
       <a
-        key={value}
+        key={attachmentKey}
         className={imageAttachment ? "message-attachment-image" : undefined}
-        href={parsedAttachment.dataUrl}
+        href={attachmentUrl}
         target="_blank"
         rel="noreferrer"
         download={parsedAttachment.name}
       >
-        {imageAttachment && <img src={parsedAttachment.dataUrl} alt={parsedAttachment.name} loading="lazy" />}
+        {imageAttachment && <img src={attachmentUrl} alt={parsedAttachment.name} loading="lazy" />}
         <span className="message-attachment-name"><Paperclip size={13} /> {parsedAttachment.name}</span>
       </a>
     );
@@ -4450,7 +4464,7 @@ export function App() {
                           <p>{message.body}</p>
                           {(message.attachments ?? []).length > 0 && (
                             <div className="message-attachments">
-                              {(message.attachments ?? []).map(renderMessageAttachment)}
+                              {(message.attachments ?? []).map((attachment, index) => renderMessageAttachment(attachment, message.id, index))}
                             </div>
                           )}
                           <span>{formatDateTime(message.createdAt)} · {message.status ?? (message.direction === "INBOUND" ? "Received" : "Sent")}</span>
@@ -4553,7 +4567,7 @@ export function App() {
                         <p>{message.body}</p>
                         {(message.attachments ?? []).length > 0 && (
                           <div className="message-attachments">
-                            {(message.attachments ?? []).map(renderMessageAttachment)}
+                            {(message.attachments ?? []).map((attachment, index) => renderMessageAttachment(attachment, message.id, index))}
                           </div>
                         )}
                         <span>{formatDateTime(message.createdAt)} · Internal</span>
