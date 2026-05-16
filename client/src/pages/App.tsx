@@ -3371,6 +3371,38 @@ export function App() {
     return { name: value };
   }
 
+  function isImageAttachment(attachment: MessageAttachment) {
+    const type = attachment.type?.toLowerCase() ?? "";
+    const url = attachment.dataUrl ?? "";
+    return Boolean(url && (
+      type.startsWith("image/")
+      || /^data:image\//i.test(url)
+      || /\.(png|jpe?g|gif|webp|bmp|svg)(?:[?#].*)?$/i.test(url)
+    ));
+  }
+
+  function renderMessageAttachment(value: string) {
+    const parsedAttachment = parseMessageAttachment(value);
+    const imageAttachment = isImageAttachment(parsedAttachment);
+    if (!parsedAttachment.dataUrl) {
+      return <span key={value}><Paperclip size={13} /> {parsedAttachment.name}</span>;
+    }
+
+    return (
+      <a
+        key={value}
+        className={imageAttachment ? "message-attachment-image" : undefined}
+        href={parsedAttachment.dataUrl}
+        target="_blank"
+        rel="noreferrer"
+        download={parsedAttachment.name}
+      >
+        {imageAttachment && <img src={parsedAttachment.dataUrl} alt={parsedAttachment.name} loading="lazy" />}
+        <span className="message-attachment-name"><Paperclip size={13} /> {parsedAttachment.name}</span>
+      </a>
+    );
+  }
+
   function fileMimeType(file: File) {
     const explicitType = file.type.toLowerCase();
     if (explicitType) return explicitType;
@@ -4418,16 +4450,7 @@ export function App() {
                           <p>{message.body}</p>
                           {(message.attachments ?? []).length > 0 && (
                             <div className="message-attachments">
-                              {(message.attachments ?? []).map((attachment) => {
-                                const parsedAttachment = parseMessageAttachment(attachment);
-                                return parsedAttachment.dataUrl ? (
-                                  <a key={attachment} href={parsedAttachment.dataUrl} download={parsedAttachment.name}>
-                                    <Paperclip size={13} /> {parsedAttachment.name}
-                                  </a>
-                                ) : (
-                                  <span key={attachment}><Paperclip size={13} /> {parsedAttachment.name}</span>
-                                );
-                              })}
+                              {(message.attachments ?? []).map(renderMessageAttachment)}
                             </div>
                           )}
                           <span>{formatDateTime(message.createdAt)} · {message.status ?? (message.direction === "INBOUND" ? "Received" : "Sent")}</span>
@@ -4530,16 +4553,7 @@ export function App() {
                         <p>{message.body}</p>
                         {(message.attachments ?? []).length > 0 && (
                           <div className="message-attachments">
-                            {(message.attachments ?? []).map((attachment) => {
-                              const parsedAttachment = parseMessageAttachment(attachment);
-                              return parsedAttachment.dataUrl ? (
-                                <a key={attachment} href={parsedAttachment.dataUrl} download={parsedAttachment.name}>
-                                  <Paperclip size={13} /> {parsedAttachment.name}
-                                </a>
-                              ) : (
-                                <span key={attachment}><Paperclip size={13} /> {parsedAttachment.name}</span>
-                              );
-                            })}
+                            {(message.attachments ?? []).map(renderMessageAttachment)}
                           </div>
                         )}
                         <span>{formatDateTime(message.createdAt)} · Internal</span>

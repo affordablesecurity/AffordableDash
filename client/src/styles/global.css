@@ -5947,6 +5947,31 @@ button:disabled {
   text-decoration: none;
 }
 
+.message-attachments a.message-attachment-image {
+  flex-direction: column;
+  align-items: stretch;
+  max-width: min(280px, 100%);
+  padding: 6px;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.message-attachment-image img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid #dfe5f0;
+}
+
+.message-attachment-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #27324a;
+}
+
 .message-bubble.outbound {
   align-self: flex-end;
   background: #eef2ff;

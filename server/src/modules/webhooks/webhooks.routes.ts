@@ -21,11 +21,21 @@ function payloadValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function nestedPayloadValue(value: unknown, keys: string[]): string {
+  const directValue = payloadValue(value);
+  if (directValue) return directValue;
+  const payload = objectPayload(value);
+  if (!Object.keys(payload).length) return "";
+  return firstPayloadValue(payload, keys);
+}
+
 function firstPayloadValue(payload: SmsWebhookPayload, keys: string[]): string {
   const normalizedPayload = new Map(Object.entries(payload).map(([key, value]) => [key.toLowerCase(), value]));
+  const nestedKeys = ["phone_number", "phoneNumber", "number", "value", "id", "url", "text", "body", "message"];
 
   for (const key of keys) {
-    const value = payloadValue(payload[key]) || payloadValue(normalizedPayload.get(key.toLowerCase()));
+    const candidate = payload[key] ?? normalizedPayload.get(key.toLowerCase());
+    const value = payloadValue(candidate) || nestedPayloadValue(candidate, nestedKeys);
     if (value) return value;
   }
   return "";
