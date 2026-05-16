@@ -5947,7 +5947,7 @@ button:disabled {
   text-decoration: none;
 }
 
-.message-attachments a.message-attachment-image {
+.message-attachments a.message-attachment-media {
   flex-direction: column;
   align-items: stretch;
   max-width: min(280px, 100%);
@@ -5957,7 +5957,8 @@ button:disabled {
   overflow: hidden;
 }
 
-.message-attachment-image img {
+.message-attachment-media img,
+.message-attachment-media video {
   display: block;
   width: 100%;
   min-width: min(220px, 100%);
@@ -5966,6 +5967,25 @@ button:disabled {
   border-radius: 10px;
   border: 1px solid #dfe5f0;
   background: #eef2ff;
+}
+
+.message-attachment-media video {
+  background: #111827;
+}
+
+.message-attachment-file {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: min(220px, 100%);
+  min-height: 120px;
+  border-radius: 10px;
+  border: 1px solid #dfe5f0;
+  background: #f8fafc;
+  color: #b42318;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0;
 }
 
 .message-attachment-name {

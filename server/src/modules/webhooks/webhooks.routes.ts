@@ -115,6 +115,13 @@ function attachmentTypeFromName(value: string): string {
   if (normalized.endsWith(".webp")) return "image/webp";
   if (normalized.endsWith(".bmp")) return "image/bmp";
   if (normalized.endsWith(".svg")) return "image/svg+xml";
+  if (normalized.endsWith(".heic")) return "image/heic";
+  if (normalized.endsWith(".heif")) return "image/heif";
+  if (normalized.endsWith(".mp4")) return "video/mp4";
+  if (normalized.endsWith(".mov")) return "video/quicktime";
+  if (normalized.endsWith(".m4v")) return "video/x-m4v";
+  if (normalized.endsWith(".webm")) return "video/webm";
+  if (normalized.endsWith(".pdf")) return "application/pdf";
   return "";
 }
 
@@ -122,7 +129,12 @@ function normalizeAttachmentType(explicitType: string, nameOrUrl: string): strin
   const type = explicitType.toLowerCase();
   if (type.startsWith("image/") || type.startsWith("video/") || type.startsWith("audio/") || type === "application/pdf") return type;
   if (["jpg", "jpeg"].includes(type)) return "image/jpeg";
-  if (["png", "gif", "webp", "bmp"].includes(type)) return `image/${type}`;
+  if (["png", "gif", "webp", "bmp", "heic", "heif"].includes(type)) return `image/${type}`;
+  if (type === "mp4") return "video/mp4";
+  if (type === "mov") return "video/quicktime";
+  if (type === "m4v") return "video/x-m4v";
+  if (type === "webm") return "video/webm";
+  if (type === "pdf") return "application/pdf";
   if (type === "svg") return "image/svg+xml";
   return attachmentTypeFromName(nameOrUrl) || undefined;
 }

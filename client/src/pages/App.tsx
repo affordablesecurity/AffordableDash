@@ -478,14 +478,31 @@ type MessageAttachment = {
   url?: string;
 };
 
-const customerMmsTypes: Record<string, string> = {
+const customerMmsImageTypes: Record<string, string> = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
   ".gif": "image/gif",
-  ".webp": "image/webp"
+  ".webp": "image/webp",
+  ".heic": "image/heic",
+  ".heif": "image/heif"
+};
+const customerMmsVideoTypes: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".m4v": "video/x-m4v",
+  ".webm": "video/webm"
+};
+const customerMmsDocumentTypes: Record<string, string> = {
+  ".pdf": "application/pdf"
+};
+const customerMmsTypes: Record<string, string> = {
+  ...customerMmsImageTypes,
+  ...customerMmsVideoTypes,
+  ...customerMmsDocumentTypes
 };
 const customerMmsMaxBytes = 1_300_000;
+const customerMmsMaxFiles = 3;
 
 type MessageThread = {
   id: string;
@@ -3378,10 +3395,35 @@ export function App() {
     const imageSource = `${name} ${url}`;
     return Boolean(url && (
       type.startsWith("image/")
-      || ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].includes(type)
+      || ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "heif"].includes(type)
       || /^data:image\//i.test(url)
-      || /\.(png|jpe?g|gif|webp|bmp|svg)(?:[?#].*)?/i.test(imageSource)
+      || /\.(png|jpe?g|gif|webp|bmp|svg|heic|heif)(?:[?#].*)?/i.test(imageSource)
     ));
+  }
+
+  function isVideoAttachment(attachment: MessageAttachment) {
+    const type = attachment.type?.toLowerCase() ?? "";
+    const url = attachment.dataUrl ?? attachment.url ?? "";
+    const name = attachment.name ?? "";
+    const source = `${name} ${url}`;
+    return Boolean(url && (
+      type.startsWith("video/")
+      || ["mp4", "mov", "m4v", "webm"].includes(type)
+      || /^data:video\//i.test(url)
+      || /\.(mp4|mov|m4v|webm)(?:[?#].*)?/i.test(source)
+    ));
+  }
+
+  function isPdfAttachment(attachment: MessageAttachment) {
+    const type = attachment.type?.toLowerCase() ?? "";
+    const url = attachment.dataUrl ?? attachment.url ?? "";
+    const name = attachment.name ?? "";
+    return Boolean(
+      type === "application/pdf"
+      || type === "pdf"
+      || /^data:application\/pdf/i.test(url)
+      || /\.pdf(?:[?#].*)?/i.test(name)
+    );
   }
 
   function messageAttachmentUrl(attachment: MessageAttachment, messageId?: string, index?: number) {
@@ -3397,6 +3439,9 @@ export function App() {
     const parsedAttachment = parseMessageAttachment(value);
     const attachmentUrl = messageAttachmentUrl(parsedAttachment, messageId, index);
     const imageAttachment = isImageAttachment(parsedAttachment);
+    const videoAttachment = isVideoAttachment(parsedAttachment);
+    const pdfAttachment = isPdfAttachment(parsedAttachment);
+    const mediaAttachment = imageAttachment || videoAttachment || pdfAttachment;
     const attachmentKey = `${messageId ?? "attachment"}-${index ?? value}`;
     if (!attachmentUrl) {
       return <span key={attachmentKey}><Paperclip size={13} /> {parsedAttachment.name}</span>;
@@ -3405,23 +3450,29 @@ export function App() {
     return (
       <a
         key={attachmentKey}
-        className={imageAttachment ? "message-attachment-image" : undefined}
+        className={mediaAttachment ? "message-attachment-media" : undefined}
         href={attachmentUrl}
         target="_blank"
         rel="noreferrer"
         download={parsedAttachment.name}
       >
         {imageAttachment && <img src={attachmentUrl} alt={parsedAttachment.name} loading="lazy" />}
+        {videoAttachment && <video src={attachmentUrl} controls preload="metadata" />}
+        {pdfAttachment && <span className="message-attachment-file">PDF</span>}
         <span className="message-attachment-name"><Paperclip size={13} /> {parsedAttachment.name}</span>
       </a>
     );
   }
 
+  function fileExtension(name: string) {
+    const match = name.toLowerCase().match(/\.[^.]+$/);
+    return match?.[0] ?? "";
+  }
+
   function fileMimeType(file: File) {
     const explicitType = file.type.toLowerCase();
     if (explicitType) return explicitType;
-    const extension = `.${file.name.split(".").pop()?.toLowerCase() ?? ""}`;
-    return customerMmsTypes[extension] ?? "";
+    return customerMmsTypes[fileExtension(file.name)] ?? "";
   }
 
   function replaceFileExtension(name: string, extension: string) {
@@ -3446,43 +3497,116 @@ export function App() {
     });
   }
 
+  function estimateDataUrlBytes(dataUrl: string) {
+    const base64 = dataUrl.split(",")[1] ?? "";
+    return Math.ceil(base64.length * 0.75);
+  }
+
+  function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
+    return new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Unable to prepare that image for MMS."));
+      }, type, quality);
+    });
+  }
+
+  function blobToDataUrl(blob: Blob) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+      reader.onerror = () => reject(new Error("Unable to prepare that image for MMS."));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function compressImageForMms(file: File, dataUrl: string, mimeType: string): Promise<MessageAttachment> {
+    if (mimeType === "image/gif") {
+      if (file.size > customerMmsMaxBytes) {
+        throw new Error(`${file.name} is too large for MMS. Animated GIFs cannot be compressed without losing animation.`);
+      }
+      return { name: file.name, type: mimeType, size: file.size, dataUrl };
+    }
+
+    let image: HTMLImageElement;
+    try {
+      image = await loadAttachmentImage(dataUrl);
+    } catch {
+      throw new Error(`${file.name} could not be converted for MMS. If this is an iPhone HEIC or Live Photo file, send it as a regular JPEG/photo or choose a smaller compatible file.`);
+    }
+
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (!sourceWidth || !sourceHeight) throw new Error("Unable to prepare that image for MMS.");
+
+    const maxSides = [1800, 1600, 1400, 1200, 1000, 800];
+    const qualities = [0.86, 0.76, 0.66, 0.56, 0.46];
+    let best: { blob: Blob; dataUrl: string } | null = null;
+
+    for (const maxSide of maxSides) {
+      const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+      const width = Math.max(1, Math.round(sourceWidth * scale));
+      const height = Math.max(1, Math.round(sourceHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Unable to prepare that image for MMS.");
+      context.drawImage(image, 0, 0, width, height);
+
+      for (const quality of qualities) {
+        const blob = await canvasToBlob(canvas, "image/jpeg", quality);
+        const compressedDataUrl = await blobToDataUrl(blob);
+        best = { blob, dataUrl: compressedDataUrl };
+        if (blob.size <= customerMmsMaxBytes) {
+          return {
+            name: replaceFileExtension(file.name, ".jpg"),
+            type: "image/jpeg",
+            size: blob.size,
+            dataUrl: compressedDataUrl
+          };
+        }
+      }
+    }
+
+    throw new Error(`${file.name} is too large for MMS after compression${best ? ` (${Math.ceil(best.blob.size / 1_000)}KB)` : ""}. Try a smaller image.`);
+  }
+
   async function readCustomerMmsAttachment(file: File): Promise<MessageAttachment> {
     const mimeType = fileMimeType(file);
-    if (!customerMmsTypes[`.${file.name.split(".").pop()?.toLowerCase() ?? ""}`] && !["image/jpeg", "image/png", "image/gif", "image/webp"].includes(mimeType)) {
-      throw new Error("Customer MMS attachments must be JPG, PNG, GIF, or WEBP images.");
+    const extension = fileExtension(file.name);
+    const supportedType = customerMmsTypes[extension];
+    const isImage = mimeType.startsWith("image/") || Boolean(customerMmsImageTypes[extension]);
+    const isVideo = mimeType.startsWith("video/") || Boolean(customerMmsVideoTypes[extension]);
+    const isDocument = mimeType === "application/pdf" || Boolean(customerMmsDocumentTypes[extension]);
+    if (!supportedType && !isImage && !isVideo && !isDocument) {
+      throw new Error("Customer MMS supports photos, small video clips, and PDFs.");
     }
 
     const dataUrl = await readFileAsDataUrl(file);
-    if (mimeType === "image/webp") {
-      const image = await loadAttachmentImage(dataUrl);
-      const canvas = document.createElement("canvas");
-      canvas.width = image.naturalWidth || image.width;
-      canvas.height = image.naturalHeight || image.height;
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("Unable to prepare that image for MMS.");
-      context.drawImage(image, 0, 0);
-      const convertedDataUrl = canvas.toDataURL("image/jpeg", 0.88);
-      const base64 = convertedDataUrl.split(",")[1] ?? "";
-      return {
-        name: replaceFileExtension(file.name, ".jpg"),
-        type: "image/jpeg",
-        size: Math.ceil(base64.length * 0.75),
-        dataUrl: convertedDataUrl
-      };
+    if (isImage && (file.size > customerMmsMaxBytes || mimeType === "image/webp" || mimeType === "image/heic" || mimeType === "image/heif")) {
+      return compressImageForMms(file, dataUrl, mimeType);
+    }
+    const dataUrlSize = estimateDataUrlBytes(dataUrl);
+    if ((isVideo || isDocument) && file.size > customerMmsMaxBytes) {
+      throw new Error(`${file.name} is too large for MMS. Photos can be compressed automatically, but PDFs and videos must be 1.3MB or smaller.`);
+    }
+    if (dataUrlSize > customerMmsMaxBytes && !isImage) {
+      throw new Error(`${file.name} is too large for MMS.`);
     }
 
-    return { name: file.name, type: mimeType || file.type, size: file.size, dataUrl };
+    return { name: file.name, type: mimeType || file.type || supportedType, size: file.size, dataUrl };
   }
 
   async function addMessageAttachments(files: FileList | null) {
     const selectedFiles = Array.from(files ?? []);
     if (!selectedFiles.length) return;
-    const acceptedFiles = selectedFiles.slice(0, Math.max(0, 5 - messageAttachments.length));
-    const oversized = acceptedFiles.find((file) => file.size > customerMmsMaxBytes);
-    if (oversized) {
-      setError("Customer MMS attachments must be 1.3MB or smaller.");
+    const slotsAvailable = Math.max(0, customerMmsMaxFiles - messageAttachments.length);
+    if (!slotsAvailable) {
+      setError(`VoIP.ms MMS can send up to ${customerMmsMaxFiles} attachments at a time.`);
       return;
     }
+    const acceptedFiles = selectedFiles.slice(0, slotsAvailable);
     const loaded = await Promise.all(acceptedFiles.map(readCustomerMmsAttachment)).catch((error: Error) => {
       setError(error.message);
       return null;
@@ -3493,7 +3617,7 @@ export function App() {
       setError(`${convertedOversized.name} is too large after MMS preparation. Please use an image under 1.3MB.`);
       return;
     }
-    setMessageAttachments((current) => [...current, ...loaded].slice(0, 5));
+    setMessageAttachments((current) => [...current, ...loaded].slice(0, customerMmsMaxFiles));
   }
 
   function removeMessageAttachment(name: string) {
@@ -4475,7 +4599,7 @@ export function App() {
                     <form className="message-composer" onSubmit={sendManualMessage}>
                       <label className="composer-attach-button" title="Attach files">
                         <Paperclip size={18} />
-                        <input type="file" multiple onChange={(event) => {
+                        <input type="file" multiple accept="image/*,video/mp4,video/quicktime,video/x-m4v,video/webm,application/pdf,.pdf,.mov,.mp4,.m4v,.webm,.heic,.heif" onChange={(event) => {
                           void addMessageAttachments(event.currentTarget.files);
                           event.currentTarget.value = "";
                         }} />
