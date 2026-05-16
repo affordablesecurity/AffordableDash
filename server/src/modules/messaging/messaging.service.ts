@@ -251,13 +251,50 @@ export async function sendLocationSms(input: {
     });
   }
 
+  const hasAttachments = (input.attachments ?? []).length > 0;
+
+  if (hasAttachments) {
+    const queuedMessage = await createMessage({
+      locationId: input.locationId,
+      customerId: input.customerId,
+      jobId: input.jobId,
+      invoiceId: input.invoiceId,
+      fromNumber,
+      toNumber: input.to,
+      body: input.body,
+      status: "QUEUED",
+      templateKey: input.templateKey,
+      attachments: input.attachments,
+      channel: "mms"
+    });
+
+    try {
+      const result = await sendMms(input.to, input.body, input.attachments ?? [], {
+        username: settings.username,
+        apiPassword: settings.apiPassword,
+        did: settings.defaultDid,
+        messageId: queuedMessage.id
+      });
+      return prisma.message.update({
+        where: { id: queuedMessage.id },
+        data: {
+          status: "SENT",
+          providerRef: typeof result.mms === "string" ? result.mms : typeof result.sms === "string" ? result.sms : undefined
+        }
+      });
+    } catch (err) {
+      return prisma.message.update({
+        where: { id: queuedMessage.id },
+        data: {
+          status: "FAILED",
+          error: err instanceof Error ? err.message : "MMS failed"
+        }
+      });
+    }
+  }
+
   try {
-    const hasAttachments = (input.attachments ?? []).length > 0;
-    const result = hasAttachments ? await sendMms(input.to, input.body, input.attachments ?? [], {
-      username: settings.username,
-      apiPassword: settings.apiPassword,
-      did: settings.defaultDid
-    }) : await sendSms(input.to, input.body, {
+    const result = await sendSms(input.to, input.body, {
       username: settings.username,
       apiPassword: settings.apiPassword,
       did: settings.defaultDid
@@ -273,11 +310,10 @@ export async function sendLocationSms(input: {
       status: "SENT",
       templateKey: input.templateKey,
       attachments: input.attachments,
-      channel: hasAttachments ? "mms" : "sms",
+      channel: "sms",
       providerRef: typeof result.mms === "string" ? result.mms : typeof result.sms === "string" ? result.sms : undefined
     });
   } catch (err) {
-    const hasAttachments = (input.attachments ?? []).length > 0;
     return createMessage({
       locationId: input.locationId,
       customerId: input.customerId,
@@ -287,10 +323,10 @@ export async function sendLocationSms(input: {
       toNumber: input.to,
       body: input.body,
       status: "FAILED",
-      error: err instanceof Error ? err.message : hasAttachments ? "MMS failed" : "SMS failed",
+      error: err instanceof Error ? err.message : "SMS failed",
       templateKey: input.templateKey,
       attachments: input.attachments,
-      channel: hasAttachments ? "mms" : "sms"
+      channel: "sms"
     });
   }
 }

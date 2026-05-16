@@ -5,6 +5,8 @@ export type VoipmsSmsConfig = {
   apiPassword?: string;
   did?: string;
   baseUrl?: string;
+  messageId?: string;
+  publicBaseUrl?: string;
 };
 
 type VoipmsMessageResponse = { status?: string; sms?: string; mms?: string; [key: string]: unknown };
@@ -105,7 +107,12 @@ function assertVoipmsSuccess(data: VoipmsMessageResponse, label: "SMS" | "MMS") 
   }
 }
 
-function attachmentMedia(value: string) {
+function mediaUrlForMessage(messageId: string, index: number, publicBaseUrl?: string) {
+  const baseUrl = (publicBaseUrl || env.PUBLIC_BASE_URL).replace(/\/+$/, "");
+  return `${baseUrl}/api/webhooks/voipms/media/${encodeURIComponent(messageId)}/${index}`;
+}
+
+function attachmentMedia(value: string, index: number, config: VoipmsSmsConfig = {}) {
   let rawValue = value.trim();
   try {
     const parsed = JSON.parse(rawValue) as { dataUrl?: string; url?: string };
@@ -114,9 +121,13 @@ function attachmentMedia(value: string) {
     // Plain URLs and base64 payloads are accepted below.
   }
 
-  if (/^data:[^;]+;base64,[A-Za-z0-9+/]+={0,2}$/i.test(rawValue)) return rawValue;
+  if (/^data:[^;]+;base64,[A-Za-z0-9+/]+={0,2}$/i.test(rawValue)) {
+    return config.messageId ? mediaUrlForMessage(config.messageId, index, config.publicBaseUrl) : "";
+  }
   if (/^https?:\/\//i.test(rawValue)) return rawValue;
-  if (/^[A-Za-z0-9+/]+={0,2}$/.test(rawValue) && rawValue.length > 200) return rawValue;
+  if (/^[A-Za-z0-9+/]+={0,2}$/.test(rawValue) && rawValue.length > 200) {
+    return config.messageId ? mediaUrlForMessage(config.messageId, index, config.publicBaseUrl) : "";
+  }
   return "";
 }
 
@@ -163,7 +174,7 @@ export async function sendMms(to: string, message: string, attachments: string[]
     throw new Error("VoIP.ms MMS is not configured");
   }
 
-  const media = attachments.map(attachmentMedia).filter(Boolean).slice(0, 3);
+  const media = attachments.map((attachment, index) => attachmentMedia(attachment, index, config)).filter(Boolean).slice(0, 3);
   if (!media.length) {
     throw new Error("No MMS-compatible attachment was provided.");
   }
@@ -182,11 +193,7 @@ export async function sendMms(to: string, message: string, attachments: string[]
     params.set(`media${index + 1}`, item);
   });
 
-  const response = await fetch(baseUrl, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: params.toString()
-  });
+  const response = await fetch(`${baseUrl}?${params.toString()}`);
   const data = await readVoipmsResponse(response);
   assertVoipmsSuccess(data, "MMS");
 

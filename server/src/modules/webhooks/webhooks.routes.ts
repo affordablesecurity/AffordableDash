@@ -31,9 +31,21 @@ function firstPayloadValue(payload: SmsWebhookPayload, keys: string[]): string {
   return "";
 }
 
+function firstPayloadValueFrom(payloads: SmsWebhookPayload[], keys: string[]): string {
+  for (const payload of payloads) {
+    const value = firstPayloadValue(payload, keys);
+    if (value) return value;
+  }
+  return "";
+}
+
 function hasPayloadKey(payload: SmsWebhookPayload, keys: string[]): boolean {
   const normalizedPayload = new Set(Object.keys(payload).map((key) => key.toLowerCase()));
   return keys.some((key) => normalizedPayload.has(key.toLowerCase()));
+}
+
+function hasPayloadKeyIn(payloads: SmsWebhookPayload[], keys: string[]): boolean {
+  return payloads.some((payload) => hasPayloadKey(payload, keys));
 }
 
 function phoneDigits(value?: string | null): string {
@@ -197,19 +209,78 @@ function payloadLooksLikeMms(payload: SmsWebhookPayload): boolean {
   return type.toLowerCase().includes("mms");
 }
 
-function voipmsPayloads(bodyPayload: SmsWebhookPayload): SmsWebhookPayload[] {
-  const data = objectPayload(bodyPayload.data);
-  const eventPayload = objectPayload(data.payload);
-  const directPayload = objectPayload(bodyPayload.payload);
-  const payloads = [bodyPayload, data, eventPayload, directPayload];
-  const nestedPayloads = payloads.flatMap((payload) => [
-    objectPayload(payload.message),
-    objectPayload(payload.sms),
-    objectPayload(payload.mms),
-    objectPayload(payload.media)
-  ]);
-  return [...payloads, ...nestedPayloads].filter((payload) => Object.keys(payload).length);
+function payloadsLookLikeMms(payloads: SmsWebhookPayload[]): boolean {
+  return payloads.some(payloadLooksLikeMms);
 }
+
+function voipmsPayloads(bodyPayload: SmsWebhookPayload): SmsWebhookPayload[] {
+  const seen = new Set<unknown>();
+  const collect = (value: unknown, depth = 0): SmsWebhookPayload[] => {
+    if (!value || typeof value !== "object" || seen.has(value) || depth > 6) return [];
+    seen.add(value);
+    if (Array.isArray(value)) return value.flatMap((item) => collect(item, depth + 1));
+    const payload = value as SmsWebhookPayload;
+    return [
+      payload,
+      ...Object.values(payload).flatMap((item) => collect(item, depth + 1))
+    ];
+  };
+  return collect(bodyPayload).filter((payload) => Object.keys(payload).length);
+}
+
+function safeWebhookPayload(value: unknown) {
+  try {
+    return JSON.parse(JSON.stringify(value, (key, item) => {
+      if (/password|secret|token|authorization/i.test(key)) return "[redacted]";
+      return item;
+    }));
+  } catch {
+    return "[unserializable payload]";
+  }
+}
+
+function payloadKeySummary(payloads: SmsWebhookPayload[]) {
+  return payloads
+    .map((payload) => Object.keys(payload).sort())
+    .filter((keys) => keys.length)
+    .slice(0, 12);
+}
+
+function attachmentData(attachment: string) {
+  try {
+    const parsed = JSON.parse(attachment) as { dataUrl?: string; url?: string; type?: string; name?: string };
+    return {
+      name: payloadValue(parsed.name),
+      type: payloadValue(parsed.type),
+      url: payloadValue(parsed.dataUrl) || payloadValue(parsed.url)
+    };
+  } catch {
+    return { name: "", type: "", url: attachment.trim() };
+  }
+}
+
+webhooksRouter.get("/voipms/media/:messageId/:index", asyncHandler(async (req, res) => {
+  const messageId = payloadValue(req.params.messageId);
+  const index = Number(req.params.index);
+  if (!messageId || !Number.isInteger(index) || index < 0 || index > 4) return res.status(404).send("Not found");
+
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { attachments: true }
+  });
+  const attachment = message?.attachments[index];
+  if (!attachment) return res.status(404).send("Not found");
+
+  const media = attachmentData(attachment);
+  if (/^https?:\/\//i.test(media.url)) return res.redirect(media.url);
+
+  const match = /^data:([^;]+);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(media.url);
+  if (!match) return res.status(404).send("Not found");
+
+  res.setHeader("content-type", media.type || match[1]);
+  res.setHeader("cache-control", "public, max-age=86400");
+  res.send(Buffer.from(match[2], "base64"));
+}));
 
 webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
   if (!stripe || !env.STRIPE_WEBHOOK_SECRET) {
@@ -260,34 +331,52 @@ webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
 }));
 
 async function receiveVoipmsSms(req: Request, res: Response) {
+  const queryPayload = objectPayload(req.query);
   const bodyPayload = objectPayload(req.body);
-  const payload = { ...req.query, ...Object.assign({}, ...voipmsPayloads(bodyPayload)) } as SmsWebhookPayload;
-  const fromNumber = firstPayloadValue(payload, [
+  const payloads = [queryPayload, ...voipmsPayloads(bodyPayload)];
+  const fromNumber = firstPayloadValueFrom(payloads, [
     "from",
     "from_number",
+    "fromNumber",
     "from_did",
+    "fromDid",
     "src",
     "source",
     "callerid",
     "caller_id",
+    "callerId",
     "sender",
+    "sender_number",
+    "senderNumber",
     "phone",
     "contact",
-    "msisdn"
+    "msisdn",
+    "ani",
+    "origination",
+    "originator"
   ]);
-  const toNumber = firstPayloadValue(payload, [
+  const toNumber = firstPayloadValueFrom(payloads, [
     "dst",
+    "destination",
+    "destination_number",
+    "destinationNumber",
     "to",
     "to_number",
+    "toNumber",
     "did",
     "did_number",
+    "didNumber",
     "destination",
     "recipient",
+    "recipient_number",
+    "recipientNumber",
     "dst_number",
-    "local_number"
+    "local_number",
+    "localNumber",
+    "dnis"
   ]) || env.VOIPMS_DID || "";
-  const attachments = payloadAttachments(payload);
-  const inboundBody = firstPayloadValue(payload, [
+  const attachments = [...new Set(payloads.flatMap(payloadAttachments))];
+  const inboundBody = firstPayloadValueFrom(payloads, [
     "message",
     "sms",
     "body",
@@ -303,17 +392,18 @@ async function receiveVoipmsSms(req: Request, res: Response) {
     "subject",
     "caption"
   ]);
-  const emptyMessageFieldWasProvided = hasPayloadKey(payload, ["message"]) && !payloadValue(payload.message);
+  const emptyMessageFieldWasProvided = payloads.some((payload) => hasPayloadKey(payload, ["message"]) && !payloadValue(payload.message));
   const body = inboundBody
     || (attachments.length ? "MMS attachment" : "")
-    || (payloadLooksLikeMms(payload) ? "MMS received. VoIP.ms did not include media in this callback." : "")
+    || (payloadsLookLikeMms(payloads) ? "MMS received. VoIP.ms did not include media in this callback." : "")
     || (emptyMessageFieldWasProvided ? "Message received with no text. If this was an MMS, configure the VoIP.ms SMS/MMS Webhook URL as POST JSON so media URLs are included." : "");
-  const providerRef = firstPayloadValue(payload, ["sms_id", "id", "message_id", "message_uuid", "uuid", "reference"]);
+  const providerRef = firstPayloadValueFrom(payloads, ["sms_id", "smsId", "id", "message_id", "messageId", "message_uuid", "uuid", "reference"]);
 
   if (!fromNumber || !body) {
     console.warn("VoIP.ms inbound SMS webhook did not include a sender or message body", {
       query: req.query,
-      body: bodyPayload
+      body: safeWebhookPayload(bodyPayload),
+      payloadKeys: payloadKeySummary(payloads)
     });
     return res.type("text/plain").send("ok");
   }
