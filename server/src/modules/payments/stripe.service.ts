@@ -37,7 +37,12 @@ export async function getLocationStripeAccountId(locationId: string) {
   return credential?.enabled ? metadata?.stripeAccountId ?? metadata?.stripeUserId ?? null : null;
 }
 
-export async function createInvoicePaymentIntent(invoice: { id: string; total: number; invoiceNumber: number; locationId: string }) {
+export async function createInvoicePaymentIntent(invoice: {
+  id: string;
+  total: number;
+  invoiceNumber: number;
+  locationId: string;
+}, options: { amount?: number; tipAmount?: number } = {}) {
   if (!stripe) {
     throw new Error("Stripe is not configured");
   }
@@ -47,12 +52,15 @@ export async function createInvoicePaymentIntent(invoice: { id: string; total: n
   }
 
   return stripe.paymentIntents.create({
-    amount: invoice.total,
+    amount: options.amount ?? invoice.total,
     currency: "usd",
     automatic_payment_methods: { enabled: true },
+    description: `Invoice #${invoice.invoiceNumber}`,
     metadata: {
       invoiceId: invoice.id,
-      invoiceNumber: String(invoice.invoiceNumber)
+      invoiceNumber: String(invoice.invoiceNumber),
+      invoiceTotal: String(invoice.total),
+      tipAmount: String(options.tipAmount ?? 0)
     }
   }, { stripeAccount });
 }

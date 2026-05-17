@@ -1,10 +1,15 @@
 import { Router } from "express";
+import { z } from "zod";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { asyncHandler } from "../../utils/async-handler.js";
 import { createInvoiceCheckoutSession, createInvoicePaymentIntent, getLocationStripeAccountId } from "./stripe.service.js";
 
 export const publicPayRouter = Router();
+
+const tipSchema = z.object({
+  tipAmount: z.number().int().min(0).max(100_000).default(0)
+});
 
 function cents(value: number) {
   return `$${(value / 100).toFixed(2)}`;
@@ -31,9 +36,19 @@ async function loadInvoice(invoiceNumber: number) {
       customer: { include: { addresses: true } },
       job: { include: { address: true, technician: true } },
       items: true,
-      location: true
+      location: { include: { organization: true } }
     }
   });
+}
+
+function publicCompanyName(invoice: NonNullable<Awaited<ReturnType<typeof loadInvoice>>>) {
+  const candidates = [
+    invoice.location.organization?.name,
+    invoice.location.displayName,
+    invoice.location.name
+  ].filter(Boolean) as string[];
+  const nonBranchName = candidates.find((name) => !["yuma", "phoenix", "tucson"].includes(name.trim().toLowerCase()));
+  return nonBranchName || "Affordable Security Locksmith And Alarm L.L.C.";
 }
 
 function invoiceLines(invoice: Awaited<ReturnType<typeof loadInvoice>> extends infer T ? NonNullable<T> : never) {
@@ -60,7 +75,7 @@ function renderInvoicePayPage(input: {
   configurationError?: string | null;
 }) {
   const { invoice, clientSecret, stripeAccount, checkoutUrl, configurationError } = input;
-  const companyName = invoice.location.displayName || invoice.location.name || "Affordable Security";
+  const companyName = publicCompanyName(invoice);
   const customerName = [invoice.customer.firstName, invoice.customer.lastName].filter(Boolean).join(" ") || invoice.customer.companyName || "Customer";
   const customerAddress = invoice.customer.addresses[0] || invoice.job?.address;
   const serviceDate = invoice.job?.scheduledStart || invoice.createdAt;
@@ -77,7 +92,7 @@ function renderInvoicePayPage(input: {
   <style>
     :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: #f6f7f9; color: #232735; }
-    .shell { width: min(980px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 52px; }
+    .shell { width: min(960px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 52px; }
     .brand { text-align: center; margin-bottom: 22px; }
     .brand-mark { display: inline-block; background: #3499f4; color: #071429; padding: 10px 22px; font-weight: 900; font-size: 28px; line-height: 0.95; }
     .brand-mark span { display: block; color: #fff; margin-left: 42px; }
@@ -87,9 +102,11 @@ function renderInvoicePayPage(input: {
     .card h2 { font-size: 20px; margin: 0; padding: 16px 20px; border-bottom: 1px solid #e6e8ed; }
     .card-body { padding: 20px; }
     .tip-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
-    .tip-grid button { height: 42px; border: 1px solid #d2d7df; border-radius: 8px; background: #fff; color: #868b94; font-size: 16px; }
+    .tip-grid button { height: 42px; border: 1px solid #d2d7df; border-radius: 8px; background: #fff; color: #868b94; font-size: 16px; cursor: pointer; }
     .tip-grid .selected { border-color: #0b74de; color: #0b74de; }
-    .payment-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; }
+    .custom-tip { display: none; margin-top: 14px; }
+    .custom-tip input { width: 180px; border: 1px solid #d2d7df; border-radius: 8px; padding: 11px 12px; font: inherit; }
+    .payment-layout { display: grid; grid-template-columns: 1fr; gap: 18px; }
     #payment-element { padding: 8px 0 18px; }
     .pay-button, .checkout-button { width: 100%; border: 0; border-radius: 999px; background: #111827; color: #fff; padding: 14px 18px; font-weight: 800; font-size: 16px; cursor: pointer; }
     .pay-button:disabled { background: #d9dce2; cursor: wait; }
@@ -98,6 +115,7 @@ function renderInvoicePayPage(input: {
     .message.error { color: #b42318; }
     .message.ok { color: #137333; }
     .invoice-paper { background: #fff; border: 1px solid #dcdfe5; padding: 28px; min-height: 420px; }
+    .invoice-summary-title { font-size: 20px; font-weight: 800; margin: 0; padding: 16px 20px; border-bottom: 1px solid #e6e8ed; background: #fff; }
     .invoice-head { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px solid #dcdfe5; padding-bottom: 18px; }
     .invoice-head strong { display: block; font-size: 18px; }
     .invoice-meta { border: 1px solid #bfc5cf; min-width: 260px; }
@@ -111,7 +129,7 @@ function renderInvoicePayPage(input: {
     .totals { margin-left: auto; width: min(320px, 100%); display: grid; grid-template-columns: 1fr auto; gap: 8px 18px; padding-top: 18px; }
     .totals strong { font-size: 20px; }
     @media (max-width: 820px) {
-      .payment-layout, .party-grid, .invoice-head { grid-template-columns: 1fr; display: grid; }
+      .party-grid, .invoice-head { grid-template-columns: 1fr; display: grid; }
       .tip-grid { grid-template-columns: repeat(2, 1fr); }
       .invoice-paper { padding: 18px; }
     }
@@ -121,13 +139,14 @@ function renderInvoicePayPage(input: {
   <main class="shell">
     <div class="brand"><div class="brand-mark">Affordable<span>Security</span></div></div>
     <h1>Review &amp; pay your invoice from ${escapeHtml(companyName)}</h1>
-    <div class="amount-due">${escapeHtml(cents(invoice.total))} due</div>
+    <div class="amount-due"><span id="amount-due">${escapeHtml(cents(invoice.total))}</span> due</div>
 
     <section class="card">
       <h2>Add a tip</h2>
       <div class="card-body tip-grid">
-        <button type="button">10%</button><button type="button">15%</button><button type="button">20%</button><button class="selected" type="button">No Tip</button><button type="button">Custom</button>
+        <button type="button" data-tip-percent="10">10%</button><button type="button" data-tip-percent="15">15%</button><button type="button" data-tip-percent="20">20%</button><button class="selected" type="button" data-tip-amount="0">No Tip</button><button type="button" data-tip-custom="true">Custom</button>
       </div>
+      <div class="card-body custom-tip" id="custom-tip-row"><input id="custom-tip-input" inputmode="decimal" placeholder="Custom tip" /></div>
     </section>
 
     <div class="payment-layout">
@@ -147,7 +166,9 @@ function renderInvoicePayPage(input: {
         </div>
       </section>
 
-      <aside class="invoice-paper">
+      <section class="card">
+        <h2 class="invoice-summary-title">Invoice Summary</h2>
+        <div class="invoice-paper">
         <div class="invoice-head">
           <div><strong>${escapeHtml(companyName)}</strong><span class="muted">${escapeHtml([invoice.location.street1, invoice.location.city, invoice.location.state, invoice.location.postalCode].filter(Boolean).join(", "))}</span></div>
           <div class="invoice-meta">
@@ -170,17 +191,86 @@ function renderInvoicePayPage(input: {
           }).join("")}</tbody>
         </table>
         <div class="totals"><span>Subtotal</span><b>${escapeHtml(cents(invoice.subtotal))}</b><span>Tax</span><b>${escapeHtml(cents(invoice.tax))}</b><strong>Total</strong><strong>${escapeHtml(cents(invoice.total))}</strong></div>
-      </aside>
+        </div>
+      </section>
     </div>
   </main>
 
   ${clientSecret && publishableKey ? `<script>
+    const invoiceTotal = ${invoice.total};
+    let currentTip = 0;
+    let currentClientSecret = ${JSON.stringify(clientSecret)};
     const stripe = Stripe(${JSON.stringify(publishableKey)}, ${stripeAccount ? `{ stripeAccount: ${JSON.stringify(stripeAccount)} }` : "undefined"});
-    const elements = stripe.elements({ clientSecret: ${JSON.stringify(clientSecret)}, appearance: { theme: "stripe" } });
-    elements.create("payment", { layout: "tabs" }).mount("#payment-element");
+    let elements;
+    let paymentElement;
     const form = document.getElementById("payment-form");
     const button = document.getElementById("pay-button");
     const message = document.getElementById("payment-message");
+    const customTipRow = document.getElementById("custom-tip-row");
+    const customTipInput = document.getElementById("custom-tip-input");
+    const amountDue = document.getElementById("amount-due");
+    const tipButtons = Array.from(document.querySelectorAll(".tip-grid button"));
+
+    function dollars(cents) {
+      return "$" + (cents / 100).toFixed(2);
+    }
+
+    function mountPaymentElement(clientSecret) {
+      document.getElementById("payment-element").innerHTML = "";
+      elements = stripe.elements({ clientSecret, appearance: { theme: "stripe" } });
+      paymentElement = elements.create("payment", { layout: "tabs" });
+      paymentElement.mount("#payment-element");
+    }
+
+    async function updateTip(tipAmount) {
+      currentTip = Math.max(0, Math.round(tipAmount || 0));
+      button.disabled = true;
+      button.textContent = "Updating...";
+      message.textContent = "";
+      const response = await fetch(${JSON.stringify(`/pay/${invoice.invoiceNumber}/intent`)}, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tipAmount: currentTip })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.clientSecret) {
+        message.textContent = body.error || "Unable to update payment amount.";
+        message.className = "message error";
+        button.disabled = false;
+        button.textContent = "Pay " + dollars(invoiceTotal + currentTip);
+        return;
+      }
+      currentClientSecret = body.clientSecret;
+      mountPaymentElement(currentClientSecret);
+      button.textContent = "Pay " + dollars(invoiceTotal + currentTip);
+      amountDue.textContent = dollars(invoiceTotal + currentTip);
+      button.disabled = false;
+    }
+
+    tipButtons.forEach((tipButton) => {
+      tipButton.addEventListener("click", () => {
+        tipButtons.forEach((item) => item.classList.remove("selected"));
+        tipButton.classList.add("selected");
+        const percent = Number(tipButton.dataset.tipPercent || "0");
+        const fixedAmount = tipButton.dataset.tipAmount !== undefined ? Number(tipButton.dataset.tipAmount) : null;
+        const custom = tipButton.dataset.tipCustom === "true";
+        customTipRow.style.display = custom ? "block" : "none";
+        if (custom) {
+          customTipInput.focus();
+          updateTip(Math.round(Number(customTipInput.value.replace(/[^0-9.]/g, "") || "0") * 100));
+        } else if (fixedAmount !== null) {
+          updateTip(fixedAmount);
+        } else {
+          updateTip(Math.round(invoiceTotal * (percent / 100)));
+        }
+      });
+    });
+
+    customTipInput.addEventListener("change", () => {
+      updateTip(Math.round(Number(customTipInput.value.replace(/[^0-9.]/g, "") || "0") * 100));
+    });
+
+    mountPaymentElement(currentClientSecret);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       button.disabled = true;
@@ -206,6 +296,32 @@ publicPayRouter.get("/:invoiceNumber/complete", asyncHandler(async (req, res) =>
   const invoice = await loadInvoice(invoiceNumber);
   if (!invoice) return res.status(404).send("Invoice not found");
   res.status(200).send(`<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Payment received</title><style>body{font-family:Inter,system-ui,sans-serif;background:#f6f7f9;color:#232735;display:grid;min-height:100vh;place-items:center;margin:0}.card{background:#fff;border:1px solid #e3e6eb;border-radius:12px;padding:32px;max-width:560px;box-shadow:0 8px 26px rgba(25,32,46,.08)}h1{margin-top:0}</style></head><body><section class="card"><h1>Payment received</h1><p>Thank you. Invoice #${escapeHtml(invoice.invoiceNumber)} is being confirmed. You may close this page.</p><p><a href="/pay/${escapeHtml(invoice.invoiceNumber)}">View invoice</a></p></section></body></html>`);
+}));
+
+publicPayRouter.post("/:invoiceNumber/intent", asyncHandler(async (req, res) => {
+  const invoiceNumber = invoiceNumberFromParam(String(req.params.invoiceNumber));
+  if (!invoiceNumber) return res.status(404).json({ error: "Invoice not found" });
+  const invoice = await loadInvoice(invoiceNumber);
+  if (!invoice || invoice.status === "VOID") return res.status(404).json({ error: "Invoice not found" });
+  if (invoice.status === "PAID") return res.status(409).json({ error: "Invoice is already paid" });
+  if (invoice.total <= 0) return res.status(422).json({ error: "This invoice does not have an amount due" });
+  if (!env.STRIPE_PUBLISHABLE_KEY) return res.status(503).json({ error: "Embedded card payment is not configured" });
+
+  const input = tipSchema.parse(req.body);
+  const intent = await createInvoicePaymentIntent(invoice, {
+    amount: invoice.total + input.tipAmount,
+    tipAmount: input.tipAmount
+  });
+  await prisma.invoice.update({
+    where: { id: invoice.id },
+    data: { stripePaymentIntentId: intent.id }
+  });
+  res.json({
+    clientSecret: intent.client_secret,
+    paymentIntentId: intent.id,
+    amount: intent.amount,
+    tipAmount: input.tipAmount
+  });
 }));
 
 publicPayRouter.get("/:invoiceNumber", asyncHandler(async (req, res) => {
