@@ -31,6 +31,12 @@ services:
         sync: false
       - key: VOIPMS_DID
         sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_REPLY_TO
+        sync: false
       - key: HOUSECALL_PRO_API_KEY
         sync: false
       - key: HOUSECALL_PRO_WEBHOOK_SECRET

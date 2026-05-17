@@ -5,6 +5,7 @@ import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
+import { sendEmail } from "../messaging/email.service.js";
 import { sendLocationSms } from "../messaging/messaging.service.js";
 
 export const estimatesRouter = Router();
@@ -218,19 +219,13 @@ estimatesRouter.post("/:id/send", asyncHandler(async (req, res) => {
     const to = input.method === "email" ? input.to : input.to?.split(",").map((part) => part.trim()).find((part) => part.includes("@"));
     const recipient = to || estimate.customer.email;
     if (!recipient) return res.status(422).json({ error: "This customer does not have an email address for estimate email." });
-    deliveries.push(await prisma.message.create({
-      data: {
-        locationId,
-        customerId: estimate.customerId,
-        direction: "OUTBOUND",
-        fromNumber: "",
-        toNumber: recipient,
-        body,
-        channel: "email",
-        status: "QUEUED",
-        provider: "email",
-        templateKey: "estimateSentEmail"
-      }
+    deliveries.push(await sendEmail({
+      locationId,
+      customerId: estimate.customerId,
+      to: recipient,
+      subject: input.subject || `Estimate #${estimate.estimateNumber} from ${estimate.location.displayName || estimate.location.name}`,
+      body,
+      templateKey: "estimateSentEmail"
     }));
   }
 

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { asyncHandler } from "../../utils/async-handler.js";
+import { sendEmail } from "../messaging/email.service.js";
 
 export const publicEstimateRouter = Router();
 
@@ -82,20 +83,13 @@ async function queueEstimateApprovedNotifications(estimate: NonNullable<Awaited<
     include: { user: true }
   });
   const uniqueEmails = [...new Set(recipients.map((membership) => membership.user.email).filter(Boolean))];
-  await Promise.all(uniqueEmails.map((email) => prisma.message.create({
-    data: {
-      locationId: estimate.locationId,
-      customerId: estimate.customerId,
-      direction: "OUTBOUND",
-      fromNumber: "",
-      toNumber: email,
-      body: `Estimate #${estimate.estimateNumber} from ${customerName} was approved. View the signed estimate: ${estimateUrl}`,
-      channel: "email",
-      status: "QUEUED",
-      provider: "email",
-      providerRef: business,
-      templateKey: "estimateApprovedInternal"
-    }
+  await Promise.all(uniqueEmails.map((email) => sendEmail({
+    locationId: estimate.locationId,
+    customerId: estimate.customerId,
+    to: email,
+    subject: `Estimate #${estimate.estimateNumber} approved by ${customerName}`,
+    body: `Estimate #${estimate.estimateNumber} from ${customerName} was approved.\n\nView the signed estimate: ${estimateUrl}`,
+    templateKey: "estimateApprovedInternal"
   })));
   await prisma.customerNote.create({
     data: {

@@ -1,6 +1,7 @@
 import { InvoiceStatus, type Customer, type IntegrationCredential } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
+import { sendEmail } from "./email.service.js";
 import { sendMms, sendSms } from "./voipms.service.js";
 
 export type MessagingTemplateKey =
@@ -451,17 +452,14 @@ export async function sendInvoiceTemplateSms(locationId: string, invoiceId: stri
 export async function queueInvoiceEmail(locationId: string, invoiceId: string, to: string, body: string) {
   const invoice = await prisma.invoice.findFirst({ where: { id: invoiceId, locationId }, include: { location: true } });
   if (!invoice) return null;
-  return createMessage({
+  return sendEmail({
     locationId,
     customerId: invoice.customerId,
     jobId: invoice.jobId,
     invoiceId: invoice.id,
-    fromNumber: "",
-    toNumber: to,
+    to,
+    subject: `Invoice #${invoice.invoiceNumber} from ${invoice.location.displayName || invoice.location.name}`,
     body,
-    channel: "email",
-    status: "QUEUED",
-    provider: "email",
     templateKey: "invoiceSentEmail"
   });
 }

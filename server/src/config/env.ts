@@ -24,6 +24,9 @@ const schema = z.object({
   VOIPMS_USERNAME: z.string().optional(),
   VOIPMS_API_PASSWORD: z.string().optional(),
   VOIPMS_DID: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
+  EMAIL_REPLY_TO: z.string().optional(),
   HOUSECALL_PRO_BASE_URL: z.string().default("https://api.housecallpro.com"),
   HOUSECALL_PRO_API_KEY: z.string().optional(),
   HOUSECALL_PRO_WEBHOOK_SECRET: z.string().optional()
