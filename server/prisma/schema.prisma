@@ -304,6 +304,9 @@ model Estimate {
   approvalName      String?
   approvedAt        DateTime?
   declinedAt        DateTime?
+  depositType       String         @default("NONE")
+  depositPercent    Int?
+  depositAmount     Int?
   attachments       String[]       @default([])
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt

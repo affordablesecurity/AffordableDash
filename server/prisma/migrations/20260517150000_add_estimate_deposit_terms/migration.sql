@@ -1,0 +1,3 @@
+ALTER TABLE "Estimate" ADD COLUMN "depositType" TEXT NOT NULL DEFAULT 'NONE';
+ALTER TABLE "Estimate" ADD COLUMN "depositPercent" INTEGER;
+ALTER TABLE "Estimate" ADD COLUMN "depositAmount" INTEGER;

@@ -32,6 +32,9 @@ const estimateSchema = z.object({
   internalNotes: z.string().optional(),
   approvalSignature: z.string().optional(),
   approvalName: z.string().optional(),
+  depositType: z.enum(["NONE", "PERCENT", "FIXED"]).default("NONE"),
+  depositPercent: z.number().int().min(1).max(100).optional(),
+  depositAmount: z.number().int().min(1).optional(),
   attachments: z.array(z.string()).default([]),
   lineItems: z.array(lineItemSchema).default([])
 });
@@ -94,6 +97,9 @@ estimatesRouter.post("/", asyncHandler(async (req, res) => {
       approvalName: input.approvalName,
       approvedAt: status === EstimateStatus.APPROVED ? new Date() : undefined,
       declinedAt: status === EstimateStatus.DECLINED ? new Date() : undefined,
+      depositType: input.depositType,
+      depositPercent: input.depositType === "PERCENT" ? input.depositPercent ?? 50 : undefined,
+      depositAmount: input.depositType === "FIXED" ? input.depositAmount : undefined,
       attachments: input.attachments,
       lineItems: input.lineItems.length ? { create: input.lineItems } : undefined
     },
@@ -128,6 +134,8 @@ estimatesRouter.patch("/:id", asyncHandler(async (req, res) => {
       where: { id: existing.id },
       data: {
         ...estimateInput,
+        depositPercent: input.depositType === "PERCENT" ? input.depositPercent ?? existing.depositPercent ?? 50 : input.depositType === "NONE" ? null : undefined,
+        depositAmount: input.depositType === "FIXED" ? input.depositAmount ?? existing.depositAmount : input.depositType === "NONE" ? null : undefined,
         scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
         scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined,
         approvedAt: status === EstimateStatus.APPROVED ? new Date() : undefined,

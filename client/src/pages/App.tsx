@@ -312,6 +312,9 @@ type Estimate = {
   approvalName?: string;
   approvedAt?: string;
   declinedAt?: string;
+  depositType?: "NONE" | "PERCENT" | "FIXED";
+  depositPercent?: number | null;
+  depositAmount?: number | null;
   convertedJobId?: string;
   customer: Customer;
   address?: Address;
@@ -886,6 +889,13 @@ function estimateTotal(estimate: Estimate) {
   return calculateEstimateSubtotal(estimate) + calculateEstimateTax(estimate);
 }
 
+function estimateDepositDue(estimate: Estimate) {
+  const total = estimateTotal(estimate);
+  if (estimate.depositType === "PERCENT") return Math.round(total * ((estimate.depositPercent ?? 50) / 100));
+  if (estimate.depositType === "FIXED") return Math.min(estimate.depositAmount ?? 0, total);
+  return 0;
+}
+
 function jobPaymentStatus(job: Job) {
   const invoices = job.invoices ?? [];
   if (!invoices.length) return "Unpaid";
@@ -1370,7 +1380,10 @@ export function App() {
     description: "",
     internalNotes: "",
     leadSource: "Unknown",
-    tags: ""
+    tags: "",
+    depositType: "NONE" as "NONE" | "PERCENT" | "FIXED",
+    depositPercent: "50",
+    depositAmount: ""
   });
   const [jobClientForm, setJobClientForm] = useState<CustomerForm>(() => blankCustomerForm());
   const [invoiceForm, setInvoiceForm] = useState({
@@ -2762,7 +2775,10 @@ export function App() {
       description: "",
       internalNotes: "",
       leadSource: "Unknown",
-      tags: ""
+      tags: "",
+      depositType: "NONE",
+      depositPercent: "50",
+      depositAmount: ""
     });
     setJobNoteTarget("job");
     setJobClientForm(blankCustomerForm());
@@ -2831,6 +2847,9 @@ export function App() {
         scheduledEnd: jobForm.scheduledEnd ? new Date(jobForm.scheduledEnd).toISOString() : undefined,
         description: jobForm.description,
         internalNotes: jobForm.internalNotes || undefined,
+        depositType: jobForm.depositType,
+        depositPercent: jobForm.depositType === "PERCENT" ? Number(jobForm.depositPercent || "50") : undefined,
+        depositAmount: jobForm.depositType === "FIXED" ? dollarsToCents(jobForm.depositAmount) : undefined,
         attachments: jobAttachments,
         lineItems: jobLines.filter((item) => item.name.trim()).map((item) => ({
           category: item.category,
@@ -2855,7 +2874,10 @@ export function App() {
       description: "",
       internalNotes: "",
       leadSource: "Unknown",
-      tags: ""
+      tags: "",
+      depositType: "NONE",
+      depositPercent: "50",
+      depositAmount: ""
     });
     setJobClientForm(blankCustomerForm());
     setCreateClientInline(false);
@@ -6094,6 +6116,32 @@ export function App() {
                     ))}
                     <div className="totals-box"><span>Subtotal <strong>{money.format(jobLineSubtotal / 100)}</strong></span><span>Tax rate <em>Taxable materials (9.4%)</em> <strong>{money.format(jobLineTax / 100)}</strong></span><span className="grand-total">Estimate total <strong>{money.format(jobLineTotal / 100)}</strong></span></div>
                   </section>
+                  <section className="panel">
+                    <div className="panel-header"><h2>Deposit request</h2><CreditCard size={18} /></div>
+                    <div className="record-form compact-fields">
+                      <label>Down payment
+                        <select value={jobForm.depositType} onChange={(event) => setJobForm({ ...jobForm, depositType: event.target.value as "NONE" | "PERCENT" | "FIXED" })}>
+                          <option value="NONE">No deposit required</option>
+                          <option value="PERCENT">Percentage down</option>
+                          <option value="FIXED">Custom dollar amount</option>
+                        </select>
+                      </label>
+                      {jobForm.depositType === "PERCENT" && (
+                        <label>Deposit percent
+                          <input value={jobForm.depositPercent} onChange={(event) => setJobForm({ ...jobForm, depositPercent: event.target.value })} placeholder="50" inputMode="numeric" />
+                        </label>
+                      )}
+                      {jobForm.depositType === "FIXED" && (
+                        <label>Deposit amount
+                          <input value={jobForm.depositAmount} onChange={(event) => setJobForm({ ...jobForm, depositAmount: event.target.value })} placeholder="250.00" inputMode="decimal" />
+                        </label>
+                      )}
+                    </div>
+                    <div className="totals-box">
+                      <span>Estimate total <strong>{money.format(jobLineTotal / 100)}</strong></span>
+                      <span className="grand-total">Deposit due <strong>{money.format((jobForm.depositType === "PERCENT" ? Math.round(jobLineTotal * (Number(jobForm.depositPercent || "50") / 100)) : jobForm.depositType === "FIXED" ? Math.min(dollarsToCents(jobForm.depositAmount), jobLineTotal) : 0) / 100)}</strong></span>
+                    </div>
+                  </section>
                 </div>
               </form>
             </section>
@@ -6116,6 +6164,7 @@ export function App() {
                       <span className={`status-pill job-status-${selectedEstimate.status.toLowerCase()}`}>{statusLabel(selectedEstimate.status)}</span>
                     </div>
                     <div className="job-detail-actions">
+                      <button className="outline-button" type="button" onClick={() => window.open(`/estimate/${selectedEstimate.estimateNumber}`, "_blank", "noopener,noreferrer")}>View customer link</button>
                       <button className="outline-button" type="button" onClick={() => updateEstimate(selectedEstimate, { status: "SENT" })}>Mark Sent</button>
                       <button className="outline-button" type="button" onClick={() => declineEstimate(selectedEstimate)}>Decline</button>
                       <button className="primary" type="button" onClick={() => approveEstimate(selectedEstimate)}>Approve</button>
@@ -6168,6 +6217,11 @@ export function App() {
                         <div className="invoice-lines">
                           <span>Subtotal</span><strong>{money.format(calculateEstimateSubtotal(selectedEstimate) / 100)}</strong>
                           <span>Tax</span><strong>{money.format(calculateEstimateTax(selectedEstimate) / 100)}</strong>
+                          {estimateDepositDue(selectedEstimate) > 0 && (
+                            <>
+                              <span>Deposit due</span><strong>{money.format(estimateDepositDue(selectedEstimate) / 100)}</strong>
+                            </>
+                          )}
                           <span>Total</span><strong>{money.format(estimateTotal(selectedEstimate) / 100)}</strong>
                         </div>
                       </section>

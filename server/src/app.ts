@@ -11,6 +11,7 @@ import { authRouter } from "./modules/auth/auth.routes.js";
 import { apiKeysRouter } from "./modules/api-keys/api-keys.routes.js";
 import { customersRouter } from "./modules/customers/customers.routes.js";
 import { estimatesRouter } from "./modules/estimates/estimates.routes.js";
+import { publicEstimateRouter } from "./modules/estimates/public-estimate.routes.js";
 import { eventsRouter } from "./modules/events/events.routes.js";
 import { integrationsRouter, stripeOAuthRouter } from "./modules/integrations/integrations.routes.js";
 import { invoicesRouter } from "./modules/invoices/invoices.routes.js";
@@ -81,10 +82,11 @@ app.use("/api/places", placesRouter);
 app.use("/api/webhooks", webhooksRouter);
 app.use("/location-api/v1", publicApiRouter);
 app.use("/pay", publicPayRouter);
+app.use("/estimate", publicEstimateRouter);
 
 app.use(express.static(clientDistPath));
 app.get("*", (req, res, next) => {
-  if (req.path === "/api" || req.path.startsWith("/api/") || req.path === "/location-api" || req.path.startsWith("/location-api/") || req.path === "/pay" || req.path.startsWith("/pay/")) return next();
+  if (req.path === "/api" || req.path.startsWith("/api/") || req.path === "/location-api" || req.path.startsWith("/location-api/") || req.path === "/pay" || req.path.startsWith("/pay/") || req.path === "/estimate" || req.path.startsWith("/estimate/")) return next();
   res.sendFile(path.join(clientDistPath, "index.html"));
 });
 
