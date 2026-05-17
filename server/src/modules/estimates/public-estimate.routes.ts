@@ -1,5 +1,5 @@
 import { EstimateStatus } from "@prisma/client";
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
@@ -29,6 +29,11 @@ function escapeHtml(value: unknown) {
 function estimateNumberFromParam(value: string) {
   const estimateNumber = Number(value);
   return Number.isInteger(estimateNumber) && estimateNumber > 0 ? estimateNumber : null;
+}
+
+function requestIp(req: Request) {
+  const forwarded = req.header("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwarded || req.ip || req.socket.remoteAddress || null;
 }
 
 async function loadEstimate(estimateNumber: number) {
@@ -328,6 +333,7 @@ publicEstimateRouter.post("/:estimateNumber/approve", asyncHandler(async (req, r
       status: EstimateStatus.APPROVED,
       approvalName: input.approvalName,
       approvalSignature: input.approvalSignature,
+      approvalIpAddress: requestIp(req),
       approvedAt: new Date()
     }
   });

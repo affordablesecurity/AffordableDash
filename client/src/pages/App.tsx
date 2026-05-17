@@ -311,6 +311,7 @@ type Estimate = {
   internalNotes?: string;
   approvalSignature?: string;
   approvalName?: string;
+  approvalIpAddress?: string;
   approvedAt?: string;
   declinedAt?: string;
   depositType?: "NONE" | "PERCENT" | "FIXED";
@@ -6326,6 +6327,7 @@ export function App() {
                           <div className="signature-result">
                             <img src={selectedEstimate.approvalSignature} alt="Customer approval signature" />
                             <span>Approved by {selectedEstimate.approvalName || customerName(selectedEstimate.customer)} on {formatDateTime(selectedEstimate.approvedAt)}</span>
+                            {selectedEstimate.approvalIpAddress && <span>IP address: {selectedEstimate.approvalIpAddress}</span>}
                           </div>
                         ) : (
                           <>

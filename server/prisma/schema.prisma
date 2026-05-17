@@ -303,6 +303,7 @@ model Estimate {
   internalNotes     String?
   approvalSignature String?
   approvalName      String?
+  approvalIpAddress String?
   approvedAt        DateTime?
   declinedAt        DateTime?
   depositType       String         @default("NONE")
