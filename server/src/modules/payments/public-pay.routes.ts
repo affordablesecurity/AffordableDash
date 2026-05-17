@@ -107,8 +107,11 @@ function renderInvoicePayPage(input: {
     .custom-tip { display: none; margin-top: 14px; }
     .custom-tip input { width: 180px; border: 1px solid #d2d7df; border-radius: 8px; padding: 11px 12px; font: inherit; }
     .payment-layout { display: grid; grid-template-columns: 1fr; gap: 18px; }
-    #payment-element { padding: 8px 0 18px; }
-    .pay-button, .checkout-button { width: 100%; border: 0; border-radius: 999px; background: #111827; color: #fff; padding: 14px 18px; font-weight: 800; font-size: 16px; cursor: pointer; }
+    .payment-card-body { display: grid; justify-items: center; }
+    #payment-form { width: min(560px, 100%); display: grid; justify-items: center; }
+    #payment-element { width: 100%; padding: 8px 0 18px; }
+    .pay-button, .checkout-button { width: min(320px, 100%); display: inline-flex; justify-content: center; align-items: center; text-align: center; border: 0; border-radius: 999px; background: #3f3df2; color: #fff; padding: 14px 18px; font-weight: 800; font-size: 16px; cursor: pointer; text-decoration: none; box-shadow: 0 8px 18px rgba(63, 61, 242, .2); }
+    .pay-button:hover, .checkout-button:hover { background: #1918d8; }
     .pay-button:disabled { background: #d9dce2; cursor: wait; }
     .muted { color: #697386; font-size: 13px; line-height: 1.45; }
     .message { margin-top: 14px; font-weight: 700; }
@@ -128,6 +131,7 @@ function renderInvoicePayPage(input: {
     td:last-child, th:last-child { text-align: right; }
     .totals { margin-left: auto; width: min(320px, 100%); display: grid; grid-template-columns: 1fr auto; gap: 8px 18px; padding-top: 18px; }
     .totals strong { font-size: 20px; }
+    .tip-total-row { display: none; }
     @media (max-width: 820px) {
       .party-grid, .invoice-head { grid-template-columns: 1fr; display: grid; }
       .tip-grid { grid-template-columns: repeat(2, 1fr); }
@@ -152,7 +156,7 @@ function renderInvoicePayPage(input: {
     <div class="payment-layout">
       <section class="card">
         <h2>Payment Method</h2>
-        <div class="card-body">
+        <div class="card-body payment-card-body">
           ${configurationError ? `<p class="message error">${escapeHtml(configurationError)}</p>` : clientSecret && publishableKey ? `
             <form id="payment-form">
               <div id="payment-element"></div>
@@ -190,25 +194,30 @@ function renderInvoicePayPage(input: {
             return `<tr><td><strong>${escapeHtml(item.name)}</strong>${item.description ? `<br /><span class="muted">${escapeHtml(item.description)}</span>` : ""}</td><td>${escapeHtml(quantity)}</td><td>${escapeHtml(cents(item.unitPrice))}</td><td>${escapeHtml(cents(amount))}</td></tr>`;
           }).join("")}</tbody>
         </table>
-        <div class="totals"><span>Subtotal</span><b>${escapeHtml(cents(invoice.subtotal))}</b><span>Tax</span><b>${escapeHtml(cents(invoice.tax))}</b><strong>Total</strong><strong>${escapeHtml(cents(invoice.total))}</strong></div>
+        <div class="totals"><span>Subtotal</span><b>${escapeHtml(cents(invoice.subtotal))}</b><span>Tax</span><b>${escapeHtml(cents(invoice.tax))}</b><span class="tip-total-row" id="tip-total-label">Tip</span><b class="tip-total-row" id="tip-total-amount">$0.00</b><strong>Total</strong><strong id="invoice-total">${escapeHtml(cents(invoice.total))}</strong></div>
         </div>
       </section>
     </div>
   </main>
 
-  ${clientSecret && publishableKey ? `<script>
+  ${(clientSecret && publishableKey) || checkoutUrl ? `<script>
     const invoiceTotal = ${invoice.total};
     let currentTip = 0;
     let currentClientSecret = ${JSON.stringify(clientSecret)};
-    const stripe = Stripe(${JSON.stringify(publishableKey)}, ${stripeAccount ? `{ stripeAccount: ${JSON.stringify(stripeAccount)} }` : "undefined"});
+    const embeddedPaymentsEnabled = ${clientSecret && publishableKey ? "true" : "false"};
+    const stripe = embeddedPaymentsEnabled ? Stripe(${JSON.stringify(publishableKey)}, ${stripeAccount ? `{ stripeAccount: ${JSON.stringify(stripeAccount)} }` : "undefined"}) : null;
     let elements;
     let paymentElement;
     const form = document.getElementById("payment-form");
     const button = document.getElementById("pay-button");
+    const checkoutButton = document.querySelector(".checkout-button");
     const message = document.getElementById("payment-message");
     const customTipRow = document.getElementById("custom-tip-row");
     const customTipInput = document.getElementById("custom-tip-input");
     const amountDue = document.getElementById("amount-due");
+    const invoiceTotalNode = document.getElementById("invoice-total");
+    const tipTotalRows = Array.from(document.querySelectorAll(".tip-total-row"));
+    const tipTotalAmount = document.getElementById("tip-total-amount");
     const tipButtons = Array.from(document.querySelectorAll(".tip-grid button"));
 
     function dollars(cents) {
@@ -216,35 +225,63 @@ function renderInvoicePayPage(input: {
     }
 
     function mountPaymentElement(clientSecret) {
+      if (!embeddedPaymentsEnabled) return;
       document.getElementById("payment-element").innerHTML = "";
       elements = stripe.elements({ clientSecret, appearance: { theme: "stripe" } });
       paymentElement = elements.create("payment", { layout: "tabs" });
       paymentElement.mount("#payment-element");
     }
 
+    function setVisibleTotal(tipAmount) {
+      const total = invoiceTotal + tipAmount;
+      amountDue.textContent = dollars(total);
+      invoiceTotalNode.textContent = dollars(total);
+      tipTotalAmount.textContent = dollars(tipAmount);
+      tipTotalRows.forEach((row) => {
+        row.style.display = tipAmount > 0 ? "block" : "none";
+      });
+      if (button) button.textContent = "Pay " + dollars(total);
+      if (checkoutButton) checkoutButton.textContent = "Pay " + dollars(total);
+    }
+
     async function updateTip(tipAmount) {
       currentTip = Math.max(0, Math.round(tipAmount || 0));
-      button.disabled = true;
-      button.textContent = "Updating...";
-      message.textContent = "";
+      setVisibleTotal(currentTip);
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Updating...";
+      }
+      if (checkoutButton) {
+        checkoutButton.setAttribute("aria-busy", "true");
+        checkoutButton.textContent = "Updating...";
+      }
+      if (message) message.textContent = "";
       const response = await fetch(${JSON.stringify(`/pay/${invoice.invoiceNumber}/intent`)}, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tipAmount: currentTip })
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok || !body.clientSecret) {
-        message.textContent = body.error || "Unable to update payment amount.";
-        message.className = "message error";
-        button.disabled = false;
-        button.textContent = "Pay " + dollars(invoiceTotal + currentTip);
+      if (!response.ok || (!body.clientSecret && !body.checkoutUrl)) {
+        if (message) {
+          message.textContent = body.error || "Unable to update payment amount.";
+          message.className = "message error";
+        }
+        if (button) button.disabled = false;
+        if (checkoutButton) checkoutButton.removeAttribute("aria-busy");
+        setVisibleTotal(currentTip);
         return;
       }
-      currentClientSecret = body.clientSecret;
-      mountPaymentElement(currentClientSecret);
-      button.textContent = "Pay " + dollars(invoiceTotal + currentTip);
-      amountDue.textContent = dollars(invoiceTotal + currentTip);
-      button.disabled = false;
+      if (body.clientSecret) {
+        currentClientSecret = body.clientSecret;
+        mountPaymentElement(currentClientSecret);
+      }
+      if (body.checkoutUrl && checkoutButton) {
+        checkoutButton.href = body.checkoutUrl;
+      }
+      if (button) button.disabled = false;
+      if (checkoutButton) checkoutButton.removeAttribute("aria-busy");
+      setVisibleTotal(currentTip);
     }
 
     tipButtons.forEach((tipButton) => {
@@ -266,22 +303,24 @@ function renderInvoicePayPage(input: {
       });
     });
 
-    customTipInput.addEventListener("change", () => {
+    customTipInput.addEventListener("input", () => {
       updateTip(Math.round(Number(customTipInput.value.replace(/[^0-9.]/g, "") || "0") * 100));
     });
 
     mountPaymentElement(currentClientSecret);
-    form.addEventListener("submit", async (event) => {
+    if (form) form.addEventListener("submit", async (event) => {
       event.preventDefault();
       button.disabled = true;
-      message.textContent = "";
+      if (message) message.textContent = "";
       const { error } = await stripe.confirmPayment({
         elements,
         confirmParams: { return_url: ${JSON.stringify(`${env.PUBLIC_BASE_URL}/pay/${invoice.invoiceNumber}/complete`)} }
       });
       if (error) {
-        message.textContent = error.message || "Payment could not be completed.";
-        message.className = "message error";
+        if (message) {
+          message.textContent = error.message || "Payment could not be completed.";
+          message.className = "message error";
+        }
         button.disabled = false;
       }
     });
@@ -305,9 +344,17 @@ publicPayRouter.post("/:invoiceNumber/intent", asyncHandler(async (req, res) => 
   if (!invoice || invoice.status === "VOID") return res.status(404).json({ error: "Invoice not found" });
   if (invoice.status === "PAID") return res.status(409).json({ error: "Invoice is already paid" });
   if (invoice.total <= 0) return res.status(422).json({ error: "This invoice does not have an amount due" });
-  if (!env.STRIPE_PUBLISHABLE_KEY) return res.status(503).json({ error: "Embedded card payment is not configured" });
 
   const input = tipSchema.parse(req.body);
+  if (!env.STRIPE_PUBLISHABLE_KEY) {
+    const checkout = await createInvoiceCheckoutSession(invoice, env.PUBLIC_BASE_URL, { tipAmount: input.tipAmount });
+    return res.json({
+      checkoutUrl: checkout.url,
+      amount: invoice.total + input.tipAmount,
+      tipAmount: input.tipAmount
+    });
+  }
+
   const intent = await createInvoicePaymentIntent(invoice, {
     amount: invoice.total + input.tipAmount,
     tipAmount: input.tipAmount

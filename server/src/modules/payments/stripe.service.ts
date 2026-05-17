@@ -70,7 +70,7 @@ function checkoutQuantity(value: InvoiceCheckoutLine["quantity"]) {
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
 }
 
-function checkoutLineItems(invoice: InvoiceCheckoutInput): Stripe.Checkout.SessionCreateParams.LineItem[] {
+function checkoutLineItems(invoice: InvoiceCheckoutInput, options: { tipAmount?: number } = {}): Stripe.Checkout.SessionCreateParams.LineItem[] {
   const itemLines = invoice.items?.filter((item) => item.unitPrice > 0).slice(0, 20).map((item) => ({
     quantity: 1,
     price_data: {
@@ -96,11 +96,24 @@ function checkoutLineItems(invoice: InvoiceCheckoutInput): Stripe.Checkout.Sessi
         }
       });
     }
+    if (options.tipAmount && options.tipAmount > 0) {
+      itemLines.push({
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: options.tipAmount,
+          product_data: {
+            name: "Tip",
+            description: `Invoice #${invoice.invoiceNumber}`
+          }
+        }
+      });
+    }
     return itemLines;
   }
 
   const jobLabel = invoice.job?.title || invoice.job?.jobType || "Locksmith service";
-  return [{
+  const fallbackLines: Stripe.Checkout.SessionCreateParams.LineItem[] = [{
     quantity: 1,
     price_data: {
       currency: "usd",
@@ -111,9 +124,23 @@ function checkoutLineItems(invoice: InvoiceCheckoutInput): Stripe.Checkout.Sessi
       }
     }
   }];
+  if (options.tipAmount && options.tipAmount > 0) {
+    fallbackLines.push({
+      quantity: 1,
+      price_data: {
+        currency: "usd",
+        unit_amount: options.tipAmount,
+        product_data: {
+          name: "Tip",
+          description: `Invoice #${invoice.invoiceNumber}`
+        }
+      }
+    });
+  }
+  return fallbackLines;
 }
 
-export async function createInvoiceCheckoutSession(invoice: InvoiceCheckoutInput, baseUrl: string) {
+export async function createInvoiceCheckoutSession(invoice: InvoiceCheckoutInput, baseUrl: string, options: { tipAmount?: number } = {}) {
   if (!stripe) {
     throw new Error("Stripe is not configured");
   }
@@ -127,17 +154,21 @@ export async function createInvoiceCheckoutSession(invoice: InvoiceCheckoutInput
     customer_email: invoice.customer?.email || undefined,
     metadata: {
       invoiceId: invoice.id,
-      invoiceNumber: String(invoice.invoiceNumber)
+      invoiceNumber: String(invoice.invoiceNumber),
+      invoiceTotal: String(invoice.total),
+      tipAmount: String(options.tipAmount ?? 0)
     },
-    line_items: checkoutLineItems(invoice),
+    line_items: checkoutLineItems(invoice, options),
     payment_intent_data: {
       description: `Invoice #${invoice.invoiceNumber}`,
       metadata: {
         invoiceId: invoice.id,
-        invoiceNumber: String(invoice.invoiceNumber)
+        invoiceNumber: String(invoice.invoiceNumber),
+        invoiceTotal: String(invoice.total),
+        tipAmount: String(options.tipAmount ?? 0)
       }
     },
-    success_url: `${baseUrl}/?payment=success&invoice=${invoice.id}`,
-    cancel_url: `${baseUrl}/?payment=cancelled&invoice=${invoice.id}`
+    success_url: `${baseUrl}/pay/${invoice.invoiceNumber}/complete`,
+    cancel_url: `${baseUrl}/pay/${invoice.invoiceNumber}`
   }, { stripeAccount });
 }
