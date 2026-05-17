@@ -4994,6 +4994,17 @@ button:disabled {
   color: #075985;
 }
 
+.calendar-estimate {
+  background: #ecfdf3;
+  border-color: #16a34a;
+  color: #14532d;
+}
+
+.calendar-estimate em,
+.calendar-estimate small {
+  color: #14532d;
+}
+
 .month-calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(150px, 1fr));
@@ -5038,6 +5049,11 @@ button:disabled {
 .month-day em.month-event {
   background: #e0f2fe;
   color: #075985;
+}
+
+.month-day em.month-estimate {
+  background: #dcfce7;
+  color: #14532d;
 }
 
 .month-day small {

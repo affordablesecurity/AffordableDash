@@ -1170,6 +1170,7 @@ export function App() {
   const [scheduleDate, setScheduleDate] = useState(() => new Date());
   const [slotPrompt, setSlotPrompt] = useState<SlotPrompt>(null);
   const [selectedScheduleJob, setSelectedScheduleJob] = useState<Job | null>(null);
+  const [selectedScheduleEstimate, setSelectedScheduleEstimate] = useState<Estimate | null>(null);
   const [selectedScheduleEvent, setSelectedScheduleEvent] = useState<CalendarEvent | null>(null);
   const [eventDialogOpen, setEventDialogOpen] = useState(false);
   const [eventEditingId, setEventEditingId] = useState("");
@@ -1430,6 +1431,7 @@ export function App() {
   const [addressLoadingKey, setAddressLoadingKey] = useState("");
 
   const scheduledJobs = useMemo(() => jobs.filter((job) => job.status !== "COMPLETED" && job.status !== "CANCELED"), [jobs]);
+  const scheduledEstimates = useMemo(() => estimates.filter((estimate) => estimate.scheduledStart && estimate.status !== "DECLINED" && estimate.status !== "CONVERTED"), [estimates]);
   const scheduledEvents = useMemo(() => events, [events]);
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? null;
   const selectedJobInvoice = selectedJob?.invoices?.[0] ?? null;
@@ -1809,8 +1811,18 @@ export function App() {
       technician: calendarEvent.technician?.name ?? "Unassigned",
       onOpen: () => setSelectedScheduleEvent(calendarEvent)
     }));
-    return [...jobStops, ...eventStops].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
-  }, [scheduledJobs, scheduledEvents]);
+    const estimateStops = scheduledEstimates.map((estimate) => ({
+      id: `estimate-${estimate.id}`,
+      type: "estimate" as const,
+      time: estimate.scheduledStart ?? "",
+      title: `Estimate #${estimate.estimateNumber} - ${customerName(estimate.customer)}`,
+      detail: estimate.title || estimate.jobType,
+      location: addressLine(estimate.address ?? estimate.customer.addresses?.[0]),
+      technician: estimate.technician?.name ?? "Unassigned",
+      onOpen: () => setSelectedScheduleEstimate(estimate)
+    }));
+    return [...jobStops, ...estimateStops, ...eventStops].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+  }, [scheduledJobs, scheduledEstimates, scheduledEvents]);
   const todaysDispatchStops = useMemo(() => dispatchStops.filter((stop) => sameCalendarDay(new Date(stop.time), new Date())), [dispatchStops]);
   const companyAddressPreview = [
     activeLocationAccess?.location.street1,
@@ -4146,6 +4158,13 @@ export function App() {
     setActiveView("jobs");
   }
 
+  function openEstimateDetail(estimate: Estimate) {
+    setSelectedEstimateId(estimate.id);
+    setSelectedScheduleEstimate(null);
+    setEstimatePageMode("list");
+    setActiveView("estimates");
+  }
+
   function renderInvoiceSendPage(invoice: Invoice) {
     const items = invoiceLineItems(invoice);
     const serviceItems = items.filter((item) => (item.category ?? "service") !== "material");
@@ -4577,14 +4596,19 @@ export function App() {
               <div className="month-calendar-grid">
                 {monthDays.map((day) => {
                   const dayJobs = scheduledJobs.filter((job) => job.scheduledStart && sameCalendarDay(new Date(job.scheduledStart), day));
+                  const dayEstimates = scheduledEstimates.filter((estimate) => estimate.scheduledStart && sameCalendarDay(new Date(estimate.scheduledStart), day));
                   const dayEvents = scheduledEvents.filter((calendarEvent) => sameCalendarDay(new Date(calendarEvent.scheduledStart), day));
-                  const visibleEventSlots = Math.max(0, 4 - dayJobs.length);
-                  const hiddenItems = Math.max(0, dayJobs.length + dayEvents.length - 4);
+                  const visibleEstimateSlots = Math.max(0, 4 - dayJobs.length);
+                  const visibleEventSlots = Math.max(0, 4 - dayJobs.length - dayEstimates.length);
+                  const hiddenItems = Math.max(0, dayJobs.length + dayEstimates.length + dayEvents.length - 4);
                   return (
                     <button className={day.getMonth() === scheduleDate.getMonth() ? "month-day" : "month-day muted"} key={day.toISOString()} onClick={() => { setScheduleDate(day); setCalendarMode("day"); }}>
                       <span>{dayLabels[day.getDay()]} {day.getDate()}</span>
                       {dayJobs.slice(0, 4).map((job) => (
                         <em key={job.id} onClick={(event) => { event.stopPropagation(); setSelectedScheduleJob(job); }}>{job.customer.firstName} {job.customer.lastName}</em>
+                      ))}
+                      {dayEstimates.slice(0, visibleEstimateSlots).map((estimate) => (
+                        <em className="month-estimate" key={estimate.id} onClick={(event) => { event.stopPropagation(); setSelectedScheduleEstimate(estimate); }}>Estimate #{estimate.estimateNumber}</em>
                       ))}
                       {dayEvents.slice(0, visibleEventSlots).map((calendarEvent) => (
                         <em className="month-event" key={calendarEvent.id} onClick={(event) => { event.stopPropagation(); setSelectedScheduleEvent(calendarEvent); }}>{calendarEvent.name}</em>
@@ -4623,6 +4647,12 @@ export function App() {
                         const techMatches = calendarMode !== "employees" || (column.technicianId ? eventTechId === column.technicianId : !eventTechId);
                         return techMatches && sameCalendarDay(start, column.date) && sameCalendarSlot(start, hour, minute);
                       });
+                      const slotEstimates = scheduledEstimates.filter((estimate) => {
+                        if (!estimate.scheduledStart) return false;
+                        const start = new Date(estimate.scheduledStart);
+                        const techMatches = calendarMode !== "employees" || (column.technicianId ? estimate.technician?.id === column.technicianId : !estimate.technician?.id);
+                        return techMatches && sameCalendarDay(start, column.date) && sameCalendarSlot(start, hour, minute);
+                      });
                       const now = new Date();
                       const isCurrentSlot = sameCalendarDay(column.date, now) && sameCalendarSlot(now, hour, minute);
                       const currentOffset = `${(now.getMinutes() - minute) / 15 * 100}%`;
@@ -4650,6 +4680,29 @@ export function App() {
                               <strong>{job.customer.firstName} {job.customer.lastName}</strong>
                               <em>{job.scheduledStart ? `${new Date(job.scheduledStart).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${job.scheduledEnd ? `-${new Date(job.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}` : job.title}</em>
                               <small>#{job.jobNumber}</small>
+                            </span>
+                          ))}
+                          {slotEstimates.map((estimate) => (
+                            <span
+                              className="calendar-job calendar-estimate"
+                              key={estimate.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedScheduleEstimate(estimate);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  setSelectedScheduleEstimate(estimate);
+                                }
+                              }}
+                            >
+                              <strong>{customerName(estimate.customer)}</strong>
+                              <em>{estimate.scheduledStart ? `${new Date(estimate.scheduledStart).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${estimate.scheduledEnd ? `-${new Date(estimate.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}` : estimate.title}</em>
+                              <small>Estimate #{estimate.estimateNumber}</small>
                             </span>
                           ))}
                           {slotEvents.map((calendarEvent) => (
@@ -4725,6 +4778,37 @@ export function App() {
                 </div>
               )}
               {selectedScheduleJob.internalNotes && <p className="schedule-job-note">{selectedScheduleJob.internalNotes}</p>}
+            </div>
+          </div>
+        )}
+
+        {selectedScheduleEstimate && (
+          <div className="modal-backdrop" onClick={() => setSelectedScheduleEstimate(null)}>
+            <div className="schedule-job-modal schedule-estimate-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="schedule-job-title">
+                <div>
+                  <h2><FileText size={22} /> Estimate #{selectedScheduleEstimate.estimateNumber}</h2>
+                  <p>
+                    {selectedScheduleEstimate.scheduledStart ? new Date(selectedScheduleEstimate.scheduledStart).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Unscheduled"}
+                    {selectedScheduleEstimate.scheduledEnd ? ` - ${new Date(selectedScheduleEstimate.scheduledEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}
+                  </p>
+                </div>
+                <button className="link-button" type="button" onClick={() => openEstimateDetail(selectedScheduleEstimate)}>View estimate</button>
+              </div>
+              <div className="schedule-job-details">
+                <span><CalendarDays size={18} /> {selectedScheduleEstimate.title || selectedScheduleEstimate.jobType}</span>
+                <span><CircleDollarSign size={18} /> {money.format(estimateTotal(selectedScheduleEstimate) / 100)}</span>
+                <span><Users size={18} /> {customerName(selectedScheduleEstimate.customer)}</span>
+                <span><MapPin size={18} /> {addressLine(selectedScheduleEstimate.address ?? selectedScheduleEstimate.customer.addresses?.[0])}</span>
+                <span><Phone size={18} /> {selectedScheduleEstimate.customer.phone}</span>
+                <span><UserPlus size={18} /> {selectedScheduleEstimate.technician?.name ?? "Unassigned"}</span>
+              </div>
+              {!!selectedScheduleEstimate.tags?.length && (
+                <div className="schedule-job-tags">
+                  {selectedScheduleEstimate.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                </div>
+              )}
+              {selectedScheduleEstimate.internalNotes && <p className="schedule-job-note">{selectedScheduleEstimate.internalNotes}</p>}
             </div>
           </div>
         )}
