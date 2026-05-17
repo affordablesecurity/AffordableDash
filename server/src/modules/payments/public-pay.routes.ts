@@ -98,6 +98,7 @@ function renderInvoicePayPage(input: {
     .brand-mark span { display: block; color: #fff; margin-left: 42px; }
     h1 { text-align: center; font-size: clamp(24px, 4vw, 34px); line-height: 1.2; margin: 10px 0 4px; }
     .amount-due { text-align: center; font-size: 19px; font-weight: 800; margin-bottom: 24px; }
+    .tip-due-part { display: none; }
     .card { background: #fff; border: 1px solid #e3e6eb; border-radius: 8px; box-shadow: 0 8px 26px rgba(25, 32, 46, .08); margin-bottom: 18px; overflow: hidden; }
     .card h2 { font-size: 20px; margin: 0; padding: 16px 20px; border-bottom: 1px solid #e6e8ed; }
     .card-body { padding: 20px; }
@@ -143,7 +144,7 @@ function renderInvoicePayPage(input: {
   <main class="shell">
     <div class="brand"><div class="brand-mark">Affordable<span>Security</span></div></div>
     <h1>Review &amp; pay your invoice from ${escapeHtml(companyName)}</h1>
-    <div class="amount-due"><span id="amount-due">${escapeHtml(cents(invoice.total))}</span> due</div>
+    <div class="amount-due"><span id="invoice-base-due">${escapeHtml(cents(invoice.total))}</span><span class="tip-due-part" id="tip-due-part"> + <span id="tip-due-amount">$0.00</span></span> due</div>
 
     <section class="card">
       <h2>Add a tip</h2>
@@ -214,7 +215,8 @@ function renderInvoicePayPage(input: {
     const message = document.getElementById("payment-message");
     const customTipRow = document.getElementById("custom-tip-row");
     const customTipInput = document.getElementById("custom-tip-input");
-    const amountDue = document.getElementById("amount-due");
+    const tipDuePart = document.getElementById("tip-due-part");
+    const tipDueAmount = document.getElementById("tip-due-amount");
     const invoiceTotalNode = document.getElementById("invoice-total");
     const tipTotalRows = Array.from(document.querySelectorAll(".tip-total-row"));
     const tipTotalAmount = document.getElementById("tip-total-amount");
@@ -234,8 +236,9 @@ function renderInvoicePayPage(input: {
 
     function setVisibleTotal(tipAmount) {
       const total = invoiceTotal + tipAmount;
-      amountDue.textContent = dollars(total);
       invoiceTotalNode.textContent = dollars(total);
+      tipDueAmount.textContent = dollars(tipAmount);
+      tipDuePart.style.display = tipAmount > 0 ? "inline" : "none";
       tipTotalAmount.textContent = dollars(tipAmount);
       tipTotalRows.forEach((row) => {
         row.style.display = tipAmount > 0 ? "block" : "none";
