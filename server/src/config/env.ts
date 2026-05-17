@@ -27,6 +27,11 @@ const schema = z.object({
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
   EMAIL_REPLY_TO: z.string().optional(),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().optional(),
+  SMTP_SECURE: z.coerce.boolean().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
   HOUSECALL_PRO_BASE_URL: z.string().default("https://api.housecallpro.com"),
   HOUSECALL_PRO_API_KEY: z.string().optional(),
   HOUSECALL_PRO_WEBHOOK_SECRET: z.string().optional()

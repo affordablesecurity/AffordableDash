@@ -37,6 +37,16 @@ services:
         sync: false
       - key: EMAIL_REPLY_TO
         sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_SECURE
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
       - key: HOUSECALL_PRO_API_KEY
         sync: false
       - key: HOUSECALL_PRO_WEBHOOK_SECRET

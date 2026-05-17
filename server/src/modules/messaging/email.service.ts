@@ -1,5 +1,6 @@
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
+import nodemailer from "nodemailer";
 
 type SendEmailInput = {
   locationId: string;
@@ -24,8 +25,17 @@ function htmlBody(text: string) {
     .join("");
 }
 
+function smtpConfigured() {
+  return Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASSWORD && env.EMAIL_FROM);
+}
+
+function resendConfigured() {
+  return Boolean(env.RESEND_API_KEY && env.EMAIL_FROM);
+}
+
 export async function sendEmail(input: SendEmailInput) {
-  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) {
+  const emailFrom = env.EMAIL_FROM || "";
+  if (!smtpConfigured() && !resendConfigured()) {
     return prisma.message.create({
       data: {
         locationId: input.locationId,
@@ -33,16 +43,73 @@ export async function sendEmail(input: SendEmailInput) {
         jobId: input.jobId ?? undefined,
         invoiceId: input.invoiceId ?? undefined,
         direction: "OUTBOUND",
-        fromNumber: env.EMAIL_FROM || "",
+        fromNumber: emailFrom,
         toNumber: input.to,
         body: input.body,
         channel: "email",
         status: "FAILED",
-        error: "Email provider is not configured. Add RESEND_API_KEY and EMAIL_FROM in Render.",
-        provider: "resend",
+        error: "Email provider is not configured. Add SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and EMAIL_FROM in Render.",
+        provider: "email",
         templateKey: input.templateKey
       }
     });
+  }
+
+  if (smtpConfigured()) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: env.SMTP_HOST,
+        port: env.SMTP_PORT ?? 587,
+        secure: env.SMTP_SECURE ?? false,
+        auth: {
+          user: env.SMTP_USER,
+          pass: env.SMTP_PASSWORD
+        }
+      });
+      const result = await transporter.sendMail({
+        from: emailFrom,
+        to: input.to,
+        replyTo: env.EMAIL_REPLY_TO || undefined,
+        subject: input.subject,
+        text: input.body,
+        html: htmlBody(input.body)
+      });
+      return prisma.message.create({
+        data: {
+          locationId: input.locationId,
+          customerId: input.customerId ?? undefined,
+          jobId: input.jobId ?? undefined,
+          invoiceId: input.invoiceId ?? undefined,
+          direction: "OUTBOUND",
+          fromNumber: emailFrom,
+          toNumber: input.to,
+          body: input.body,
+          channel: "email",
+          status: "SENT",
+          provider: "smtp",
+          providerRef: result.messageId,
+          templateKey: input.templateKey
+        }
+      });
+    } catch (err) {
+      return prisma.message.create({
+        data: {
+          locationId: input.locationId,
+          customerId: input.customerId ?? undefined,
+          jobId: input.jobId ?? undefined,
+          invoiceId: input.invoiceId ?? undefined,
+          direction: "OUTBOUND",
+          fromNumber: emailFrom,
+          toNumber: input.to,
+          body: input.body,
+          channel: "email",
+          status: "FAILED",
+          error: err instanceof Error ? err.message : "SMTP email failed.",
+          provider: "smtp",
+          templateKey: input.templateKey
+        }
+      });
+    }
   }
 
   const response = await fetch("https://api.resend.com/emails", {
@@ -52,7 +119,7 @@ export async function sendEmail(input: SendEmailInput) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      from: env.EMAIL_FROM,
+      from: emailFrom,
       to: input.to,
       subject: input.subject,
       text: input.body,
@@ -70,7 +137,7 @@ export async function sendEmail(input: SendEmailInput) {
       jobId: input.jobId ?? undefined,
       invoiceId: input.invoiceId ?? undefined,
       direction: "OUTBOUND",
-      fromNumber: env.EMAIL_FROM,
+      fromNumber: emailFrom,
       toNumber: input.to,
       body: input.body,
       channel: "email",
