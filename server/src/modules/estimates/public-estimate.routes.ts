@@ -1,6 +1,7 @@
 import { EstimateStatus } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { asyncHandler } from "../../utils/async-handler.js";
 
@@ -8,7 +9,7 @@ export const publicEstimateRouter = Router();
 
 const approvalSchema = z.object({
   approvalName: z.string().trim().min(1).max(120),
-  approvalSignature: z.string().trim().max(20_000).optional()
+  approvalSignature: z.string().trim().min(100, "Signature is required").max(500_000)
 });
 
 function cents(value: number) {
@@ -68,6 +69,43 @@ function depositDue(estimate: NonNullable<Awaited<ReturnType<typeof loadEstimate
   return 0;
 }
 
+async function queueEstimateApprovedNotifications(estimate: NonNullable<Awaited<ReturnType<typeof loadEstimate>>>) {
+  const business = companyName(estimate);
+  const customerName = [estimate.customer.firstName, estimate.customer.lastName].filter(Boolean).join(" ") || estimate.customer.companyName || "Customer";
+  const estimateUrl = `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/estimate/${estimate.estimateNumber}`;
+  const recipients = await prisma.userMembership.findMany({
+    where: {
+      organizationId: estimate.location.organizationId,
+      role: { in: ["OWNER", "ADMIN"] },
+      OR: [{ locationId: null }, { locationId: estimate.locationId }]
+    },
+    include: { user: true }
+  });
+  const uniqueEmails = [...new Set(recipients.map((membership) => membership.user.email).filter(Boolean))];
+  await Promise.all(uniqueEmails.map((email) => prisma.message.create({
+    data: {
+      locationId: estimate.locationId,
+      customerId: estimate.customerId,
+      direction: "OUTBOUND",
+      fromNumber: "",
+      toNumber: email,
+      body: `Estimate #${estimate.estimateNumber} from ${customerName} was approved. View the signed estimate: ${estimateUrl}`,
+      channel: "email",
+      status: "QUEUED",
+      provider: "email",
+      providerRef: business,
+      templateKey: "estimateApprovedInternal"
+    }
+  })));
+  await prisma.customerNote.create({
+    data: {
+      customerId: estimate.customerId,
+      author: "System",
+      content: `Estimate #${estimate.estimateNumber} approved by ${customerName}. Signed estimate: ${estimateUrl}`
+    }
+  });
+}
+
 function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof loadEstimate>>>) {
   const business = companyName(estimate);
   const customerName = [estimate.customer.firstName, estimate.customer.lastName].filter(Boolean).join(" ") || estimate.customer.companyName || "Customer";
@@ -100,6 +138,8 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     .actions { display: grid; gap: 14px; }
     .approve-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }
     input { border: 1px solid #d2d7df; border-radius: 8px; padding: 12px; font: inherit; }
+    .signature-pad { width: 100%; height: 190px; border: 1px solid #d2d7df; border-radius: 8px; background: #fff; touch-action: none; }
+    .signature-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     button { border: 0; border-radius: 999px; padding: 13px 18px; font-weight: 800; cursor: pointer; }
     .primary { background: #3f3df2; color: #fff; }
     .danger { background: #fff; color: #b42318; border: 1px solid #f3b8b0; }
@@ -135,6 +175,11 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
             <input id="approval-name" placeholder="Your name" value="${escapeHtml(customerName)}" />
             <button class="primary" id="approve-button" type="button">Approve</button>
             <button class="danger" id="decline-button" type="button">Decline</button>
+          </div>
+          <div>
+            <p class="muted">Sign below before approving this estimate.</p>
+            <canvas class="signature-pad" id="signature-pad" width="900" height="260"></canvas>
+            <div class="signature-actions"><span class="muted">Use your finger, stylus, or mouse.</span><button type="button" id="clear-signature">Clear signature</button></div>
           </div>
           ${deposit > 0 ? `<p class="muted">Approval requires a ${escapeHtml(cents(deposit))} deposit. The payment link can be sent after approval.</p>` : ""}
           <p id="action-message" class="message" role="alert"></p>
@@ -174,12 +219,50 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     const message = document.getElementById("action-message");
     const approveButton = document.getElementById("approve-button");
     const declineButton = document.getElementById("decline-button");
+    const signaturePad = document.getElementById("signature-pad");
+    const clearSignature = document.getElementById("clear-signature");
+    const signatureContext = signaturePad?.getContext("2d");
+    let signing = false;
+    let hasSignature = false;
+    function signaturePoint(event) {
+      const rect = signaturePad.getBoundingClientRect();
+      const pointer = event.touches?.[0] || event;
+      return {
+        x: ((pointer.clientX - rect.left) / rect.width) * signaturePad.width,
+        y: ((pointer.clientY - rect.top) / rect.height) * signaturePad.height
+      };
+    }
+    function startSignature(event) {
+      event.preventDefault();
+      signing = true;
+      const point = signaturePoint(event);
+      signatureContext.lineWidth = 4;
+      signatureContext.lineCap = "round";
+      signatureContext.strokeStyle = "#101421";
+      signatureContext.beginPath();
+      signatureContext.moveTo(point.x, point.y);
+    }
+    function moveSignature(event) {
+      if (!signing) return;
+      event.preventDefault();
+      const point = signaturePoint(event);
+      signatureContext.lineTo(point.x, point.y);
+      signatureContext.stroke();
+      hasSignature = true;
+    }
+    function endSignature() {
+      signing = false;
+    }
     async function submitAction(action) {
       const approvalName = document.getElementById("approval-name").value.trim();
+      if (action === "approve" && !hasSignature) {
+        message.textContent = "Please sign the estimate before approving.";
+        return;
+      }
       const response = await fetch("/estimate/${estimate.estimateNumber}/" + action, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approvalName })
+        body: JSON.stringify({ approvalName, approvalSignature: action === "approve" ? signaturePad.toDataURL("image/png") : undefined })
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -188,6 +271,17 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
       }
       window.location.reload();
     }
+    signaturePad?.addEventListener("mousedown", startSignature);
+    signaturePad?.addEventListener("mousemove", moveSignature);
+    window.addEventListener("mouseup", endSignature);
+    signaturePad?.addEventListener("touchstart", startSignature, { passive: false });
+    signaturePad?.addEventListener("touchmove", moveSignature, { passive: false });
+    window.addEventListener("touchend", endSignature);
+    clearSignature?.addEventListener("click", () => {
+      signatureContext.clearRect(0, 0, signaturePad.width, signaturePad.height);
+      hasSignature = false;
+      message.textContent = "";
+    });
     approveButton?.addEventListener("click", () => submitAction("approve"));
     declineButton?.addEventListener("click", () => submitAction("decline"));
   </script>` : ""}
@@ -219,6 +313,7 @@ publicEstimateRouter.post("/:estimateNumber/approve", asyncHandler(async (req, r
       approvedAt: new Date()
     }
   });
+  await queueEstimateApprovedNotifications(estimate);
   res.json({ estimate: updated });
 }));
 
