@@ -10,9 +10,9 @@ services:
       - key: NODE_ENV
         value: production
       - key: CLIENT_URL
-        value: https://affordable-onrender.com
+        value: https://affordabledash.onrender.com
       - key: PUBLIC_BASE_URL
-        value: https://affordable-onrender.com
+        value: https://affordabledash.onrender.com
       - key: JWT_SECRET
         generateValue: true
       - key: DATABASE_URL
