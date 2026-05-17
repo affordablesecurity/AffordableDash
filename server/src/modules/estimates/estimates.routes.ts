@@ -11,6 +11,7 @@ import { sendLocationSms } from "../messaging/messaging.service.js";
 export const estimatesRouter = Router();
 
 const lineItemSchema = z.object({
+  optionId: z.string().optional(),
   category: z.enum(["service", "material"]).default("service"),
   name: z.string().min(1),
   description: z.string().optional(),
@@ -50,11 +51,19 @@ const sendEstimateSchema = z.object({
   message: z.string().trim().max(2000).optional()
 });
 
+const optionSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(1000).optional(),
+  imageName: z.string().trim().max(200).optional()
+});
+
 const estimateInclude = {
   customer: { include: { addresses: true } },
   address: true,
   technician: true,
   lineItems: true,
+  options: { include: { lineItems: true }, orderBy: { sortOrder: "asc" as const } },
+  approvedOption: true,
   convertedJob: { include: { invoices: { include: { payments: true } } } }
 } as const;
 
@@ -110,36 +119,76 @@ estimatesRouter.post("/", asyncHandler(async (req, res) => {
   const status = input.status ?? EstimateStatus.DRAFT;
   const depositType = input.depositType ?? "NONE";
   const workflowStatus = input.workflowStatus ?? (input.scheduledStart ? "SCHEDULED" : "DRAFT");
-  const estimate = await prisma.estimate.create({
-    data: {
-      locationId,
-      customerId: input.customerId,
-      addressId: input.addressId,
-      technicianId: input.technicianId,
-      title: input.title,
-      jobType: input.jobType,
-      leadSource: input.leadSource,
-      tags: input.tags,
-      status,
-      workflowStatus,
-      scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
-      scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined,
-      description: input.description,
-      internalNotes: input.internalNotes,
-      approvalSignature: input.approvalSignature,
-      approvalName: input.approvalName,
-      approvedAt: status === EstimateStatus.APPROVED ? new Date() : undefined,
-      declinedAt: status === EstimateStatus.DECLINED ? new Date() : undefined,
-      depositType,
-      depositPercent: depositType === "PERCENT" ? input.depositPercent ?? 50 : undefined,
-      depositAmount: depositType === "FIXED" ? input.depositAmount : undefined,
-      attachments: input.attachments,
-      lineItems: input.lineItems.length ? { create: input.lineItems } : undefined
-    },
-    include: estimateInclude
+  const estimate = await prisma.$transaction(async (tx) => {
+    const created = await tx.estimate.create({
+      data: {
+        locationId,
+        customerId: input.customerId,
+        addressId: input.addressId,
+        technicianId: input.technicianId,
+        title: input.title,
+        jobType: input.jobType,
+        leadSource: input.leadSource,
+        tags: input.tags,
+        status,
+        workflowStatus,
+        scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
+        scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined,
+        description: input.description,
+        internalNotes: input.internalNotes,
+        approvalSignature: input.approvalSignature,
+        approvalName: input.approvalName,
+        approvedAt: status === EstimateStatus.APPROVED ? new Date() : undefined,
+        declinedAt: status === EstimateStatus.DECLINED ? new Date() : undefined,
+        depositType,
+        depositPercent: depositType === "PERCENT" ? input.depositPercent ?? 50 : undefined,
+        depositAmount: depositType === "FIXED" ? input.depositAmount : undefined,
+        attachments: input.attachments
+      },
+      include: estimateInclude
+    });
+    const defaultOption = await tx.estimateOption.create({
+      data: {
+        estimateId: created.id,
+        title: "Option #1",
+        description: input.description,
+        sortOrder: 0
+      }
+    });
+    if (input.lineItems.length) {
+      await tx.estimateLineItem.createMany({
+        data: input.lineItems.map((item) => ({
+          ...item,
+          estimateId: created.id,
+          optionId: defaultOption.id
+        }))
+      });
+    }
+    return tx.estimate.findUniqueOrThrow({ where: { id: created.id }, include: estimateInclude });
   });
   await saveOptions(locationId, input);
   res.status(201).json({ estimate });
+}));
+
+estimatesRouter.post("/:id/options", asyncHandler(async (req, res) => {
+  const locationId = activeLocationId(req);
+  const input = optionSchema.parse(req.body);
+  const estimate = await prisma.estimate.findFirst({
+    where: { id: String(req.params.id), locationId },
+    include: { options: true }
+  });
+  if (!estimate) return res.status(404).json({ error: "Estimate not found" });
+  const option = await prisma.estimateOption.create({
+    data: {
+      estimateId: estimate.id,
+      title: input.title,
+      description: input.description,
+      imageName: input.imageName,
+      sortOrder: estimate.options.length
+    }
+  });
+  const updated = await prisma.estimate.findFirstOrThrow({ where: { id: estimate.id, locationId }, include: estimateInclude });
+  res.status(201).json({ estimate: updated, option });
 }));
 
 estimatesRouter.get("/:id", asyncHandler(async (req, res) => {

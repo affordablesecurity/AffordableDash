@@ -10,6 +10,7 @@ export const publicEstimateRouter = Router();
 
 const approvalSchema = z.object({
   approvalName: z.string().trim().min(1).max(120),
+  optionId: z.string().optional(),
   approvalSignature: z.string().trim().min(100, "Signature is required").max(500_000)
 });
 
@@ -43,6 +44,8 @@ async function loadEstimate(estimateNumber: number) {
       customer: { include: { addresses: true } },
       address: true,
       lineItems: true,
+      options: { include: { lineItems: true }, orderBy: { sortOrder: "asc" } },
+      approvedOption: true,
       location: { include: { organization: true } }
     }
   });
@@ -58,12 +61,12 @@ function companyName(estimate: NonNullable<Awaited<ReturnType<typeof loadEstimat
   return nonBranchName || "Affordable Security Locksmith And Alarm L.L.C.";
 }
 
-function subtotal(estimate: NonNullable<Awaited<ReturnType<typeof loadEstimate>>>) {
-  return estimate.lineItems.reduce((sum, item) => sum + Math.round(Number(item.quantity || 0) * item.unitPrice), 0);
+function subtotal(input: { lineItems: Array<{ quantity: unknown; unitPrice: number }> }) {
+  return input.lineItems.reduce((sum, item) => sum + Math.round(Number(item.quantity || 0) * item.unitPrice), 0);
 }
 
-function tax(estimate: NonNullable<Awaited<ReturnType<typeof loadEstimate>>>) {
-  const taxable = estimate.lineItems.reduce((sum, item) => item.category === "material" && item.taxable !== false
+function tax(input: { lineItems: Array<{ category: string; taxable: boolean; quantity: unknown; unitPrice: number }> }) {
+  const taxable = input.lineItems.reduce((sum, item) => item.category === "material" && item.taxable !== false
     ? sum + Math.round(Number(item.quantity || 0) * item.unitPrice)
     : sum, 0);
   return Math.round(taxable * 0.094);
@@ -114,6 +117,12 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
   const estimateTotal = estimateSubtotal + estimateTax;
   const deposit = depositDue(estimate, estimateTotal);
   const statusText = estimate.status === "APPROVED" ? "Approved" : estimate.status === "DECLINED" ? "Declined" : "Ready for review";
+  const optionCards = estimate.options.length ? estimate.options : [{
+    id: "",
+    title: estimate.title,
+    description: estimate.description,
+    lineItems: estimate.lineItems
+  }];
 
   return `<!doctype html>
 <html lang="en">
@@ -133,6 +142,11 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     .card { background: #fff; border: 1px solid #e3e6eb; border-radius: 8px; box-shadow: 0 8px 26px rgba(25,32,46,.08); margin-bottom: 18px; overflow: hidden; }
     .card h2 { font-size: 20px; margin: 0; padding: 16px 20px; border-bottom: 1px solid #e6e8ed; }
     .card-body { padding: 20px; }
+    .option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .option-card { border: 1px solid #dcdfe5; border-radius: 8px; padding: 18px; display: grid; gap: 12px; }
+    .option-card.selected { border-color: #3f3df2; box-shadow: 0 0 0 2px rgba(63,61,242,.15); }
+    .option-card h3 { margin: 0; }
+    .option-total { font-size: 20px; font-weight: 900; }
     .status { display: inline-flex; padding: 8px 12px; border-radius: 999px; background: #f0efff; color: #3733ff; font-weight: 800; }
     .actions { display: grid; gap: 14px; }
     .approve-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }
@@ -164,6 +178,23 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     <div class="brand"><div class="brand-mark">Affordable<span>Security</span></div></div>
     <h1>Review your estimate from ${escapeHtml(business)}</h1>
     <div class="amount-due">${escapeHtml(cents(estimateTotal))} estimate${deposit > 0 ? ` / ${escapeHtml(cents(deposit))} deposit` : ""}</div>
+
+    <section class="card">
+      <h2>Choose an option</h2>
+      <div class="card-body option-grid">
+        ${optionCards.map((option, index) => {
+          const optionSubtotal = subtotal(option);
+          const optionTax = tax(option);
+          const optionTotal = optionSubtotal + optionTax;
+          return `<button class="option-card ${index === 0 ? "selected" : ""}" type="button" data-option-id="${escapeHtml(option.id)}">
+            <h3>${escapeHtml(option.title || `Option #${index + 1}`)}</h3>
+            <p class="muted">${escapeHtml(option.description || "Review this option and approve it below.")}</p>
+            <span class="option-total">${escapeHtml(cents(optionTotal))}</span>
+            <span class="muted">${escapeHtml(option.lineItems.length)} line item${option.lineItems.length === 1 ? "" : "s"}</span>
+          </button>`;
+        }).join("")}
+      </div>
+    </section>
 
     <section class="card">
       <h2>Estimate status</h2>
@@ -218,6 +249,8 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     const message = document.getElementById("action-message");
     const approveButton = document.getElementById("approve-button");
     const declineButton = document.getElementById("decline-button");
+    const optionButtons = Array.from(document.querySelectorAll(".option-card"));
+    let selectedOptionId = optionButtons[0]?.dataset.optionId || "";
     const signaturePad = document.getElementById("signature-pad");
     const clearSignature = document.getElementById("clear-signature");
     const signatureContext = signaturePad?.getContext("2d");
@@ -283,7 +316,7 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
       const response = await fetch("/estimate/${estimate.estimateNumber}/" + action, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approvalName, approvalSignature: action === "approve" ? signaturePad.toDataURL("image/png") : undefined })
+        body: JSON.stringify({ approvalName, optionId: selectedOptionId || undefined, approvalSignature: action === "approve" ? signaturePad.toDataURL("image/png") : undefined })
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -292,6 +325,13 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
       }
       window.location.reload();
     }
+    optionButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        optionButtons.forEach((item) => item.classList.remove("selected"));
+        button.classList.add("selected");
+        selectedOptionId = button.dataset.optionId || "";
+      });
+    });
     resizeSignaturePad();
     window.addEventListener("resize", resizeSignaturePad);
     signaturePad?.addEventListener("pointerdown", startSignature);
@@ -332,6 +372,7 @@ publicEstimateRouter.post("/:estimateNumber/approve", asyncHandler(async (req, r
     data: {
       status: EstimateStatus.APPROVED,
       approvalName: input.approvalName,
+      approvedOptionId: input.optionId,
       approvalSignature: input.approvalSignature,
       approvalIpAddress: requestIp(req),
       approvedAt: new Date()

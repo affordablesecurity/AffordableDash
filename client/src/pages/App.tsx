@@ -317,11 +317,13 @@ type Estimate = {
   depositType?: "NONE" | "PERCENT" | "FIXED";
   depositPercent?: number | null;
   depositAmount?: number | null;
+  approvedOptionId?: string | null;
   convertedJobId?: string;
   customer: Customer;
   address?: Address;
   technician?: Technician;
-  lineItems?: Array<{ id: string; category: string; name: string; description?: string; quantity: string; unitPrice: number; taxable?: boolean }>;
+  lineItems?: Array<{ id: string; optionId?: string | null; category: string; name: string; description?: string; quantity: string; unitPrice: number; taxable?: boolean }>;
+  options?: Array<{ id: string; title: string; description?: string; imageName?: string; sortOrder: number; lineItems?: Array<{ id: string; optionId?: string | null; category: string; name: string; description?: string; quantity: string; unitPrice: number; taxable?: boolean }> }>;
   convertedJob?: Job;
 };
 
@@ -902,6 +904,13 @@ function estimateDepositDue(estimate: Estimate) {
   if (estimate.depositType === "PERCENT") return Math.round(total * ((estimate.depositPercent ?? 50) / 100));
   if (estimate.depositType === "FIXED") return Math.min(estimate.depositAmount ?? 0, total);
   return 0;
+}
+
+function estimateOptionTotal(option: NonNullable<Estimate["options"]>[number]) {
+  const lineItems = option.lineItems ?? [];
+  const subtotal = lineItems.reduce((sum, item) => sum + Number(item.quantity || "0") * item.unitPrice, 0);
+  const taxable = lineItems.reduce((sum, item) => item.category === "material" && item.taxable !== false ? sum + Number(item.quantity || "0") * item.unitPrice : sum, 0);
+  return subtotal + Math.round(taxable * 0.094);
 }
 
 function estimateWorkflowLabel(status?: Estimate["workflowStatus"]) {
@@ -2996,6 +3005,18 @@ export function App() {
   async function updateEstimateWorkflow(estimate: Estimate, workflowStatus: Estimate["workflowStatus"]) {
     const updated = await updateEstimate(estimate, { workflowStatus });
     setEstimateActionMessage(`Estimate #${updated.estimateNumber} marked ${estimateWorkflowLabel(workflowStatus).toLowerCase()}.`);
+  }
+
+  async function addEstimateOption(estimate: Estimate) {
+    const title = window.prompt("Option name", `Option #${(estimate.options?.length ?? 0) + 1}`);
+    if (!title?.trim()) return;
+    const description = window.prompt("Short option description", "Describe what makes this option different.") || undefined;
+    const result = await api<{ estimate: Estimate }>(`/api/estimates/${estimate.id}/options`, {
+      method: "POST",
+      body: JSON.stringify({ title: title.trim(), description })
+    });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setEstimateActionMessage(`Added ${title.trim()} to estimate #${estimate.estimateNumber}.`);
   }
 
   async function approveEstimate(estimate: Estimate) {
@@ -6318,6 +6339,28 @@ export function App() {
                               <strong>{label}</strong>
                               <span>{workflowStatus === "SCHEDULED" ? "Estimate visit booked" : workflowStatus === "EN_ROUTE" ? "On the way to estimate" : "Ready to copy into job"}</span>
                             </button>
+                          ))}
+                        </div>
+                      </section>
+                      <section className="panel">
+                        <div className="panel-header"><h2>Summary of work</h2><StickyNote size={18} /></div>
+                        <textarea
+                          className="detail-textarea compact"
+                          value={detailSummary || selectedEstimate.description || ""}
+                          onChange={(event) => setDetailSummary(event.target.value)}
+                          placeholder="Summarize what the quote is about and what you found."
+                        />
+                        <div className="action-buttons"><button className="primary" type="button" onClick={() => updateEstimate(selectedEstimate, { description: detailSummary || selectedEstimate.description || "" })}>Save summary</button></div>
+                      </section>
+                      <section className="panel">
+                        <div className="panel-header"><h2>Estimate options</h2><button className="text-button" type="button" onClick={() => addEstimateOption(selectedEstimate)}>Create another option</button></div>
+                        <div className="profile-table">
+                          {(selectedEstimate.options?.length ? selectedEstimate.options : [{ id: "default", title: selectedEstimate.title, description: selectedEstimate.description, sortOrder: 0, lineItems: selectedEstimate.lineItems ?? [] }]).map((option, index) => (
+                            <article key={option.id}>
+                              <strong>{option.title || `Option #${index + 1}`}{selectedEstimate.approvedOptionId === option.id ? " / Approved" : ""}</strong>
+                              <span>{option.description || "No option description yet."}</span>
+                              <span>{money.format(estimateOptionTotal(option) / 100)} / {(option.lineItems ?? []).length} line item{(option.lineItems ?? []).length === 1 ? "" : "s"}</span>
+                            </article>
                           ))}
                         </div>
                       </section>
