@@ -2736,6 +2736,16 @@ button:disabled {
   font-size: 24px;
 }
 
+.estimate-option-edit {
+  width: 100%;
+  display: grid;
+  gap: 10px;
+}
+
+.estimate-option-edit textarea {
+  min-height: 86px;
+}
+
 .estimate-option-section {
   border-bottom: 1px solid #eef1f6;
 }
@@ -2794,6 +2804,39 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) auto auto;
   background: #fafafa;
   color: #555c6d;
+}
+
+.cost-graph {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 18px 24px 24px;
+  background: #fafafa;
+}
+
+.cost-graph div {
+  display: grid;
+  gap: 8px;
+}
+
+.cost-graph span {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.cost-graph i {
+  display: block;
+  min-width: 8px;
+  max-width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background: #006bcf;
+}
+
+.cost-graph div:first-child i {
+  background: #ef4444;
 }
 
 .option-typeahead {

@@ -1280,6 +1280,8 @@ export function App() {
   const [estimateCreateOptions, setEstimateCreateOptions] = useState<EstimateCreateOption[]>([{ id: "option-1", title: "Option #1", description: "" }]);
   const [activeEstimateCreateOptionId, setActiveEstimateCreateOptionId] = useState("option-1");
   const [activeEstimateOptionId, setActiveEstimateOptionId] = useState("");
+  const [editingEstimateOptionId, setEditingEstimateOptionId] = useState("");
+  const [estimateOptionEditForm, setEstimateOptionEditForm] = useState({ title: "", description: "" });
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState("");
   const [templateForm, setTemplateForm] = useState({
@@ -2610,6 +2612,25 @@ export function App() {
     }]);
   }
 
+  function priceBookMatch(name: string, category?: "service" | "material") {
+    const query = name.trim().toLowerCase();
+    if (!query) return undefined;
+    return priceBookItems.find((item) => (!category || item.itemType === category) && item.name.trim().toLowerCase() === query)
+      ?? priceBookItems.find((item) => (!category || item.itemType === category) && item.name.toLowerCase().includes(query));
+  }
+
+  function applyPriceBookToEstimateDraft(lineId: string, name: string, category: "service" | "material") {
+    const match = priceBookMatch(name, category);
+    if (!match) return;
+    updateJobLine(lineId, {
+      name: match.name,
+      description: match.description ?? "",
+      unitPrice: centsToDollarInput(match.price),
+      unitCost: centsToDollarInput(match.cost),
+      taxable: match.itemType === "material" && match.taxable
+    });
+  }
+
   async function createPriceBookCategory(event: FormEvent) {
     event.preventDefault();
     setError("");
@@ -3130,6 +3151,27 @@ export function App() {
     setEstimateActionMessage(`Added ${title.trim()} to estimate #${estimate.estimateNumber}.`);
   }
 
+  function startEditingEstimateOption(option: NonNullable<Estimate["options"]>[number]) {
+    setEditingEstimateOptionId(option.id);
+    setEstimateOptionEditForm({ title: option.title, description: option.description ?? "" });
+  }
+
+  async function saveEstimateOptionDetails(estimate: Estimate, optionId: string) {
+    const title = estimateOptionEditForm.title.trim();
+    if (!title) {
+      setError("Enter an option name before saving.");
+      return;
+    }
+    const result = await api<{ estimate: Estimate }>(`/api/estimates/${estimate.id}/options/${optionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title, description: estimateOptionEditForm.description.trim() || undefined })
+    });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setSelectedEstimateId(result.estimate.id);
+    setEditingEstimateOptionId("");
+    setEstimateActionMessage(`Updated ${title}.`);
+  }
+
   function estimateLineItemsPayload(estimate: Estimate, optionId: string, nextOptionLines: NonNullable<NonNullable<Estimate["options"]>[number]["lineItems"]>) {
     const options = estimate.options?.length ? estimate.options : [{ id: optionId, title: estimate.title, sortOrder: 0, lineItems: estimate.lineItems ?? [] }];
     return options.flatMap((option) => (option.id === optionId ? nextOptionLines : option.lineItems ?? []).map((item) => ({
@@ -3188,6 +3230,24 @@ export function App() {
   ) {
     const nextLines = (option.lineItems ?? []).map((line) => line.id === lineId ? { ...line, ...patch } : line);
     await saveEstimateOptionLines(estimate, option.id, nextLines);
+  }
+
+  async function applyPriceBookToEstimateLine(
+    estimate: Estimate,
+    option: NonNullable<Estimate["options"]>[number],
+    lineId: string,
+    name: string,
+    category: "service" | "material"
+  ) {
+    const match = priceBookMatch(name, category);
+    if (!match) return;
+    await updateEstimateOptionLine(estimate, option, lineId, {
+      name: match.name,
+      description: match.description ?? "",
+      unitPrice: match.price,
+      unitCost: match.cost,
+      taxable: match.itemType === "material" && match.taxable
+    });
   }
 
   async function removeEstimateOptionLine(estimate: Estimate, option: NonNullable<Estimate["options"]>[number], lineId: string) {
@@ -6628,7 +6688,16 @@ export function App() {
                         <div className="line-category-head"><strong>{category === "service" ? "Services" : "Materials"}</strong><div className="line-actions"><select onChange={(event) => { addPriceBookItemToEstimateOption(event.target.value); event.currentTarget.value = ""; }}><option value="">Add from price book</option>{priceBookItems.filter((item) => item.itemType === category).map((item) => <option key={item.id} value={item.id}>{item.name} / {money.format(item.price / 100)}</option>)}</select><button type="button" className="text-add-button" onClick={() => addEstimateCreateLine(category)}><Plus size={18} /> Add {category}</button></div></div>
                         {activeEstimateCreateLines.filter((item) => item.category === category).map((item) => (
                           <div className="line-item-row estimate-line-item-row" key={item.id}>
-                            <input placeholder="Name" value={item.name} onChange={(event) => updateJobLine(item.id, { name: event.target.value })} />
+                            <input
+                              list={`estimate-create-${category}-price-book`}
+                              placeholder="Name"
+                              value={item.name}
+                              onChange={(event) => updateJobLine(item.id, { name: event.target.value })}
+                              onBlur={(event) => applyPriceBookToEstimateDraft(item.id, event.target.value, category)}
+                            />
+                            <datalist id={`estimate-create-${category}-price-book`}>
+                              {priceBookItems.filter((entry) => entry.itemType === category).map((entry) => <option key={entry.id} value={entry.name} />)}
+                            </datalist>
                             <input placeholder="Description" value={item.description} onChange={(event) => updateJobLine(item.id, { description: event.target.value })} />
                             <input placeholder="Qty" value={item.quantity} onChange={(event) => updateJobLine(item.id, { quantity: event.target.value })} />
                             <input placeholder="Customer price" value={item.unitPrice} onChange={(event) => updateJobLine(item.id, { unitPrice: event.target.value })} />
@@ -6759,11 +6828,22 @@ export function App() {
                         {activeEstimateOption ? (
                           <div className="estimate-option-workbench">
                             <div className="estimate-option-hero">
-                              <div>
-                                <h3>{activeEstimateOption.title}</h3>
-                                <p>{activeEstimateOption.description || selectedEstimate.description || "Add a customer-facing summary for this option."}</p>
-                              </div>
-                              <Pencil size={20} />
+                              {editingEstimateOptionId === activeEstimateOption.id ? (
+                                <div className="estimate-option-edit">
+                                  <input value={estimateOptionEditForm.title} onChange={(event) => setEstimateOptionEditForm((current) => ({ ...current, title: event.target.value }))} placeholder="Option name" />
+                                  <textarea value={estimateOptionEditForm.description} onChange={(event) => setEstimateOptionEditForm((current) => ({ ...current, description: event.target.value }))} placeholder="Customer-facing option description" />
+                                  <div className="action-buttons">
+                                    <button className="outline-button" type="button" onClick={() => setEditingEstimateOptionId("")}>Cancel</button>
+                                    <button className="primary" type="button" onClick={() => saveEstimateOptionDetails(selectedEstimate, activeEstimateOption.id)}>Save option</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div>
+                                  <h3>{activeEstimateOption.title}</h3>
+                                  <p>{activeEstimateOption.description || selectedEstimate.description || "Add a customer-facing summary for this option."}</p>
+                                </div>
+                              )}
+                              {editingEstimateOptionId !== activeEstimateOption.id && <button className="icon-button subtle-icon" type="button" aria-label="Edit option" onClick={() => startEditingEstimateOption(activeEstimateOption)}><Pencil size={20} /></button>}
                             </div>
                             {(["service", "material"] as const).map((category) => (
                               <div className="estimate-option-section" key={category}>
@@ -6781,7 +6861,22 @@ export function App() {
                                   <div className="estimate-option-line" key={item.id}>
                                   <div className="line-drag">=</div>
                                   <div className="estimate-line-main">
-                                      <input defaultValue={item.name} onBlur={(event) => updateEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id, { name: event.target.value }).catch((err: Error) => setError(err.message))} />
+                                      <input
+                                        list={`estimate-detail-${category}-price-book`}
+                                        defaultValue={item.name}
+                                        onBlur={(event) => {
+                                          const nextName = event.target.value;
+                                          const match = priceBookMatch(nextName, category);
+                                          if (match) {
+                                            applyPriceBookToEstimateLine(selectedEstimate, activeEstimateOption, item.id, nextName, category).catch((err: Error) => setError(err.message));
+                                          } else {
+                                            updateEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id, { name: nextName }).catch((err: Error) => setError(err.message));
+                                          }
+                                        }}
+                                      />
+                                      <datalist id={`estimate-detail-${category}-price-book`}>
+                                        {priceBookItems.filter((entry) => entry.itemType === category).map((entry) => <option key={entry.id} value={entry.name} />)}
+                                      </datalist>
                                       <input defaultValue={item.description ?? ""} onBlur={(event) => updateEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id, { description: event.target.value }).catch((err: Error) => setError(err.message))} placeholder="Description" />
                                       <label className="inline-cost-field">Unit cost<input defaultValue={((item.unitCost ?? 0) / 100).toFixed(2)} onBlur={(event) => updateEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id, { unitCost: dollarsToCents(event.target.value) }).catch((err: Error) => setError(err.message))} /></label>
                                     </div>
@@ -6803,6 +6898,18 @@ export function App() {
                               <span>Cost breakdown</span>
                               <strong>Total cost {money.format(estimateOptionCost(activeEstimateOption) / 100)}</strong>
                               <strong>Profit/Loss {profitPercent(estimateOptionSubtotal(activeEstimateOption), estimateOptionCost(activeEstimateOption)).toFixed(2)}%</strong>
+                            </div>
+                            <div className="cost-graph" aria-label="Estimate cost and profit graph">
+                              <div>
+                                <span>Company cost</span>
+                                <strong>{money.format(estimateOptionCost(activeEstimateOption) / 100)}</strong>
+                                <i style={{ width: `${Math.min(100, estimateOptionSubtotal(activeEstimateOption) ? estimateOptionCost(activeEstimateOption) / estimateOptionSubtotal(activeEstimateOption) * 100 : 0)}%` }} />
+                              </div>
+                              <div>
+                                <span>Projected profit</span>
+                                <strong>{money.format(Math.max(0, estimateOptionSubtotal(activeEstimateOption) - estimateOptionCost(activeEstimateOption)) / 100)}</strong>
+                                <i style={{ width: `${Math.min(100, Math.max(0, profitPercent(estimateOptionSubtotal(activeEstimateOption), estimateOptionCost(activeEstimateOption))))}%` }} />
+                              </div>
                             </div>
                           </div>
                         ) : <p className="empty">No options yet.</p>}

@@ -213,6 +213,28 @@ estimatesRouter.post("/:id/options", asyncHandler(async (req, res) => {
   res.status(201).json({ estimate: updated, option });
 }));
 
+estimatesRouter.patch("/:id/options/:optionId", asyncHandler(async (req, res) => {
+  const locationId = activeLocationId(req);
+  const input = optionSchema.partial().parse(req.body);
+  const estimate = await prisma.estimate.findFirst({
+    where: { id: String(req.params.id), locationId },
+    include: { options: true }
+  });
+  if (!estimate) return res.status(404).json({ error: "Estimate not found" });
+  const option = estimate.options.find((item) => item.id === String(req.params.optionId));
+  if (!option) return res.status(404).json({ error: "Estimate option not found" });
+  await prisma.estimateOption.update({
+    where: { id: option.id },
+    data: {
+      title: input.title,
+      description: input.description,
+      imageName: input.imageName
+    }
+  });
+  const updated = await prisma.estimate.findFirstOrThrow({ where: { id: estimate.id, locationId }, include: estimateInclude });
+  res.json({ estimate: updated });
+}));
+
 estimatesRouter.get("/:id", asyncHandler(async (req, res) => {
   const estimate = await prisma.estimate.findFirst({
     where: { id: String(req.params.id), locationId: activeLocationId(req) },
