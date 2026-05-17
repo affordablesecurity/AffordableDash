@@ -346,6 +346,14 @@ type PaymentRecord = {
   createdAt: string;
 };
 
+type SendInvoiceResponse = {
+  invoice: Invoice;
+  deliveries: Array<CrmMessage | null>;
+  paymentUrl?: string;
+  checkoutSessionId?: string;
+  paymentLinkWarning?: string | null;
+};
+
 type LocationAccess = {
   role: string;
   organization: { id: string; name: string };
@@ -1089,7 +1097,7 @@ const defaultMessagingSettings: MessagingSettings = {
     onMyWay: "Hi {{customerFirstName}}, {{technicianName}} is on the way for job #{{jobNumber}} with {{companyName}}.",
     workStarted: "Hi {{customerFirstName}}, work has started on job #{{jobNumber}}.",
     jobCompleted: "Hi {{customerFirstName}}, job #{{jobNumber}} has been completed. Thank you for choosing {{companyName}}.",
-    invoiceSent: "Hi {{customerFirstName}}, invoice #{{invoiceNumber}} for {{invoiceTotal}} from {{companyName}} is ready.",
+    invoiceSent: "Hi {{customerFirstName}}, invoice #{{invoiceNumber}} for {{invoiceTotal}} from {{companyName}} is ready. Pay securely: {{paymentUrl}}",
     paymentReceived: "Hi {{customerFirstName}}, payment of {{paymentAmount}} was received. Thank you for choosing {{companyName}}."
   },
   reviewEmail: {
@@ -3443,7 +3451,7 @@ export function App() {
     setError("");
     setInvoiceActionMessage("");
     try {
-      const result = await api<{ invoice: Invoice; deliveries: Array<CrmMessage | null> }>(`/api/invoices/${selectedInvoice.id}/send`, {
+      const result = await api<SendInvoiceResponse>(`/api/invoices/${selectedInvoice.id}/send`, {
         method: "POST",
         body: JSON.stringify({
           method: invoiceSendMethod,
@@ -3463,7 +3471,9 @@ export function App() {
       const failed = deliveryMessages.filter((message) => message.status === "FAILED").length;
       setInvoiceActionMessage(failed
         ? `Invoice #${result.invoice.invoiceNumber} delivery created with ${failed} issue${failed === 1 ? "" : "s"}.`
-        : `Invoice #${result.invoice.invoiceNumber} delivery created.`);
+        : result.paymentLinkWarning
+          ? `Invoice #${result.invoice.invoiceNumber} delivery created, but Stripe link was not added: ${result.paymentLinkWarning}`
+          : `Invoice #${result.invoice.invoiceNumber} delivery created with Stripe payment link.`);
       await loadDashboard();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to send invoice.");

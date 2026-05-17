@@ -57,6 +57,10 @@ export async function createInvoiceCheckoutSession(invoice: {
   return stripe.checkout.sessions.create({
     mode: "payment",
     customer_email: invoice.customer?.email || undefined,
+    metadata: {
+      invoiceId: invoice.id,
+      invoiceNumber: String(invoice.invoiceNumber)
+    },
     line_items: [{
       quantity: 1,
       price_data: {

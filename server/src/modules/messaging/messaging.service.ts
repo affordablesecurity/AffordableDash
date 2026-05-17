@@ -43,7 +43,7 @@ export const defaultTemplates: Record<MessagingTemplateKey, string> = {
   onMyWay: "Hi {{customerFirstName}}, {{technicianName}} is on the way for job #{{jobNumber}} with {{companyName}}.",
   workStarted: "Hi {{customerFirstName}}, work has started on job #{{jobNumber}}.",
   jobCompleted: "Hi {{customerFirstName}}, job #{{jobNumber}} has been completed. Thank you for choosing {{companyName}}.",
-  invoiceSent: "Hi {{customerFirstName}}, invoice #{{invoiceNumber}} for {{invoiceTotal}} from {{companyName}} is ready.",
+  invoiceSent: "Hi {{customerFirstName}}, invoice #{{invoiceNumber}} for {{invoiceTotal}} from {{companyName}} is ready. Pay securely: {{paymentUrl}}",
   paymentReceived: "Hi {{customerFirstName}}, payment of {{paymentAmount}} was received. Thank you for choosing {{companyName}}."
 };
 
@@ -409,7 +409,7 @@ export async function queueReviewEmailForJob(locationId: string, jobId: string) 
   });
 }
 
-export async function sendInvoiceTemplateSms(locationId: string, invoiceId: string, toOverride?: string, bodyOverride?: string) {
+export async function sendInvoiceTemplateSms(locationId: string, invoiceId: string, toOverride?: string, bodyOverride?: string, paymentUrl = "") {
   const invoice = await prisma.invoice.findFirst({
     where: { id: invoiceId, locationId },
     include: { customer: true, location: true, job: true }
@@ -425,6 +425,7 @@ export async function sendInvoiceTemplateSms(locationId: string, invoiceId: stri
     invoiceNumber: String(invoice.invoiceNumber),
     invoiceTotal: dollars(invoice.total),
     paymentAmount: dollars(invoice.total),
+    paymentUrl,
     scheduledWindow: invoice.job ? scheduledWindow(invoice.job.scheduledStart, invoice.job.scheduledEnd) : ""
   };
   return sendLocationSms({

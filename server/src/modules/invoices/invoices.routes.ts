@@ -5,6 +5,7 @@ import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
 import { queueInvoiceEmail, sendInvoiceTemplateSms } from "../messaging/messaging.service.js";
+import { createInvoiceCheckoutSession } from "../payments/stripe.service.js";
 
 export const invoicesRouter = Router();
 
@@ -115,16 +116,37 @@ invoicesRouter.post("/:id/send", asyncHandler(async (req, res) => {
   const deliveries: unknown[] = [];
   const wantsEmail = input.method === "email" || input.method === "both";
   const wantsText = input.method === "text" || input.method === "both";
+  const origin = req.header("origin") || `${req.protocol}://${req.get("host")}`;
+  let paymentUrl = "";
+  let checkoutSessionId = "";
+  let paymentLinkWarning: string | null = null;
+
+  if (invoice.total > 0) {
+    try {
+      const session = await createInvoiceCheckoutSession(invoice, origin);
+      paymentUrl = session.url ?? "";
+      checkoutSessionId = session.id;
+    } catch (err) {
+      paymentLinkWarning = err instanceof Error ? err.message : "Unable to create Stripe checkout link.";
+    }
+  }
+
+  const appendPaymentLink = (message = "") => {
+    if (!paymentUrl) return message;
+    const withToken = message.replace(/\{\{\s*paymentUrl\s*\}\}/gi, paymentUrl);
+    if (withToken.includes(paymentUrl)) return withToken;
+    return `${withToken.trim()}\n\nPay securely: ${paymentUrl}`.trim();
+  };
 
   if (wantsText) {
     const to = input.method === "text" ? input.to : input.to?.split(",").map((part) => part.trim()).find((part) => /\d/.test(part));
-    deliveries.push(await sendInvoiceTemplateSms(locationId, invoice.id, to, input.message));
+    deliveries.push(await sendInvoiceTemplateSms(locationId, invoice.id, to, input.message ? appendPaymentLink(input.message) : undefined, paymentUrl));
   }
   if (wantsEmail) {
     const to = input.method === "email" ? input.to : input.to?.split(",").map((part) => part.trim()).find((part) => part.includes("@"));
     const recipient = to || invoice.customer.email;
     if (!recipient) return res.status(422).json({ error: "This customer does not have an email address for invoice email." });
-    deliveries.push(await queueInvoiceEmail(locationId, invoice.id, recipient, input.message || ""));
+    deliveries.push(await queueInvoiceEmail(locationId, invoice.id, recipient, appendPaymentLink(input.message || "")));
   }
 
   const updatedInvoice = await prisma.invoice.update({
@@ -133,7 +155,7 @@ invoicesRouter.post("/:id/send", asyncHandler(async (req, res) => {
     include: invoiceInclude
   });
 
-  res.json({ invoice: updatedInvoice, deliveries });
+  res.json({ invoice: updatedInvoice, deliveries, paymentUrl, checkoutSessionId, paymentLinkWarning });
 }));
 
 invoicesRouter.get("/:id", asyncHandler(async (req, res) => {

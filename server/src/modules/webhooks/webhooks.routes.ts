@@ -377,12 +377,41 @@ webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
       });
 
       if (status === "SUCCEEDED") {
+        const existingInvoice = await prisma.invoice.findUnique({
+          where: { id: invoiceId },
+          select: { status: true }
+        });
         const paidInvoice = await prisma.invoice.update({
           where: { id: invoiceId },
           data: { status: "PAID" },
           select: { id: true, locationId: true }
         });
-        await sendPaymentReceiptSms(paidInvoice.locationId, paidInvoice.id, intent.amount);
+        if (existingInvoice?.status !== "PAID") {
+          await sendPaymentReceiptSms(paidInvoice.locationId, paidInvoice.id, intent.amount);
+        }
+      }
+    }
+  }
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const invoiceId = session.metadata?.invoiceId;
+
+    if (invoiceId) {
+      const existingInvoice = await prisma.invoice.findUnique({
+        where: { id: invoiceId },
+        select: { status: true }
+      });
+      const paidInvoice = await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          status: "PAID",
+          stripePaymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : undefined
+        },
+        select: { id: true, locationId: true, total: true }
+      });
+      if (existingInvoice?.status !== "PAID") {
+        await sendPaymentReceiptSms(paidInvoice.locationId, paidInvoice.id, paidInvoice.total);
       }
     }
   }
