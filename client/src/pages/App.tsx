@@ -304,6 +304,7 @@ type Estimate = {
   leadSource?: string;
   tags?: string[];
   status: "DRAFT" | "SENT" | "APPROVED" | "DECLINED" | "CONVERTED";
+  workflowStatus?: "DRAFT" | "SCHEDULED" | "EN_ROUTE" | "FINISHED";
   scheduledStart?: string;
   scheduledEnd?: string;
   description?: string;
@@ -900,6 +901,13 @@ function estimateDepositDue(estimate: Estimate) {
   if (estimate.depositType === "PERCENT") return Math.round(total * ((estimate.depositPercent ?? 50) / 100));
   if (estimate.depositType === "FIXED") return Math.min(estimate.depositAmount ?? 0, total);
   return 0;
+}
+
+function estimateWorkflowLabel(status?: Estimate["workflowStatus"]) {
+  if (status === "EN_ROUTE") return "En route";
+  if (status === "FINISHED") return "Finished";
+  if (status === "SCHEDULED") return "Scheduled";
+  return "Draft";
 }
 
 function jobPaymentStatus(job: Job) {
@@ -2865,6 +2873,7 @@ export function App() {
         leadSource: jobForm.leadSource,
         tags: splitTags(jobForm.tags),
         status: "DRAFT",
+        workflowStatus: jobForm.scheduledStart ? "SCHEDULED" : "DRAFT",
         scheduledStart: jobForm.scheduledStart ? new Date(jobForm.scheduledStart).toISOString() : undefined,
         scheduledEnd: jobForm.scheduledEnd ? new Date(jobForm.scheduledEnd).toISOString() : undefined,
         description: jobForm.description,
@@ -2981,6 +2990,11 @@ export function App() {
     };
     const updated = await updateEstimate(estimate, payload);
     setEstimateActionMessage(`Estimate #${updated.estimateNumber} deposit terms saved.`);
+  }
+
+  async function updateEstimateWorkflow(estimate: Estimate, workflowStatus: Estimate["workflowStatus"]) {
+    const updated = await updateEstimate(estimate, { workflowStatus });
+    setEstimateActionMessage(`Estimate #${updated.estimateNumber} marked ${estimateWorkflowLabel(workflowStatus).toLowerCase()}.`);
   }
 
   async function approveEstimate(estimate: Estimate) {
@@ -6259,13 +6273,14 @@ export function App() {
                       <span className="breadcrumb">Customers / {customerName(selectedEstimate.customer)} / Estimates / Estimate #{selectedEstimate.estimateNumber}</span>
                       <h1>Estimate #{selectedEstimate.estimateNumber} • {selectedEstimate.title}</h1>
                       <span className={`status-pill job-status-${selectedEstimate.status.toLowerCase()}`}>{statusLabel(selectedEstimate.status)}</span>
+                      <span className={`status-pill job-status-${(selectedEstimate.workflowStatus ?? "DRAFT").toLowerCase()}`}>{estimateWorkflowLabel(selectedEstimate.workflowStatus)}</span>
                     </div>
                     <div className="job-detail-actions">
                       <button className="outline-button" type="button" onClick={() => window.open(`/estimate/${selectedEstimate.estimateNumber}`, "_blank", "noopener,noreferrer")}>View customer link</button>
                       <button className="primary" type="button" onClick={() => openEstimateSendDialog(selectedEstimate)}>Send estimate</button>
                       <button className="outline-button" type="button" onClick={() => declineEstimate(selectedEstimate)}>Decline</button>
                       <button className="primary" type="button" onClick={() => approveEstimate(selectedEstimate)}>Approve</button>
-                      <button className="primary" type="button" disabled={selectedEstimate.status !== "APPROVED"} onClick={() => convertEstimateToJob(selectedEstimate)}>Convert to Job</button>
+                      <button className="primary" type="button" disabled={selectedEstimate.workflowStatus !== "FINISHED" && selectedEstimate.status !== "APPROVED"} onClick={() => convertEstimateToJob(selectedEstimate)}>Copy to job</button>
                     </div>
                   </section>
                   {estimateActionMessage && <p className="inline-confirm">{estimateActionMessage}</p>}
@@ -6281,6 +6296,26 @@ export function App() {
                       </section>
                     </aside>
                     <main className="job-detail-main">
+                      <section className="panel job-workflow-panel">
+                        <div className="panel-header"><h2>Estimate workflow</h2><ListChecks size={18} /></div>
+                        <div className="workflow-steps">
+                          {[
+                            ["SCHEDULED", "Scheduled"],
+                            ["EN_ROUTE", "En route"],
+                            ["FINISHED", "Finished"]
+                          ].map(([workflowStatus, label]) => (
+                            <button
+                              key={workflowStatus}
+                              className={selectedEstimate.workflowStatus === workflowStatus ? "active" : ""}
+                              type="button"
+                              onClick={() => updateEstimateWorkflow(selectedEstimate, workflowStatus as Estimate["workflowStatus"])}
+                            >
+                              <strong>{label}</strong>
+                              <span>{workflowStatus === "SCHEDULED" ? "Estimate visit booked" : workflowStatus === "EN_ROUTE" ? "On the way to estimate" : "Ready to copy into job"}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
                       <section className="panel approval-panel">
                         <div className="panel-header"><h2>Customer approval</h2><CheckCheck size={18} /></div>
                         {selectedEstimate.approvalSignature ? (
@@ -6380,7 +6415,7 @@ export function App() {
                           <span>{customerName(estimate.customer)}</span>
                           <span>{formatDate(estimate.createdAt)}</span>
                           <span>{addressLine(estimate.address ?? estimate.customer.addresses?.[0])}</span>
-                          <span className={`status-pill job-status-${estimate.status.toLowerCase()}`}>{statusLabel(estimate.status)}</span>
+                          <span className={`status-pill job-status-${estimate.status.toLowerCase()}`}>{statusLabel(estimate.status)} / {estimateWorkflowLabel(estimate.workflowStatus)}</span>
                           <strong>{money.format(estimateTotal(estimate) / 100)}</strong>
                           <span>{estimate.convertedJob ? `#${estimate.convertedJob.jobNumber}` : "-"}</span>
                         </div>

@@ -296,6 +296,7 @@ model Estimate {
   leadSource        String?
   tags              String[]       @default([])
   status            EstimateStatus @default(DRAFT)
+  workflowStatus    String         @default("DRAFT")
   scheduledStart    DateTime?
   scheduledEnd      DateTime?
   description       String?

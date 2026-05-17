@@ -1,0 +1,1 @@
+ALTER TABLE "Estimate" ADD COLUMN "workflowStatus" TEXT NOT NULL DEFAULT 'DRAFT';

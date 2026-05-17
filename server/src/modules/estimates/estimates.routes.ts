@@ -28,6 +28,7 @@ const estimateSchema = z.object({
   leadSource: z.string().optional(),
   tags: z.array(z.string()).default([]),
   status: z.nativeEnum(EstimateStatus).optional(),
+  workflowStatus: z.enum(["DRAFT", "SCHEDULED", "EN_ROUTE", "FINISHED"]).optional(),
   scheduledStart: z.string().datetime().optional(),
   scheduledEnd: z.string().datetime().optional(),
   description: z.string().optional(),
@@ -107,6 +108,7 @@ estimatesRouter.post("/", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
   const status = input.status ?? EstimateStatus.DRAFT;
   const depositType = input.depositType ?? "NONE";
+  const workflowStatus = input.workflowStatus ?? (input.scheduledStart ? "SCHEDULED" : "DRAFT");
   const estimate = await prisma.estimate.create({
     data: {
       locationId,
@@ -118,6 +120,7 @@ estimatesRouter.post("/", asyncHandler(async (req, res) => {
       leadSource: input.leadSource,
       tags: input.tags,
       status,
+      workflowStatus,
       scheduledStart: input.scheduledStart ? new Date(input.scheduledStart) : undefined,
       scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined,
       description: input.description,
@@ -261,8 +264,11 @@ estimatesRouter.post("/:id/convert-to-job", asyncHandler(async (req, res) => {
     });
     return res.json({ estimate, job });
   }
-  if (estimate.status !== EstimateStatus.APPROVED) {
-    return res.status(422).json({ error: "Approve the estimate before converting it to a job." });
+  if (estimate.status === EstimateStatus.DECLINED) {
+    return res.status(422).json({ error: "Declined estimates cannot be copied into jobs." });
+  }
+  if (estimate.workflowStatus !== "FINISHED" && estimate.status !== EstimateStatus.APPROVED) {
+    return res.status(422).json({ error: "Finish the estimate workflow before copying it into a job." });
   }
 
   const result = await prisma.$transaction(async (tx) => {
@@ -306,7 +312,7 @@ estimatesRouter.post("/:id/convert-to-job", asyncHandler(async (req, res) => {
     });
     const updatedEstimate = await tx.estimate.update({
       where: { id: estimate.id },
-      data: { status: EstimateStatus.CONVERTED, convertedJobId: job.id },
+      data: { status: EstimateStatus.CONVERTED, workflowStatus: "FINISHED", convertedJobId: job.id },
       include: estimateInclude
     });
     return { estimate: updatedEstimate, job };
