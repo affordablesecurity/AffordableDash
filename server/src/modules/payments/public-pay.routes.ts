@@ -2,29 +2,247 @@ import { Router } from "express";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { asyncHandler } from "../../utils/async-handler.js";
-import { createInvoiceCheckoutSession } from "./stripe.service.js";
+import { createInvoiceCheckoutSession, createInvoicePaymentIntent, getLocationStripeAccountId } from "./stripe.service.js";
 
 export const publicPayRouter = Router();
 
-publicPayRouter.get("/:invoiceNumber", asyncHandler(async (req, res) => {
-  const invoiceNumber = Number(req.params.invoiceNumber);
-  if (!Number.isInteger(invoiceNumber) || invoiceNumber <= 0) {
-    return res.status(404).send("Invoice not found");
-  }
+function cents(value: number) {
+  return `$${(value / 100).toFixed(2)}`;
+}
 
-  const invoice = await prisma.invoice.findUnique({
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function invoiceNumberFromParam(value: string) {
+  const invoiceNumber = Number(value);
+  return Number.isInteger(invoiceNumber) && invoiceNumber > 0 ? invoiceNumber : null;
+}
+
+async function loadInvoice(invoiceNumber: number) {
+  return prisma.invoice.findUnique({
     where: { invoiceNumber },
     include: {
-      customer: true,
-      job: true,
-      items: true
+      customer: { include: { addresses: true } },
+      job: { include: { address: true, technician: true } },
+      items: true,
+      location: true
     }
   });
+}
+
+function invoiceLines(invoice: Awaited<ReturnType<typeof loadInvoice>> extends infer T ? NonNullable<T> : never) {
+  return invoice.items.length
+    ? invoice.items
+    : [{
+      id: "invoice-total",
+      name: invoice.job?.title || invoice.job?.jobType || "Locksmith service",
+      description: invoice.job?.jobNumber ? `Job #${invoice.job.jobNumber}` : "",
+      quantity: 1,
+      unitPrice: invoice.total,
+      taxable: false,
+      invoiceId: invoice.id,
+      category: "service",
+      createdAt: invoice.createdAt
+    }];
+}
+
+function renderInvoicePayPage(input: {
+  invoice: NonNullable<Awaited<ReturnType<typeof loadInvoice>>>;
+  clientSecret?: string | null;
+  stripeAccount?: string | null;
+  checkoutUrl?: string | null;
+  configurationError?: string | null;
+}) {
+  const { invoice, clientSecret, stripeAccount, checkoutUrl, configurationError } = input;
+  const companyName = invoice.location.displayName || invoice.location.name || "Affordable Security";
+  const customerName = [invoice.customer.firstName, invoice.customer.lastName].filter(Boolean).join(" ") || invoice.customer.companyName || "Customer";
+  const customerAddress = invoice.customer.addresses[0] || invoice.job?.address;
+  const serviceDate = invoice.job?.scheduledStart || invoice.createdAt;
+  const lines = invoiceLines(invoice);
+  const publishableKey = env.STRIPE_PUBLISHABLE_KEY || "";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Invoice #${escapeHtml(invoice.invoiceNumber)} | ${escapeHtml(companyName)}</title>
+  <script src="https://js.stripe.com/v3/"></script>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f6f7f9; color: #232735; }
+    .shell { width: min(980px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 52px; }
+    .brand { text-align: center; margin-bottom: 22px; }
+    .brand-mark { display: inline-block; background: #3499f4; color: #071429; padding: 10px 22px; font-weight: 900; font-size: 28px; line-height: 0.95; }
+    .brand-mark span { display: block; color: #fff; margin-left: 42px; }
+    h1 { text-align: center; font-size: clamp(24px, 4vw, 34px); line-height: 1.2; margin: 10px 0 4px; }
+    .amount-due { text-align: center; font-size: 19px; font-weight: 800; margin-bottom: 24px; }
+    .card { background: #fff; border: 1px solid #e3e6eb; border-radius: 8px; box-shadow: 0 8px 26px rgba(25, 32, 46, .08); margin-bottom: 18px; overflow: hidden; }
+    .card h2 { font-size: 20px; margin: 0; padding: 16px 20px; border-bottom: 1px solid #e6e8ed; }
+    .card-body { padding: 20px; }
+    .tip-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+    .tip-grid button { height: 42px; border: 1px solid #d2d7df; border-radius: 8px; background: #fff; color: #868b94; font-size: 16px; }
+    .tip-grid .selected { border-color: #0b74de; color: #0b74de; }
+    .payment-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; }
+    #payment-element { padding: 8px 0 18px; }
+    .pay-button, .checkout-button { width: 100%; border: 0; border-radius: 999px; background: #111827; color: #fff; padding: 14px 18px; font-weight: 800; font-size: 16px; cursor: pointer; }
+    .pay-button:disabled { background: #d9dce2; cursor: wait; }
+    .muted { color: #697386; font-size: 13px; line-height: 1.45; }
+    .message { margin-top: 14px; font-weight: 700; }
+    .message.error { color: #b42318; }
+    .message.ok { color: #137333; }
+    .invoice-paper { background: #fff; border: 1px solid #dcdfe5; padding: 28px; min-height: 420px; }
+    .invoice-head { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px solid #dcdfe5; padding-bottom: 18px; }
+    .invoice-head strong { display: block; font-size: 18px; }
+    .invoice-meta { border: 1px solid #bfc5cf; min-width: 260px; }
+    .invoice-meta div { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #e5e7eb; }
+    .invoice-meta div:last-child { border-bottom: 0; font-weight: 900; font-size: 18px; }
+    .party-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin: 28px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { background: #767b86; color: #fff; text-align: left; padding: 9px; font-weight: 700; }
+    td { border-bottom: 1px solid #e5e7eb; padding: 10px 9px; vertical-align: top; }
+    td:last-child, th:last-child { text-align: right; }
+    .totals { margin-left: auto; width: min(320px, 100%); display: grid; grid-template-columns: 1fr auto; gap: 8px 18px; padding-top: 18px; }
+    .totals strong { font-size: 20px; }
+    @media (max-width: 820px) {
+      .payment-layout, .party-grid, .invoice-head { grid-template-columns: 1fr; display: grid; }
+      .tip-grid { grid-template-columns: repeat(2, 1fr); }
+      .invoice-paper { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="brand"><div class="brand-mark">Affordable<span>Security</span></div></div>
+    <h1>Review &amp; pay your invoice from ${escapeHtml(companyName)}</h1>
+    <div class="amount-due">${escapeHtml(cents(invoice.total))} due</div>
+
+    <section class="card">
+      <h2>Add a tip</h2>
+      <div class="card-body tip-grid">
+        <button type="button">10%</button><button type="button">15%</button><button type="button">20%</button><button class="selected" type="button">No Tip</button><button type="button">Custom</button>
+      </div>
+    </section>
+
+    <div class="payment-layout">
+      <section class="card">
+        <h2>Payment Method</h2>
+        <div class="card-body">
+          ${configurationError ? `<p class="message error">${escapeHtml(configurationError)}</p>` : clientSecret && publishableKey ? `
+            <form id="payment-form">
+              <div id="payment-element"></div>
+              <button id="pay-button" class="pay-button" type="submit">Pay ${escapeHtml(cents(invoice.total))}</button>
+              <p class="muted">Payment details are encrypted and processed securely by Stripe. Affordable Security does not store full card or bank numbers.</p>
+              <div id="payment-message" class="message" role="alert"></div>
+            </form>
+          ` : checkoutUrl ? `
+            <a class="checkout-button" href="${escapeHtml(checkoutUrl)}">Pay ${escapeHtml(cents(invoice.total))}</a>
+          ` : `<p class="message error">Payment is not configured for this invoice.</p>`}
+        </div>
+      </section>
+
+      <aside class="invoice-paper">
+        <div class="invoice-head">
+          <div><strong>${escapeHtml(companyName)}</strong><span class="muted">${escapeHtml([invoice.location.street1, invoice.location.city, invoice.location.state, invoice.location.postalCode].filter(Boolean).join(", "))}</span></div>
+          <div class="invoice-meta">
+            <div><span>JOB</span><b>${escapeHtml(invoice.job?.jobNumber ? `#${invoice.job.jobNumber}` : "-")}</b></div>
+            <div><span>INVOICE</span><b>#${escapeHtml(invoice.invoiceNumber)}</b></div>
+            <div><span>DATE</span><b>${escapeHtml(serviceDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: invoice.location.timezone || "America/Phoenix" }))}</b></div>
+            <div><span>AMOUNT DUE</span><strong>${escapeHtml(cents(invoice.total))}</strong></div>
+          </div>
+        </div>
+        <div class="party-grid">
+          <div><strong>${escapeHtml(customerName)}</strong><br />${escapeHtml([customerAddress?.street1, customerAddress?.street2, customerAddress?.city, customerAddress?.state, customerAddress?.postalCode].filter(Boolean).join(", "))}<br />${escapeHtml(invoice.customer.phone)}</div>
+          <div><strong>Contact us</strong><br />${escapeHtml(invoice.location.phone || "(928) 580-2775")}<br />service@5802775.com</div>
+        </div>
+        <table>
+          <thead><tr><th>Services</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
+          <tbody>${lines.map((item) => {
+            const quantity = Number(item.quantity || 1);
+            const amount = Math.round(quantity * item.unitPrice);
+            return `<tr><td><strong>${escapeHtml(item.name)}</strong>${item.description ? `<br /><span class="muted">${escapeHtml(item.description)}</span>` : ""}</td><td>${escapeHtml(quantity)}</td><td>${escapeHtml(cents(item.unitPrice))}</td><td>${escapeHtml(cents(amount))}</td></tr>`;
+          }).join("")}</tbody>
+        </table>
+        <div class="totals"><span>Subtotal</span><b>${escapeHtml(cents(invoice.subtotal))}</b><span>Tax</span><b>${escapeHtml(cents(invoice.tax))}</b><strong>Total</strong><strong>${escapeHtml(cents(invoice.total))}</strong></div>
+      </aside>
+    </div>
+  </main>
+
+  ${clientSecret && publishableKey ? `<script>
+    const stripe = Stripe(${JSON.stringify(publishableKey)}, ${stripeAccount ? `{ stripeAccount: ${JSON.stringify(stripeAccount)} }` : "undefined"});
+    const elements = stripe.elements({ clientSecret: ${JSON.stringify(clientSecret)}, appearance: { theme: "stripe" } });
+    elements.create("payment", { layout: "tabs" }).mount("#payment-element");
+    const form = document.getElementById("payment-form");
+    const button = document.getElementById("pay-button");
+    const message = document.getElementById("payment-message");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      message.textContent = "";
+      const { error } = await stripe.confirmPayment({
+        elements,
+        confirmParams: { return_url: ${JSON.stringify(`${env.PUBLIC_BASE_URL}/pay/${invoice.invoiceNumber}/complete`)} }
+      });
+      if (error) {
+        message.textContent = error.message || "Payment could not be completed.";
+        message.className = "message error";
+        button.disabled = false;
+      }
+    });
+  </script>` : ""}
+</body>
+</html>`;
+}
+
+publicPayRouter.get("/:invoiceNumber/complete", asyncHandler(async (req, res) => {
+  const invoiceNumber = invoiceNumberFromParam(String(req.params.invoiceNumber));
+  if (!invoiceNumber) return res.status(404).send("Invoice not found");
+  const invoice = await loadInvoice(invoiceNumber);
+  if (!invoice) return res.status(404).send("Invoice not found");
+  res.status(200).send(`<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Payment received</title><style>body{font-family:Inter,system-ui,sans-serif;background:#f6f7f9;color:#232735;display:grid;min-height:100vh;place-items:center;margin:0}.card{background:#fff;border:1px solid #e3e6eb;border-radius:12px;padding:32px;max-width:560px;box-shadow:0 8px 26px rgba(25,32,46,.08)}h1{margin-top:0}</style></head><body><section class="card"><h1>Payment received</h1><p>Thank you. Invoice #${escapeHtml(invoice.invoiceNumber)} is being confirmed. You may close this page.</p><p><a href="/pay/${escapeHtml(invoice.invoiceNumber)}">View invoice</a></p></section></body></html>`);
+}));
+
+publicPayRouter.get("/:invoiceNumber", asyncHandler(async (req, res) => {
+  const invoiceNumber = invoiceNumberFromParam(String(req.params.invoiceNumber));
+  if (!invoiceNumber) return res.status(404).send("Invoice not found");
+
+  const invoice = await loadInvoice(invoiceNumber);
   if (!invoice || invoice.status === "VOID") return res.status(404).send("Invoice not found");
-  if (invoice.status === "PAID") return res.status(200).send("This invoice has already been paid.");
+  if (invoice.status === "PAID") return res.status(200).send(`<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Invoice paid</title><style>body{font-family:Inter,system-ui,sans-serif;background:#f6f7f9;color:#232735;display:grid;min-height:100vh;place-items:center;margin:0}.card{background:#fff;border:1px solid #e3e6eb;border-radius:12px;padding:32px;max-width:560px;box-shadow:0 8px 26px rgba(25,32,46,.08)}h1{margin-top:0}</style></head><body><section class="card"><h1>Invoice paid</h1><p>Invoice #${escapeHtml(invoice.invoiceNumber)} has already been paid.</p></section></body></html>`);
   if (invoice.total <= 0) return res.status(422).send("This invoice does not have an amount due.");
 
-  const session = await createInvoiceCheckoutSession(invoice, env.PUBLIC_BASE_URL);
-  if (!session.url) return res.status(502).send("Unable to open payment checkout.");
-  res.redirect(303, session.url);
+  let clientSecret: string | null | undefined;
+  let stripeAccount: string | null = null;
+  let checkoutUrl: string | null = null;
+  let configurationError: string | null = null;
+
+  try {
+    stripeAccount = await getLocationStripeAccountId(invoice.locationId);
+    const intent = await createInvoicePaymentIntent(invoice);
+    clientSecret = intent.client_secret;
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { stripePaymentIntentId: intent.id }
+    });
+  } catch (err) {
+    configurationError = err instanceof Error ? err.message : "Unable to start embedded payment.";
+  }
+
+  if (!env.STRIPE_PUBLISHABLE_KEY) {
+    try {
+      const checkout = await createInvoiceCheckoutSession(invoice, env.PUBLIC_BASE_URL);
+      checkoutUrl = checkout.url;
+      configurationError = null;
+    } catch {
+      configurationError = "Stripe publishable key is missing. Add STRIPE_PUBLISHABLE_KEY in Render to show the embedded payment form.";
+    }
+  }
+
+  res.status(200).send(renderInvoicePayPage({ invoice, clientSecret, stripeAccount, checkoutUrl, configurationError }));
 }));

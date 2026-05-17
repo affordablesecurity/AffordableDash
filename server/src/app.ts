@@ -33,7 +33,25 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDistPath = path.resolve(__dirname, "../../../client/dist");
 
 app.disable("x-powered-by");
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      "default-src": ["'self'"],
+      "base-uri": ["'self'"],
+      "font-src": ["'self'", "https:", "data:"],
+      "form-action": ["'self'"],
+      "frame-ancestors": ["'self'"],
+      "frame-src": ["'self'", "https://js.stripe.com", "https://hooks.stripe.com"],
+      "img-src": ["'self'", "data:", "https:"],
+      "object-src": ["'none'"],
+      "script-src": ["'self'", "'unsafe-inline'", "https://js.stripe.com"],
+      "script-src-attr": ["'none'"],
+      "style-src": ["'self'", "https:", "'unsafe-inline'"],
+      "connect-src": ["'self'", "https://api.stripe.com"],
+      "upgrade-insecure-requests": []
+    }
+  }
+}));
 app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
 app.use(morgan("dev"));
 app.use("/api/webhooks/stripe", express.raw({ type: "application/json" }));

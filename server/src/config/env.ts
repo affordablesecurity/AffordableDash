@@ -16,6 +16,7 @@ const schema = z.object({
   DATABASE_URL: z.string(),
   JWT_SECRET: z.string().min(16),
   STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_PUBLISHABLE_KEY: z.string().optional(),
   STRIPE_CONNECT_CLIENT_ID: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   GOOGLE_MAPS_API_KEY: z.string().optional(),
