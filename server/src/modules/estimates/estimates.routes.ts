@@ -1,9 +1,11 @@
 import { EstimateStatus, JobStatus } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
+import { sendLocationSms } from "../messaging/messaging.service.js";
 
 export const estimatesRouter = Router();
 
@@ -32,11 +34,18 @@ const estimateSchema = z.object({
   internalNotes: z.string().optional(),
   approvalSignature: z.string().optional(),
   approvalName: z.string().optional(),
-  depositType: z.enum(["NONE", "PERCENT", "FIXED"]).default("NONE"),
+  depositType: z.enum(["NONE", "PERCENT", "FIXED"]).optional(),
   depositPercent: z.number().int().min(1).max(100).optional(),
   depositAmount: z.number().int().min(1).optional(),
   attachments: z.array(z.string()).default([]),
   lineItems: z.array(lineItemSchema).default([])
+});
+
+const sendEstimateSchema = z.object({
+  method: z.enum(["email", "text", "both"]),
+  to: z.string().trim().optional(),
+  subject: z.string().trim().max(200).optional(),
+  message: z.string().trim().max(2000).optional()
 });
 
 const estimateInclude = {
@@ -62,6 +71,25 @@ async function saveOptions(locationId: string, input: { jobType: string; leadSou
   })));
 }
 
+function cents(value: number) {
+  return `$${(value / 100).toFixed(2)}`;
+}
+
+function estimateSubtotal(input: { lineItems: Array<{ quantity: unknown; unitPrice: number }> }) {
+  return input.lineItems.reduce((sum, item) => sum + Math.round(Number(item.quantity || 0) * item.unitPrice), 0);
+}
+
+function estimateTax(input: { lineItems: Array<{ category: string; taxable: boolean; quantity: unknown; unitPrice: number }> }) {
+  const taxable = input.lineItems.reduce((sum, item) => item.category === "material" && item.taxable !== false
+    ? sum + Math.round(Number(item.quantity || 0) * item.unitPrice)
+    : sum, 0);
+  return Math.round(taxable * 0.094);
+}
+
+function estimateTotal(input: { lineItems: Array<{ category: string; taxable: boolean; quantity: unknown; unitPrice: number }> }) {
+  return estimateSubtotal(input) + estimateTax(input);
+}
+
 estimatesRouter.get("/", asyncHandler(async (req, res) => {
   const status = typeof req.query.status === "string" ? req.query.status as EstimateStatus : undefined;
   const locationId = activeLocationId(req);
@@ -78,6 +106,7 @@ estimatesRouter.post("/", asyncHandler(async (req, res) => {
   const input = estimateSchema.parse(req.body);
   const locationId = activeLocationId(req);
   const status = input.status ?? EstimateStatus.DRAFT;
+  const depositType = input.depositType ?? "NONE";
   const estimate = await prisma.estimate.create({
     data: {
       locationId,
@@ -97,9 +126,9 @@ estimatesRouter.post("/", asyncHandler(async (req, res) => {
       approvalName: input.approvalName,
       approvedAt: status === EstimateStatus.APPROVED ? new Date() : undefined,
       declinedAt: status === EstimateStatus.DECLINED ? new Date() : undefined,
-      depositType: input.depositType,
-      depositPercent: input.depositType === "PERCENT" ? input.depositPercent ?? 50 : undefined,
-      depositAmount: input.depositType === "FIXED" ? input.depositAmount : undefined,
+      depositType,
+      depositPercent: depositType === "PERCENT" ? input.depositPercent ?? 50 : undefined,
+      depositAmount: depositType === "FIXED" ? input.depositAmount : undefined,
       attachments: input.attachments,
       lineItems: input.lineItems.length ? { create: input.lineItems } : undefined
     },
@@ -148,6 +177,67 @@ estimatesRouter.patch("/:id", asyncHandler(async (req, res) => {
 
   if (input.jobType) await saveOptions(locationId, { jobType: input.jobType, leadSource: input.leadSource, tags: input.tags ?? [] });
   res.json({ estimate });
+}));
+
+estimatesRouter.post("/:id/send", asyncHandler(async (req, res) => {
+  const estimateId = String(req.params.id);
+  const locationId = activeLocationId(req);
+  const input = sendEstimateSchema.parse(req.body);
+  const estimate = await prisma.estimate.findFirst({
+    where: { id: estimateId, locationId },
+    include: { ...estimateInclude, location: true }
+  });
+  if (!estimate) return res.status(404).json({ error: "Estimate not found" });
+
+  const estimateUrl = `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/estimate/${estimate.estimateNumber}`;
+  const total = estimateTotal(estimate);
+  const defaultBody = `Estimate #${estimate.estimateNumber} ${cents(total)}: ${estimateUrl}`;
+  const body = input.message?.includes(estimateUrl)
+    ? input.message
+    : `${(input.message || defaultBody).trim()}${input.message ? `\n\nView estimate: ${estimateUrl}` : ""}`.trim();
+  const deliveries: unknown[] = [];
+  const wantsEmail = input.method === "email" || input.method === "both";
+  const wantsText = input.method === "text" || input.method === "both";
+
+  if (wantsText) {
+    const to = input.method === "text" ? input.to : input.to?.split(",").map((part) => part.trim()).find((part) => /\d/.test(part));
+    deliveries.push(await sendLocationSms({
+      locationId,
+      customerId: estimate.customerId,
+      to: to || estimate.customer.phone,
+      body: body.length > 155 ? defaultBody : body,
+      templateKey: "estimateSent",
+      customer: estimate.customer
+    }));
+  }
+
+  if (wantsEmail) {
+    const to = input.method === "email" ? input.to : input.to?.split(",").map((part) => part.trim()).find((part) => part.includes("@"));
+    const recipient = to || estimate.customer.email;
+    if (!recipient) return res.status(422).json({ error: "This customer does not have an email address for estimate email." });
+    deliveries.push(await prisma.message.create({
+      data: {
+        locationId,
+        customerId: estimate.customerId,
+        direction: "OUTBOUND",
+        fromNumber: "",
+        toNumber: recipient,
+        body,
+        channel: "email",
+        status: "QUEUED",
+        provider: "email",
+        templateKey: "estimateSentEmail"
+      }
+    }));
+  }
+
+  const updatedEstimate = await prisma.estimate.update({
+    where: { id: estimate.id },
+    data: { status: estimate.status === EstimateStatus.DRAFT ? EstimateStatus.SENT : estimate.status },
+    include: estimateInclude
+  });
+
+  res.json({ estimate: updatedEstimate, deliveries, estimateUrl });
 }));
 
 estimatesRouter.post("/:id/convert-to-job", asyncHandler(async (req, res) => {

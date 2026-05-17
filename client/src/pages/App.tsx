@@ -357,6 +357,12 @@ type SendInvoiceResponse = {
   paymentLinkWarning?: string | null;
 };
 
+type SendEstimateResponse = {
+  estimate: Estimate;
+  deliveries: Array<CrmMessage | null>;
+  estimateUrl: string;
+};
+
 type LocationAccess = {
   role: string;
   organization: { id: string; name: string };
@@ -1202,6 +1208,13 @@ export function App() {
   const [invoiceSendTo, setInvoiceSendTo] = useState("");
   const [invoiceSendSubject, setInvoiceSendSubject] = useState("");
   const [invoiceSendMessage, setInvoiceSendMessage] = useState("");
+  const [estimateActionMessage, setEstimateActionMessage] = useState("");
+  const [estimateSendDialogOpen, setEstimateSendDialogOpen] = useState(false);
+  const [estimateSendMethod, setEstimateSendMethod] = useState<"email" | "text" | "both">("email");
+  const [estimateSendTo, setEstimateSendTo] = useState("");
+  const [estimateSendSubject, setEstimateSendSubject] = useState("");
+  const [estimateSendMessage, setEstimateSendMessage] = useState("");
+  const [estimateDepositDraft, setEstimateDepositDraft] = useState({ type: "NONE" as "NONE" | "PERCENT" | "FIXED", percent: "50", amount: "" });
   const [paymentDialogInvoice, setPaymentDialogInvoice] = useState<Invoice | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"credit" | "cash" | "check" | "other">("credit");
   const [paymentAmount, setPaymentAmount] = useState("");
@@ -1403,6 +1416,15 @@ export function App() {
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? null;
   const selectedJobInvoice = selectedJob?.invoices?.[0] ?? null;
   const selectedEstimate = estimates.find((estimate) => estimate.id === selectedEstimateId) ?? null;
+  useEffect(() => {
+    if (!selectedEstimate) return;
+    setEstimateDepositDraft({
+      type: selectedEstimate.depositType ?? "NONE",
+      percent: String(selectedEstimate.depositPercent ?? 50),
+      amount: selectedEstimate.depositAmount ? (selectedEstimate.depositAmount / 100).toFixed(2) : ""
+    });
+    setEstimateActionMessage("");
+  }, [selectedEstimate?.id, selectedEstimate?.depositType, selectedEstimate?.depositPercent, selectedEstimate?.depositAmount]);
   const weekStart = useMemo(() => startOfWeek(scheduleDate), [scheduleDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
   const monthDays = useMemo(() => {
@@ -2951,6 +2973,16 @@ export function App() {
     return result.estimate;
   }
 
+  async function saveEstimateDepositTerms(estimate: Estimate) {
+    const payload = {
+      depositType: estimateDepositDraft.type,
+      depositPercent: estimateDepositDraft.type === "PERCENT" ? Number(estimateDepositDraft.percent || "50") : undefined,
+      depositAmount: estimateDepositDraft.type === "FIXED" ? dollarsToCents(estimateDepositDraft.amount) : undefined
+    };
+    const updated = await updateEstimate(estimate, payload);
+    setEstimateActionMessage(`Estimate #${updated.estimateNumber} deposit terms saved.`);
+  }
+
   async function approveEstimate(estimate: Estimate) {
     const signature = signatureCanvasRef.current?.toDataURL("image/png");
     if (!estimate.approvalSignature && !signatureHasInk) {
@@ -3500,6 +3532,71 @@ export function App() {
       await loadDashboard();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to send invoice.");
+    }
+  }
+
+  function estimateRecipient(estimate: Estimate, method: "email" | "text" | "both") {
+    if (method === "text") return estimate.customer.phone || "";
+    if (method === "both") return [estimate.customer.email, estimate.customer.phone].filter(Boolean).join(", ");
+    return estimate.customer.email || "";
+  }
+
+  function estimateDefaultSubject(estimate: Estimate) {
+    return `Estimate #${estimate.estimateNumber} from ${activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security"}`;
+  }
+
+  function estimateDefaultMessage(estimate: Estimate, method: "email" | "text" | "both" = "email") {
+    const total = money.format(estimateTotal(estimate) / 100);
+    const url = `${window.location.origin}/estimate/${estimate.estimateNumber}`;
+    if (method === "text") return `Estimate #${estimate.estimateNumber} ${total}: ${url}`;
+    return `Hi ${estimate.customer.firstName || customerName(estimate.customer).split(" ")[0] || "there"},\n\nPlease review your estimate from ${activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security"}.\n\nView estimate: ${url}`;
+  }
+
+  function openEstimateSendDialog(estimate: Estimate) {
+    setEstimateSendMethod("email");
+    setEstimateSendTo(estimateRecipient(estimate, "email"));
+    setEstimateSendSubject(estimateDefaultSubject(estimate));
+    setEstimateSendMessage(estimateDefaultMessage(estimate));
+    setEstimateActionMessage("");
+    setEstimateSendDialogOpen(true);
+  }
+
+  function changeEstimateSendMethod(method: "email" | "text" | "both") {
+    setEstimateSendMethod(method);
+    if (!selectedEstimate) return;
+    setEstimateSendTo(estimateRecipient(selectedEstimate, method));
+    setEstimateSendMessage(estimateDefaultMessage(selectedEstimate, method));
+  }
+
+  async function confirmEstimateSend() {
+    if (!selectedEstimate) return;
+    setError("");
+    setEstimateActionMessage("");
+    try {
+      const result = await api<SendEstimateResponse>(`/api/estimates/${selectedEstimate.id}/send`, {
+        method: "POST",
+        body: JSON.stringify({
+          method: estimateSendMethod,
+          to: estimateSendTo.trim() || undefined,
+          subject: estimateSendSubject,
+          message: estimateSendMessage
+        })
+      });
+      const deliveryMessages = result.deliveries.filter((item): item is CrmMessage => Boolean(item));
+      setEstimates((current) => current.map((estimate) => estimate.id === result.estimate.id ? result.estimate : estimate));
+      setMessages((current) => [
+        ...deliveryMessages,
+        ...current.filter((message) => !deliveryMessages.some((delivery) => delivery.id === message.id))
+      ]);
+      setSelectedEstimateId(result.estimate.id);
+      setEstimateSendDialogOpen(false);
+      const failed = deliveryMessages.filter((message) => message.status === "FAILED").length;
+      setEstimateActionMessage(failed
+        ? `Estimate #${result.estimate.estimateNumber} delivery created with ${failed} issue${failed === 1 ? "" : "s"}.`
+        : `Estimate #${result.estimate.estimateNumber} delivery created with customer link.`);
+      await loadDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to send estimate.");
     }
   }
 
@@ -6165,12 +6262,13 @@ export function App() {
                     </div>
                     <div className="job-detail-actions">
                       <button className="outline-button" type="button" onClick={() => window.open(`/estimate/${selectedEstimate.estimateNumber}`, "_blank", "noopener,noreferrer")}>View customer link</button>
-                      <button className="outline-button" type="button" onClick={() => updateEstimate(selectedEstimate, { status: "SENT" })}>Mark Sent</button>
+                      <button className="primary" type="button" onClick={() => openEstimateSendDialog(selectedEstimate)}>Send estimate</button>
                       <button className="outline-button" type="button" onClick={() => declineEstimate(selectedEstimate)}>Decline</button>
                       <button className="primary" type="button" onClick={() => approveEstimate(selectedEstimate)}>Approve</button>
                       <button className="primary" type="button" disabled={selectedEstimate.status !== "APPROVED"} onClick={() => convertEstimateToJob(selectedEstimate)}>Convert to Job</button>
                     </div>
                   </section>
+                  {estimateActionMessage && <p className="inline-confirm">{estimateActionMessage}</p>}
                   <div className="job-detail-layout">
                     <aside className="job-detail-side">
                       <section className="panel job-detail-customer">
@@ -6224,6 +6322,33 @@ export function App() {
                           )}
                           <span>Total</span><strong>{money.format(estimateTotal(selectedEstimate) / 100)}</strong>
                         </div>
+                      </section>
+                      <section className="panel">
+                        <div className="panel-header"><h2>Deposit terms</h2><CreditCard size={18} /></div>
+                        <div className="record-form compact-fields">
+                          <label>Down payment
+                            <select value={estimateDepositDraft.type} onChange={(event) => setEstimateDepositDraft((current) => ({ ...current, type: event.target.value as "NONE" | "PERCENT" | "FIXED" }))}>
+                              <option value="NONE">No deposit required</option>
+                              <option value="PERCENT">Percentage down</option>
+                              <option value="FIXED">Custom dollar amount</option>
+                            </select>
+                          </label>
+                          {estimateDepositDraft.type === "PERCENT" && (
+                            <label>Deposit percent
+                              <input value={estimateDepositDraft.percent} onChange={(event) => setEstimateDepositDraft((current) => ({ ...current, percent: event.target.value }))} inputMode="numeric" />
+                            </label>
+                          )}
+                          {estimateDepositDraft.type === "FIXED" && (
+                            <label>Deposit amount
+                              <input value={estimateDepositDraft.amount} onChange={(event) => setEstimateDepositDraft((current) => ({ ...current, amount: event.target.value }))} inputMode="decimal" />
+                            </label>
+                          )}
+                        </div>
+                        <div className="totals-box">
+                          <span>Estimate total <strong>{money.format(estimateTotal(selectedEstimate) / 100)}</strong></span>
+                          <span className="grand-total">Deposit due <strong>{money.format((estimateDepositDraft.type === "PERCENT" ? Math.round(estimateTotal(selectedEstimate) * (Number(estimateDepositDraft.percent || "50") / 100)) : estimateDepositDraft.type === "FIXED" ? Math.min(dollarsToCents(estimateDepositDraft.amount), estimateTotal(selectedEstimate)) : 0) / 100)}</strong></span>
+                        </div>
+                        <div className="action-buttons"><button className="primary" type="button" onClick={() => saveEstimateDepositTerms(selectedEstimate)}>Save deposit terms</button></div>
                       </section>
                       <section className="panel">
                         <div className="panel-header"><h2>Estimate details</h2><FileText size={18} /></div>
@@ -7833,6 +7958,43 @@ export function App() {
               <div className="modal-actions">
                 <button className="outline-button" type="button" onClick={() => setJobLineDialog(null)}>Cancel</button>
                 <button className="primary" type="button" disabled={!jobLineForm.name.trim() && !jobLineForm.search.trim()} onClick={() => saveJobLineItem(selectedJob)}>Save line item</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {estimateSendDialogOpen && selectedEstimate && (
+          <div className="modal-backdrop">
+            <div className="send-invoice-modal">
+              <header>
+                <h2>Send estimate</h2>
+                <button className="icon-button" type="button" onClick={() => setEstimateSendDialogOpen(false)} aria-label="Close send estimate"><X size={20} /></button>
+              </header>
+              <fieldset className="send-methods">
+                <legend>Send by</legend>
+                <label><input type="radio" name="estimate-send-method" checked={estimateSendMethod === "email"} onChange={() => changeEstimateSendMethod("email")} /> Email</label>
+                <label><input type="radio" name="estimate-send-method" checked={estimateSendMethod === "text"} onChange={() => changeEstimateSendMethod("text")} /> Text</label>
+                <label><input type="radio" name="estimate-send-method" checked={estimateSendMethod === "both"} onChange={() => changeEstimateSendMethod("both")} /> Email &amp; Text</label>
+              </fieldset>
+              <label>To
+                <input value={estimateSendTo} onChange={(event) => setEstimateSendTo(event.target.value)} placeholder={estimateSendMethod === "text" ? "Customer mobile number" : "Customer email address"} />
+              </label>
+              <label>Subject
+                <input value={estimateSendSubject} onChange={(event) => setEstimateSendSubject(event.target.value)} />
+              </label>
+              <label>Message
+                <textarea value={estimateSendMessage} onChange={(event) => setEstimateSendMessage(event.target.value)} />
+              </label>
+              <div className="send-attachment-row">
+                <FileText size={18} />
+                <div>
+                  <strong>estimate-{selectedEstimate.estimateNumber}</strong>
+                  <span>Customer link: /estimate/{selectedEstimate.estimateNumber}</span>
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button className="outline-button" type="button" onClick={() => setEstimateSendDialogOpen(false)}>Cancel</button>
+                <button className="primary" type="button" disabled={!estimateSendTo.trim()} onClick={confirmEstimateSend}>Send</button>
               </div>
             </div>
           </div>
