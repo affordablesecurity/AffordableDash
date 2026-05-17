@@ -4,6 +4,13 @@ import { z } from "zod";
 dotenv.config({ path: "../.env" });
 dotenv.config();
 
+const booleanString = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  if (value.toLowerCase() === "true") return true;
+  if (value.toLowerCase() === "false") return false;
+  return value;
+}, z.boolean());
+
 const schema = z.object({
   NODE_ENV: z.string().default("development"),
   PORT: z.coerce.number().default(4100),
@@ -29,7 +36,7 @@ const schema = z.object({
   EMAIL_REPLY_TO: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().optional(),
-  SMTP_SECURE: z.coerce.boolean().optional(),
+  SMTP_SECURE: booleanString.optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
   HOUSECALL_PRO_BASE_URL: z.string().default("https://api.housecallpro.com"),

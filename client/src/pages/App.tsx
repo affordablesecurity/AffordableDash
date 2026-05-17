@@ -3537,9 +3537,11 @@ export function App() {
       ]);
       setSelectedInvoiceId(result.invoice.id);
       setInvoiceSendDialogOpen(false);
-      const failed = deliveryMessages.filter((message) => message.status === "FAILED").length;
+      const failedMessages = deliveryMessages.filter((message) => message.status === "FAILED");
+      const failed = failedMessages.length;
+      const failureDetail = failedMessages.map((message) => `${message.channel}: ${message.error || "delivery failed"}`).join("; ");
       setInvoiceActionMessage(failed
-        ? `Invoice #${result.invoice.invoiceNumber} delivery created with ${failed} issue${failed === 1 ? "" : "s"}.`
+        ? `Invoice #${result.invoice.invoiceNumber} delivery created with ${failed} issue${failed === 1 ? "" : "s"}: ${failureDetail}`
         : result.paymentLinkWarning
           ? `Invoice #${result.invoice.invoiceNumber} delivery created, but Stripe link was not added: ${result.paymentLinkWarning}`
           : `Invoice #${result.invoice.invoiceNumber} delivery created with Stripe payment link.`);
@@ -3604,9 +3606,11 @@ export function App() {
       ]);
       setSelectedEstimateId(result.estimate.id);
       setEstimateSendDialogOpen(false);
-      const failed = deliveryMessages.filter((message) => message.status === "FAILED").length;
+      const failedMessages = deliveryMessages.filter((message) => message.status === "FAILED");
+      const failed = failedMessages.length;
+      const failureDetail = failedMessages.map((message) => `${message.channel}: ${message.error || "delivery failed"}`).join("; ");
       setEstimateActionMessage(failed
-        ? `Estimate #${result.estimate.estimateNumber} delivery created with ${failed} issue${failed === 1 ? "" : "s"}.`
+        ? `Estimate #${result.estimate.estimateNumber} delivery created with ${failed} issue${failed === 1 ? "" : "s"}: ${failureDetail}`
         : `Estimate #${result.estimate.estimateNumber} delivery created with customer link.`);
       await loadDashboard();
     } catch (err) {
