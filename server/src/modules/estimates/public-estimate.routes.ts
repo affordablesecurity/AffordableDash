@@ -132,7 +132,7 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     .actions { display: grid; gap: 14px; }
     .approve-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }
     input { border: 1px solid #d2d7df; border-radius: 8px; padding: 12px; font: inherit; }
-    .signature-pad { width: 100%; height: 190px; border: 1px solid #d2d7df; border-radius: 8px; background: #fff; touch-action: none; }
+    .signature-pad { width: 100%; height: 190px; border: 1px solid #d2d7df; border-radius: 8px; background: #fff; touch-action: none; display: block; cursor: crosshair; }
     .signature-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     button { border: 0; border-radius: 999px; padding: 13px 18px; font-weight: 800; cursor: pointer; }
     .primary { background: #3f3df2; color: #fff; }
@@ -167,7 +167,7 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
         ${estimate.status === "APPROVED" ? `<p class="message">Approved by ${escapeHtml(estimate.approvalName || customerName)}.</p>` : estimate.status === "DECLINED" ? `<p class="message">This estimate has been declined.</p>` : `
           <div class="approve-grid">
             <input id="approval-name" placeholder="Your name" value="${escapeHtml(customerName)}" />
-            <button class="primary" id="approve-button" type="button">Approve</button>
+            <button class="primary" id="approve-button" type="button" disabled>Approve</button>
             <button class="danger" id="decline-button" type="button">Decline</button>
           </div>
           <div>
@@ -218,34 +218,56 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     const signatureContext = signaturePad?.getContext("2d");
     let signing = false;
     let hasSignature = false;
+    let lastPoint = null;
+    function setApproveState() {
+      if (approveButton) approveButton.disabled = !hasSignature;
+    }
+    function resizeSignaturePad() {
+      if (!signaturePad || !signatureContext) return;
+      const rect = signaturePad.getBoundingClientRect();
+      const scale = window.devicePixelRatio || 1;
+      signaturePad.width = Math.max(1, Math.round(rect.width * scale));
+      signaturePad.height = Math.max(1, Math.round(rect.height * scale));
+      signatureContext.setTransform(scale, 0, 0, scale, 0, 0);
+      signatureContext.lineWidth = 4;
+      signatureContext.lineCap = "round";
+      signatureContext.lineJoin = "round";
+      signatureContext.strokeStyle = "#101421";
+    }
     function signaturePoint(event) {
       const rect = signaturePad.getBoundingClientRect();
-      const pointer = event.touches?.[0] || event;
       return {
-        x: ((pointer.clientX - rect.left) / rect.width) * signaturePad.width,
-        y: ((pointer.clientY - rect.top) / rect.height) * signaturePad.height
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top
       };
     }
     function startSignature(event) {
       event.preventDefault();
+      if (!signaturePad || !signatureContext) return;
       signing = true;
-      const point = signaturePoint(event);
-      signatureContext.lineWidth = 4;
-      signatureContext.lineCap = "round";
-      signatureContext.strokeStyle = "#101421";
+      signaturePad.setPointerCapture?.(event.pointerId);
+      lastPoint = signaturePoint(event);
       signatureContext.beginPath();
-      signatureContext.moveTo(point.x, point.y);
+      signatureContext.moveTo(lastPoint.x, lastPoint.y);
     }
     function moveSignature(event) {
-      if (!signing) return;
+      if (!signing || !lastPoint || !signatureContext) return;
       event.preventDefault();
       const point = signaturePoint(event);
+      signatureContext.beginPath();
+      signatureContext.moveTo(lastPoint.x, lastPoint.y);
       signatureContext.lineTo(point.x, point.y);
       signatureContext.stroke();
+      lastPoint = point;
       hasSignature = true;
+      setApproveState();
     }
-    function endSignature() {
+    function endSignature(event) {
       signing = false;
+      lastPoint = null;
+      try {
+        signaturePad?.releasePointerCapture?.(event.pointerId);
+      } catch {}
     }
     async function submitAction(action) {
       const approvalName = document.getElementById("approval-name").value.trim();
@@ -265,15 +287,17 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
       }
       window.location.reload();
     }
-    signaturePad?.addEventListener("mousedown", startSignature);
-    signaturePad?.addEventListener("mousemove", moveSignature);
-    window.addEventListener("mouseup", endSignature);
-    signaturePad?.addEventListener("touchstart", startSignature, { passive: false });
-    signaturePad?.addEventListener("touchmove", moveSignature, { passive: false });
-    window.addEventListener("touchend", endSignature);
+    resizeSignaturePad();
+    window.addEventListener("resize", resizeSignaturePad);
+    signaturePad?.addEventListener("pointerdown", startSignature);
+    signaturePad?.addEventListener("pointermove", moveSignature);
+    signaturePad?.addEventListener("pointerup", endSignature);
+    signaturePad?.addEventListener("pointercancel", endSignature);
+    signaturePad?.addEventListener("pointerleave", endSignature);
     clearSignature?.addEventListener("click", () => {
       signatureContext.clearRect(0, 0, signaturePad.width, signaturePad.height);
       hasSignature = false;
+      setApproveState();
       message.textContent = "";
     });
     approveButton?.addEventListener("click", () => submitAction("approve"));
