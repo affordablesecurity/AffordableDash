@@ -2678,6 +2678,124 @@ button:disabled {
   margin: -8px 16px 16px;
 }
 
+.estimate-option-tabs {
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid #e6e9f1;
+}
+
+.estimate-option-tabs button {
+  min-width: 180px;
+  border: 0;
+  border-right: 1px solid #e6e9f1;
+  border-radius: 0;
+  background: #ffffff;
+  color: #272d3d;
+  padding: 14px 16px;
+  text-align: left;
+  font-weight: 800;
+}
+
+.estimate-option-tabs button.active {
+  background: #f8fafc;
+  box-shadow: inset 0 3px 0 #006bcf;
+}
+
+.estimate-option-tabs span,
+.estimate-option-hero p,
+.estimate-line-main small {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.estimate-option-editor {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.estimate-option-workbench {
+  display: grid;
+  gap: 0;
+}
+
+.estimate-option-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 24px;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.estimate-option-hero h3 {
+  margin: 0 0 8px;
+  font-size: 24px;
+}
+
+.estimate-option-section {
+  border-bottom: 1px solid #eef1f6;
+}
+
+.estimate-option-line {
+  display: grid;
+  grid-template-columns: 28px minmax(220px, 1fr) 80px 110px 110px 92px 42px;
+  gap: 12px;
+  align-items: center;
+  padding: 16px 24px;
+  border-top: 1px solid #eef1f6;
+}
+
+.estimate-line-main {
+  display: grid;
+  gap: 8px;
+}
+
+.estimate-option-line label {
+  display: grid;
+  gap: 5px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.estimate-option-line input {
+  width: 100%;
+}
+
+.line-drag {
+  color: #6b7280;
+  font-weight: 900;
+}
+
+.estimate-option-totals {
+  display: grid;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.estimate-option-totals span,
+.cost-breakdown {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 24px;
+  border-top: 1px solid #eef1f6;
+}
+
+.estimate-option-totals .grand-total {
+  font-size: 18px;
+}
+
+.cost-breakdown {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  background: #fafafa;
+  color: #555c6d;
+}
+
 .option-typeahead {
   display: grid;
   gap: 4px;

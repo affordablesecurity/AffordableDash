@@ -161,12 +161,20 @@ type EventForm = {
 
 type JobLineDraft = {
   id: string;
+  optionKey?: string;
   category: "service" | "material";
   name: string;
   description: string;
   quantity: string;
   unitPrice: string;
+  unitCost?: string;
   taxable?: boolean;
+};
+
+type EstimateCreateOption = {
+  id: string;
+  title: string;
+  description: string;
 };
 
 type JobTemplate = {
@@ -322,8 +330,8 @@ type Estimate = {
   customer: Customer;
   address?: Address;
   technician?: Technician;
-  lineItems?: Array<{ id: string; optionId?: string | null; category: string; name: string; description?: string; quantity: string; unitPrice: number; taxable?: boolean }>;
-  options?: Array<{ id: string; title: string; description?: string; imageName?: string; sortOrder: number; lineItems?: Array<{ id: string; optionId?: string | null; category: string; name: string; description?: string; quantity: string; unitPrice: number; taxable?: boolean }> }>;
+  lineItems?: Array<{ id: string; optionId?: string | null; category: string; name: string; description?: string; quantity: string; unitPrice: number; unitCost?: number; taxable?: boolean }>;
+  options?: Array<{ id: string; title: string; description?: string; imageName?: string; sortOrder: number; lineItems?: Array<{ id: string; optionId?: string | null; category: string; name: string; description?: string; quantity: string; unitPrice: number; unitCost?: number; taxable?: boolean }> }>;
   convertedJob?: Job;
 };
 
@@ -913,6 +921,24 @@ function estimateOptionTotal(option: NonNullable<Estimate["options"]>[number]) {
   return subtotal + Math.round(taxable * 0.094);
 }
 
+function estimateOptionSubtotal(option: NonNullable<Estimate["options"]>[number]) {
+  return (option.lineItems ?? []).reduce((sum, item) => sum + Number(item.quantity || "0") * item.unitPrice, 0);
+}
+
+function estimateOptionTax(option: NonNullable<Estimate["options"]>[number]) {
+  const taxable = (option.lineItems ?? []).reduce((sum, item) => item.category === "material" && item.taxable !== false ? sum + Number(item.quantity || "0") * item.unitPrice : sum, 0);
+  return Math.round(taxable * 0.094);
+}
+
+function estimateOptionCost(option: NonNullable<Estimate["options"]>[number]) {
+  return (option.lineItems ?? []).reduce((sum, item) => sum + Number(item.quantity || "0") * (item.unitCost ?? 0), 0);
+}
+
+function profitPercent(revenue: number, cost: number) {
+  if (revenue <= 0) return 0;
+  return ((revenue - cost) / revenue) * 100;
+}
+
 function estimateWorkflowLabel(status?: Estimate["workflowStatus"]) {
   if (status === "EN_ROUTE") return "En route";
   if (status === "FINISHED") return "Finished";
@@ -1002,6 +1028,7 @@ function lineDraft(category: "service" | "material", name = "", unitPrice = ""):
     description: "",
     quantity: "1",
     unitPrice,
+    unitCost: "0.00",
     taxable: category === "material"
   };
 }
@@ -1250,6 +1277,9 @@ export function App() {
   });
   const [jobTemplateId, setJobTemplateId] = useState("");
   const [jobTemplates, setJobTemplates] = useState<JobTemplate[]>(defaultJobTemplates);
+  const [estimateCreateOptions, setEstimateCreateOptions] = useState<EstimateCreateOption[]>([{ id: "option-1", title: "Option #1", description: "" }]);
+  const [activeEstimateCreateOptionId, setActiveEstimateCreateOptionId] = useState("option-1");
+  const [activeEstimateOptionId, setActiveEstimateOptionId] = useState("");
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState("");
   const [templateForm, setTemplateForm] = useState({
@@ -1436,6 +1466,9 @@ export function App() {
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? null;
   const selectedJobInvoice = selectedJob?.invoices?.[0] ?? null;
   const selectedEstimate = estimates.find((estimate) => estimate.id === selectedEstimateId) ?? null;
+  const selectedEstimateOptions = selectedEstimate?.options?.length ? selectedEstimate.options : [];
+  const activeEstimateOption = selectedEstimateOptions.find((option) => option.id === activeEstimateOptionId) ?? selectedEstimateOptions[0];
+  const activeEstimateCreateOption = estimateCreateOptions.find((option) => option.id === activeEstimateCreateOptionId) ?? estimateCreateOptions[0];
   useEffect(() => {
     if (!selectedEstimate) return;
     setEstimateDepositDraft({
@@ -1445,6 +1478,15 @@ export function App() {
     });
     setEstimateActionMessage("");
   }, [selectedEstimate?.id, selectedEstimate?.depositType, selectedEstimate?.depositPercent, selectedEstimate?.depositAmount]);
+  useEffect(() => {
+    if (!selectedEstimate?.options?.length) {
+      setActiveEstimateOptionId("");
+      return;
+    }
+    if (!selectedEstimate.options.some((option) => option.id === activeEstimateOptionId)) {
+      setActiveEstimateOptionId(selectedEstimate.options[0].id);
+    }
+  }, [selectedEstimate?.id, selectedEstimate?.options, activeEstimateOptionId]);
   const weekStart = useMemo(() => startOfWeek(scheduleDate), [scheduleDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
   const monthDays = useMemo(() => {
@@ -1679,6 +1721,11 @@ export function App() {
   }, 0), [jobLines]);
   const jobLineTax = Math.round(jobTaxableSubtotal * 0.094);
   const jobLineTotal = jobLineSubtotal + jobLineTax;
+  const activeEstimateCreateLines = useMemo(() => jobLines.filter((item) => (item.optionKey ?? "option-1") === activeEstimateCreateOptionId), [jobLines, activeEstimateCreateOptionId]);
+  const activeEstimateCreateSubtotal = useMemo(() => activeEstimateCreateLines.reduce((sum, item) => sum + Number(item.quantity || "0") * dollarsToCents(item.unitPrice), 0), [activeEstimateCreateLines]);
+  const activeEstimateCreateTax = useMemo(() => Math.round(activeEstimateCreateLines.reduce((sum, item) => item.category === "material" && item.taxable !== false ? sum + Number(item.quantity || "0") * dollarsToCents(item.unitPrice) : sum, 0) * 0.094), [activeEstimateCreateLines]);
+  const activeEstimateCreateCost = useMemo(() => activeEstimateCreateLines.reduce((sum, item) => sum + Number(item.quantity || "0") * dollarsToCents(item.unitCost ?? "0"), 0), [activeEstimateCreateLines]);
+  const activeEstimateCreateTotal = activeEstimateCreateSubtotal + activeEstimateCreateTax;
   const filteredPriceBookItems = useMemo(() => {
     const query = priceBookSearch.trim().toLowerCase();
     if (!query) return priceBookItems;
@@ -2527,6 +2574,38 @@ export function App() {
       description: item.description ?? "",
       quantity: "1",
       unitPrice: String((item.price / 100).toFixed(2)),
+      unitCost: String((item.cost / 100).toFixed(2)),
+      taxable: item.itemType === "material" && item.taxable
+    }]);
+  }
+
+  function createEstimateOption() {
+    const nextNumber = estimateCreateOptions.length + 1;
+    const id = `option-${nextNumber}-${Date.now()}`;
+    setEstimateCreateOptions((current) => [...current, { id, title: `Option #${nextNumber}`, description: "" }]);
+    setActiveEstimateCreateOptionId(id);
+  }
+
+  function updateEstimateCreateOption(optionId: string, patch: Partial<EstimateCreateOption>) {
+    setEstimateCreateOptions((current) => current.map((option) => option.id === optionId ? { ...option, ...patch } : option));
+  }
+
+  function addEstimateCreateLine(category: "service" | "material") {
+    setJobLines((current) => [...current, { ...lineDraft(category, category === "service" ? "Service call" : "Material"), optionKey: activeEstimateCreateOptionId }]);
+  }
+
+  function addPriceBookItemToEstimateOption(itemId: string) {
+    const item = priceBookItems.find((entry) => entry.id === itemId);
+    if (!item) return;
+    setJobLines((current) => [...current, {
+      id: `estimate-pricebook-${item.id}-${Date.now()}`,
+      optionKey: activeEstimateCreateOptionId,
+      category: item.itemType,
+      name: item.name,
+      description: item.description ?? "",
+      quantity: "1",
+      unitPrice: String((item.price / 100).toFixed(2)),
+      unitCost: String((item.cost / 100).toFixed(2)),
       taxable: item.itemType === "material" && item.taxable
     }]);
   }
@@ -2904,12 +2983,29 @@ export function App() {
         depositPercent: jobForm.depositType === "PERCENT" ? Number(jobForm.depositPercent || "50") : undefined,
         depositAmount: jobForm.depositType === "FIXED" ? dollarsToCents(jobForm.depositAmount) : undefined,
         attachments: jobAttachments,
+        options: estimateCreateOptions.map((option) => ({
+          clientId: option.id,
+          title: option.title,
+          description: option.description || undefined,
+          lineItems: jobLines.filter((item) => item.name.trim() && (item.optionKey ?? "option-1") === option.id).map((item) => ({
+            optionKey: option.id,
+            category: item.category,
+            name: item.name,
+            description: item.description || undefined,
+            quantity: Number(item.quantity || "1"),
+            unitPrice: dollarsToCents(item.unitPrice),
+            unitCost: dollarsToCents(item.unitCost ?? "0"),
+            taxable: item.category === "material" && item.taxable !== false
+          }))
+        })),
         lineItems: jobLines.filter((item) => item.name.trim()).map((item) => ({
+          optionKey: item.optionKey ?? "option-1",
           category: item.category,
           name: item.name,
           description: item.description || undefined,
           quantity: Number(item.quantity || "1"),
           unitPrice: dollarsToCents(item.unitPrice),
+          unitCost: dollarsToCents(item.unitCost ?? "0"),
           taxable: item.category === "material" && item.taxable !== false
         }))
       })
@@ -2940,6 +3036,8 @@ export function App() {
     setJobTemplateId("");
     setJobLines([]);
     setJobAttachments([]);
+    setEstimateCreateOptions([{ id: "option-1", title: "Option #1", description: "" }]);
+    setActiveEstimateCreateOptionId("option-1");
     await loadDashboard();
     setEstimatePageMode("list");
   }
@@ -2993,7 +3091,7 @@ export function App() {
     setSignatureHasInk(false);
   }
 
-  async function updateEstimate(estimate: Estimate, payload: Partial<Estimate> & { lineItems?: Estimate["lineItems"] }) {
+  async function updateEstimate(estimate: Estimate, payload: Omit<Partial<Estimate>, "lineItems"> & { lineItems?: Array<Record<string, unknown>> }) {
     setError("");
     const result = await api<{ estimate: Estimate }>(`/api/estimates/${estimate.id}`, {
       method: "PATCH",
@@ -3023,12 +3121,77 @@ export function App() {
     const title = window.prompt("Option name", `Option #${(estimate.options?.length ?? 0) + 1}`);
     if (!title?.trim()) return;
     const description = window.prompt("Short option description", "Describe what makes this option different.") || undefined;
-    const result = await api<{ estimate: Estimate }>(`/api/estimates/${estimate.id}/options`, {
+    const result = await api<{ estimate: Estimate; option?: { id: string } }>(`/api/estimates/${estimate.id}/options`, {
       method: "POST",
       body: JSON.stringify({ title: title.trim(), description })
     });
     setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    if (result.option?.id) setActiveEstimateOptionId(result.option.id);
     setEstimateActionMessage(`Added ${title.trim()} to estimate #${estimate.estimateNumber}.`);
+  }
+
+  function estimateLineItemsPayload(estimate: Estimate, optionId: string, nextOptionLines: NonNullable<NonNullable<Estimate["options"]>[number]["lineItems"]>) {
+    const options = estimate.options?.length ? estimate.options : [{ id: optionId, title: estimate.title, sortOrder: 0, lineItems: estimate.lineItems ?? [] }];
+    return options.flatMap((option) => (option.id === optionId ? nextOptionLines : option.lineItems ?? []).map((item) => ({
+      optionId: option.id,
+      category: item.category === "material" ? "material" : "service",
+      name: item.name,
+      description: item.description || undefined,
+      quantity: Number(item.quantity || "1"),
+      unitPrice: item.unitPrice,
+      unitCost: item.unitCost ?? 0,
+      taxable: item.category === "material" && item.taxable !== false
+    })));
+  }
+
+  async function saveEstimateOptionLines(estimate: Estimate, optionId: string, nextOptionLines: NonNullable<NonNullable<Estimate["options"]>[number]["lineItems"]>) {
+    await updateEstimate(estimate, { lineItems: estimateLineItemsPayload(estimate, optionId, nextOptionLines) });
+  }
+
+  async function addEstimateOptionLine(estimate: Estimate, option: NonNullable<Estimate["options"]>[number], category: "service" | "material") {
+    const nextLine = {
+      id: `draft-${Date.now()}`,
+      optionId: option.id,
+      category,
+      name: category === "service" ? "Service call" : "Material",
+      description: "",
+      quantity: "1",
+      unitPrice: 0,
+      unitCost: 0,
+      taxable: category === "material"
+    };
+    await saveEstimateOptionLines(estimate, option.id, [...(option.lineItems ?? []), nextLine]);
+  }
+
+  async function addPriceBookItemToEstimate(estimate: Estimate, option: NonNullable<Estimate["options"]>[number], itemId: string) {
+    const priceBookItem = priceBookItems.find((item) => item.id === itemId);
+    if (!priceBookItem) return;
+    const nextLine = {
+      id: `draft-${priceBookItem.id}-${Date.now()}`,
+      optionId: option.id,
+      category: priceBookItem.itemType,
+      name: priceBookItem.name,
+      description: priceBookItem.description ?? "",
+      quantity: "1",
+      unitPrice: priceBookItem.price,
+      unitCost: priceBookItem.cost,
+      taxable: priceBookItem.itemType === "material" && priceBookItem.taxable
+    };
+    await saveEstimateOptionLines(estimate, option.id, [...(option.lineItems ?? []), nextLine]);
+  }
+
+  async function updateEstimateOptionLine(
+    estimate: Estimate,
+    option: NonNullable<Estimate["options"]>[number],
+    lineId: string,
+    patch: Partial<{ name: string; description: string; quantity: string; unitPrice: number; unitCost: number; taxable: boolean }>
+  ) {
+    const nextLines = (option.lineItems ?? []).map((line) => line.id === lineId ? { ...line, ...patch } : line);
+    await saveEstimateOptionLines(estimate, option.id, nextLines);
+  }
+
+  async function removeEstimateOptionLine(estimate: Estimate, option: NonNullable<Estimate["options"]>[number], lineId: string) {
+    await saveEstimateOptionLines(estimate, option.id, (option.lineItems ?? []).filter((line) => line.id !== lineId));
   }
 
   async function approveEstimate(estimate: Estimate) {
@@ -6444,27 +6607,44 @@ export function App() {
                   <section className="panel line-items-panel">
                     <div className="line-items-header">
                       <h2>Line items</h2>
-                      <div className="mini-segment">
-                        <button type="button" className="selected">List</button>
-                        <button type="button">Details</button>
-                      </div>
+                      <button className="text-button" type="button" onClick={createEstimateOption}><Plus size={16} /> New option</button>
                     </div>
+                    <div className="estimate-option-tabs">
+                      {estimateCreateOptions.map((option) => (
+                        <button type="button" key={option.id} className={option.id === activeEstimateCreateOptionId ? "active" : ""} onClick={() => setActiveEstimateCreateOptionId(option.id)}>
+                          <strong>{option.title}</strong>
+                          <span>{option.id === activeEstimateCreateOptionId ? "Editing" : "Option"}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {activeEstimateCreateOption && (
+                      <div className="estimate-option-editor">
+                        <input value={activeEstimateCreateOption.title} onChange={(event) => updateEstimateCreateOption(activeEstimateCreateOption.id, { title: event.target.value })} placeholder="Option title" />
+                        <input value={activeEstimateCreateOption.description} onChange={(event) => updateEstimateCreateOption(activeEstimateCreateOption.id, { description: event.target.value })} placeholder="Customer-facing option summary" />
+                      </div>
+                    )}
                     {(["service", "material"] as const).map((category) => (
                       <div className="line-category" key={category}>
-                        <div className="line-category-head"><strong>{category === "service" ? "Services" : "Materials"}</strong><div className="line-actions"><select onChange={(event) => { addPriceBookItemToJob(event.target.value); event.currentTarget.value = ""; }}><option value="">Add from price book</option>{priceBookItems.filter((item) => item.itemType === category).map((item) => <option key={item.id} value={item.id}>{item.name} / {money.format(item.price / 100)}</option>)}</select><button type="button" className="text-add-button" onClick={() => addJobLine(category)}><Plus size={18} /> Add {category}</button></div></div>
-                        {jobLines.filter((item) => item.category === category).map((item) => (
-                          <div className="line-item-row" key={item.id}>
+                        <div className="line-category-head"><strong>{category === "service" ? "Services" : "Materials"}</strong><div className="line-actions"><select onChange={(event) => { addPriceBookItemToEstimateOption(event.target.value); event.currentTarget.value = ""; }}><option value="">Add from price book</option>{priceBookItems.filter((item) => item.itemType === category).map((item) => <option key={item.id} value={item.id}>{item.name} / {money.format(item.price / 100)}</option>)}</select><button type="button" className="text-add-button" onClick={() => addEstimateCreateLine(category)}><Plus size={18} /> Add {category}</button></div></div>
+                        {activeEstimateCreateLines.filter((item) => item.category === category).map((item) => (
+                          <div className="line-item-row estimate-line-item-row" key={item.id}>
                             <input placeholder="Name" value={item.name} onChange={(event) => updateJobLine(item.id, { name: event.target.value })} />
                             <input placeholder="Description" value={item.description} onChange={(event) => updateJobLine(item.id, { description: event.target.value })} />
                             <input placeholder="Qty" value={item.quantity} onChange={(event) => updateJobLine(item.id, { quantity: event.target.value })} />
-                            <input placeholder="Price" value={item.unitPrice} onChange={(event) => updateJobLine(item.id, { unitPrice: event.target.value })} />
+                            <input placeholder="Customer price" value={item.unitPrice} onChange={(event) => updateJobLine(item.id, { unitPrice: event.target.value })} />
+                            <input placeholder="Internal cost" value={item.unitCost ?? ""} onChange={(event) => updateJobLine(item.id, { unitCost: event.target.value })} />
                             <label className="line-tax-toggle"><input type="checkbox" checked={item.category === "material" && item.taxable !== false} disabled={item.category !== "material"} onChange={(event) => updateJobLine(item.id, { taxable: event.target.checked })} /> Taxable</label>
                             <button type="button" className="text-button" onClick={() => setJobLines((current) => current.filter((line) => line.id !== item.id))}><Trash2 size={16} /></button>
                           </div>
                         ))}
                       </div>
                     ))}
-                    <div className="totals-box"><span>Subtotal <strong>{money.format(jobLineSubtotal / 100)}</strong></span><span>Tax rate <em>Taxable materials (9.4%)</em> <strong>{money.format(jobLineTax / 100)}</strong></span><span className="grand-total">Estimate total <strong>{money.format(jobLineTotal / 100)}</strong></span></div>
+                    <div className="totals-box"><span>Subtotal <strong>{money.format(activeEstimateCreateSubtotal / 100)}</strong></span><span>Tax rate <em>Taxable materials (9.4%)</em> <strong>{money.format(activeEstimateCreateTax / 100)}</strong></span><span className="grand-total">Estimate total <strong>{money.format(activeEstimateCreateTotal / 100)}</strong></span></div>
+                    <div className="cost-breakdown">
+                      <span>Cost breakdown</span>
+                      <strong>Total cost {money.format(activeEstimateCreateCost / 100)}</strong>
+                      <strong>Profit/Loss {profitPercent(activeEstimateCreateSubtotal, activeEstimateCreateCost).toFixed(2)}%</strong>
+                    </div>
                   </section>
                   <section className="panel">
                     <div className="panel-header"><h2>Deposit request</h2><CreditCard size={18} /></div>
@@ -6567,15 +6747,65 @@ export function App() {
                       </section>
                       <section className="panel">
                         <div className="panel-header"><h2>Estimate options</h2><button className="text-button" type="button" onClick={() => addEstimateOption(selectedEstimate)}>Create another option</button></div>
-                        <div className="profile-table">
-                          {(selectedEstimate.options?.length ? selectedEstimate.options : [{ id: "default", title: selectedEstimate.title, description: selectedEstimate.description, sortOrder: 0, lineItems: selectedEstimate.lineItems ?? [] }]).map((option, index) => (
-                            <article key={option.id}>
-                              <strong>{option.title || `Option #${index + 1}`}{selectedEstimate.approvedOptionId === option.id ? " / Approved" : ""}</strong>
-                              <span>{option.description || "No option description yet."}</span>
-                              <span>{money.format(estimateOptionTotal(option) / 100)} / {(option.lineItems ?? []).length} line item{(option.lineItems ?? []).length === 1 ? "" : "s"}</span>
-                            </article>
+                        <div className="estimate-option-tabs">
+                          {selectedEstimateOptions.map((option, index) => (
+                            <button type="button" key={option.id} className={activeEstimateOption?.id === option.id ? "active" : ""} onClick={() => setActiveEstimateOptionId(option.id)}>
+                              <strong>{option.title || `Option #${index + 1}`}</strong>
+                              <span>{selectedEstimate.approvedOptionId === option.id ? "Approved" : "Awaiting approval"}</span>
+                            </button>
                           ))}
+                          <button type="button" onClick={() => addEstimateOption(selectedEstimate)}><Plus size={16} /> New option</button>
                         </div>
+                        {activeEstimateOption ? (
+                          <div className="estimate-option-workbench">
+                            <div className="estimate-option-hero">
+                              <div>
+                                <h3>{activeEstimateOption.title}</h3>
+                                <p>{activeEstimateOption.description || selectedEstimate.description || "Add a customer-facing summary for this option."}</p>
+                              </div>
+                              <Pencil size={20} />
+                            </div>
+                            {(["service", "material"] as const).map((category) => (
+                              <div className="estimate-option-section" key={category}>
+                                <div className="line-category-head">
+                                  <strong>{category === "service" ? "Services" : "Materials"}</strong>
+                                  <div className="line-actions">
+                                    <select onChange={(event) => { addPriceBookItemToEstimate(selectedEstimate, activeEstimateOption, event.target.value).catch((err: Error) => setError(err.message)); event.currentTarget.value = ""; }}>
+                                      <option value="">{category === "service" ? "Service" : "Material"} price book</option>
+                                      {priceBookItems.filter((item) => item.itemType === category).map((item) => <option key={item.id} value={item.id}>{item.name} / {money.format(item.price / 100)}</option>)}
+                                    </select>
+                                    <button type="button" className="text-add-button" onClick={() => addEstimateOptionLine(selectedEstimate, activeEstimateOption, category).catch((err: Error) => setError(err.message))}><Plus size={18} /> Add {category}</button>
+                                  </div>
+                                </div>
+                                {(activeEstimateOption.lineItems ?? []).filter((item) => item.category === category).map((item) => (
+                                  <div className="estimate-option-line" key={item.id}>
+                                  <div className="line-drag">=</div>
+                                  <div className="estimate-line-main">
+                                      <input defaultValue={item.name} onBlur={(event) => updateEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id, { name: event.target.value }).catch((err: Error) => setError(err.message))} />
+                                      <input defaultValue={item.description ?? ""} onBlur={(event) => updateEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id, { description: event.target.value }).catch((err: Error) => setError(err.message))} placeholder="Description" />
+                                      <label className="inline-cost-field">Unit cost<input defaultValue={((item.unitCost ?? 0) / 100).toFixed(2)} onBlur={(event) => updateEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id, { unitCost: dollarsToCents(event.target.value) }).catch((err: Error) => setError(err.message))} /></label>
+                                    </div>
+                                    <label>Qty<input defaultValue={item.quantity} onBlur={(event) => updateEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id, { quantity: event.target.value }).catch((err: Error) => setError(err.message))} /></label>
+                                    <label>Unit price<input defaultValue={(item.unitPrice / 100).toFixed(2)} onBlur={(event) => updateEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id, { unitPrice: dollarsToCents(event.target.value) }).catch((err: Error) => setError(err.message))} /></label>
+                                    <strong>{money.format((Number(item.quantity || "0") * item.unitPrice) / 100)}</strong>
+                                    <label className="line-tax-toggle"><input type="checkbox" checked={item.category === "material" && item.taxable !== false} disabled={item.category !== "material"} onChange={(event) => updateEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id, { taxable: event.target.checked }).catch((err: Error) => setError(err.message))} /> Taxable</label>
+                                    <button className="text-button" type="button" onClick={() => removeEstimateOptionLine(selectedEstimate, activeEstimateOption, item.id).catch((err: Error) => setError(err.message))}><Trash2 size={16} /></button>
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                            <div className="estimate-option-totals">
+                              <span>Subtotal <strong>{money.format(estimateOptionSubtotal(activeEstimateOption) / 100)}</strong></span>
+                              <span>Tax rate <em>Taxable materials (9.4%)</em> <strong>{money.format(estimateOptionTax(activeEstimateOption) / 100)}</strong></span>
+                              <span className="grand-total">Total <strong>{money.format(estimateOptionTotal(activeEstimateOption) / 100)}</strong></span>
+                            </div>
+                            <div className="cost-breakdown">
+                              <span>Cost breakdown</span>
+                              <strong>Total cost {money.format(estimateOptionCost(activeEstimateOption) / 100)}</strong>
+                              <strong>Profit/Loss {profitPercent(estimateOptionSubtotal(activeEstimateOption), estimateOptionCost(activeEstimateOption)).toFixed(2)}%</strong>
+                            </div>
+                          </div>
+                        ) : <p className="empty">No options yet.</p>}
                       </section>
                       <section className="panel approval-panel">
                         <div className="panel-header"><h2>Customer approval</h2><CheckCheck size={18} /></div>

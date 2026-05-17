@@ -12,6 +12,7 @@ export const estimatesRouter = Router();
 
 const lineItemSchema = z.object({
   optionId: z.string().optional(),
+  optionKey: z.string().optional(),
   category: z.enum(["service", "material"]).default("service"),
   name: z.string().min(1),
   description: z.string().optional(),
@@ -19,6 +20,14 @@ const lineItemSchema = z.object({
   unitPrice: z.number().int().default(0),
   unitCost: z.number().int().default(0),
   taxable: z.boolean().default(true)
+});
+
+const estimateCreateOptionSchema = z.object({
+  clientId: z.string().optional(),
+  title: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(1000).optional(),
+  imageName: z.string().trim().max(200).optional(),
+  lineItems: z.array(lineItemSchema).default([])
 });
 
 const estimateSchema = z.object({
@@ -41,6 +50,7 @@ const estimateSchema = z.object({
   depositPercent: z.number().int().min(1).max(100).optional(),
   depositAmount: z.number().int().min(1).optional(),
   attachments: z.array(z.string()).default([]),
+  options: z.array(estimateCreateOptionSchema).optional(),
   lineItems: z.array(lineItemSchema).default([])
 });
 
@@ -147,22 +157,34 @@ estimatesRouter.post("/", asyncHandler(async (req, res) => {
       },
       include: estimateInclude
     });
-    const defaultOption = await tx.estimateOption.create({
-      data: {
-        estimateId: created.id,
-        title: "Option #1",
-        description: input.description,
-        sortOrder: 0
-      }
-    });
-    if (input.lineItems.length) {
-      await tx.estimateLineItem.createMany({
-        data: input.lineItems.map((item) => ({
-          ...item,
+    const submittedOptions = input.options?.length ? input.options : [{
+      clientId: "option-1",
+      title: "Option #1",
+      description: input.description,
+      lineItems: input.lineItems
+    }];
+    for (const [index, optionInput] of submittedOptions.entries()) {
+      const option = await tx.estimateOption.create({
+        data: {
           estimateId: created.id,
-          optionId: defaultOption.id
-        }))
+          title: optionInput.title,
+          description: optionInput.description,
+          imageName: optionInput.imageName,
+          sortOrder: index
+        }
       });
+      const optionLineItems = optionInput.lineItems.length
+        ? optionInput.lineItems
+        : input.lineItems.filter((item) => item.optionKey && item.optionKey === optionInput.clientId);
+      if (optionLineItems.length) {
+        await tx.estimateLineItem.createMany({
+          data: optionLineItems.map(({ optionKey: _optionKey, ...item }) => ({
+            ...item,
+            estimateId: created.id,
+            optionId: option.id
+          }))
+        });
+      }
     }
     return tx.estimate.findUniqueOrThrow({ where: { id: created.id }, include: estimateInclude });
   });
@@ -207,7 +229,7 @@ estimatesRouter.patch("/:id", asyncHandler(async (req, res) => {
   if (!existing) return res.status(404).json({ error: "Estimate not found" });
 
   const status = input.status;
-  const { lineItems, ...estimateInput } = input;
+  const { lineItems, options: _options, ...estimateInput } = input;
   const estimate = await prisma.$transaction(async (tx) => {
     if (lineItems) {
       await tx.estimateLineItem.deleteMany({ where: { estimateId: existing.id } });
@@ -222,7 +244,7 @@ estimatesRouter.patch("/:id", asyncHandler(async (req, res) => {
         scheduledEnd: input.scheduledEnd ? new Date(input.scheduledEnd) : undefined,
         approvedAt: status === EstimateStatus.APPROVED ? new Date() : undefined,
         declinedAt: status === EstimateStatus.DECLINED ? new Date() : undefined,
-        lineItems: lineItems ? { create: lineItems } : undefined
+        lineItems: lineItems ? { create: lineItems.map(({ optionKey: _optionKey, ...item }) => item) } : undefined
       },
       include: estimateInclude
     });
