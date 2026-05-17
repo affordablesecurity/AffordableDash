@@ -11,6 +11,24 @@ type StripeCredentialMetadata = {
   stripeUserId?: string;
 };
 
+type InvoiceCheckoutLine = {
+  name: string;
+  description?: string | null;
+  quantity?: number | string | { toString(): string };
+  unitPrice: number;
+};
+
+type InvoiceCheckoutInput = {
+  id: string;
+  total: number;
+  tax?: number;
+  invoiceNumber: number;
+  locationId: string;
+  customer?: { email: string | null; firstName?: string | null; lastName?: string | null } | null;
+  job?: { jobNumber?: number | null; title?: string | null; jobType?: string | null } | null;
+  items?: InvoiceCheckoutLine[];
+};
+
 export async function getLocationStripeAccountId(locationId: string) {
   const credential = await prisma.integrationCredential.findUnique({
     where: { locationId_provider: { locationId, provider: "stripe" } }
@@ -39,13 +57,55 @@ export async function createInvoicePaymentIntent(invoice: { id: string; total: n
   }, { stripeAccount });
 }
 
-export async function createInvoiceCheckoutSession(invoice: {
-  id: string;
-  total: number;
-  invoiceNumber: number;
-  locationId: string;
-  customer?: { email: string | null; firstName?: string | null; lastName?: string | null } | null;
-}, baseUrl: string) {
+function checkoutQuantity(value: InvoiceCheckoutLine["quantity"]) {
+  const quantity = Number(value ?? 1);
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+}
+
+function checkoutLineItems(invoice: InvoiceCheckoutInput): Stripe.Checkout.SessionCreateParams.LineItem[] {
+  const itemLines = invoice.items?.filter((item) => item.unitPrice > 0).slice(0, 20).map((item) => ({
+    quantity: 1,
+    price_data: {
+      currency: "usd",
+      unit_amount: Math.round(checkoutQuantity(item.quantity) * item.unitPrice),
+      product_data: {
+        name: `${item.name || `Invoice #${invoice.invoiceNumber}`}${checkoutQuantity(item.quantity) !== 1 ? ` x ${checkoutQuantity(item.quantity)}` : ""}`,
+        description: item.description || invoice.job?.title || invoice.job?.jobType || undefined
+      }
+    }
+  }));
+  if (itemLines?.length) {
+    if (invoice.tax && invoice.tax > 0) {
+      itemLines.push({
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: invoice.tax,
+          product_data: {
+            name: "Sales tax",
+            description: `Invoice #${invoice.invoiceNumber}`
+          }
+        }
+      });
+    }
+    return itemLines;
+  }
+
+  const jobLabel = invoice.job?.title || invoice.job?.jobType || "Locksmith service";
+  return [{
+    quantity: 1,
+    price_data: {
+      currency: "usd",
+      unit_amount: invoice.total,
+      product_data: {
+        name: `${jobLabel} - Invoice #${invoice.invoiceNumber}`,
+        description: invoice.job?.jobNumber ? `Job #${invoice.job.jobNumber}` : "Affordable Security invoice payment"
+      }
+    }
+  }];
+}
+
+export async function createInvoiceCheckoutSession(invoice: InvoiceCheckoutInput, baseUrl: string) {
   if (!stripe) {
     throw new Error("Stripe is not configured");
   }
@@ -61,17 +121,9 @@ export async function createInvoiceCheckoutSession(invoice: {
       invoiceId: invoice.id,
       invoiceNumber: String(invoice.invoiceNumber)
     },
-    line_items: [{
-      quantity: 1,
-      price_data: {
-        currency: "usd",
-        unit_amount: invoice.total,
-        product_data: {
-          name: `Invoice #${invoice.invoiceNumber}`
-        }
-      }
-    }],
+    line_items: checkoutLineItems(invoice),
     payment_intent_data: {
+      description: `Invoice #${invoice.invoiceNumber}`,
       metadata: {
         invoiceId: invoice.id,
         invoiceNumber: String(invoice.invoiceNumber)

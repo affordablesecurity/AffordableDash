@@ -1063,7 +1063,7 @@ const defaultInvoiceSettings: InvoiceSettings = {
   customerViewFormat: "email",
   emailSubjectTemplate: "Invoice {{invoiceNumber}} due from {{companyName}} - {{invoiceTotal}}",
   emailBodyTemplate: "Hi {{customerFirstName}},\n\nThank you for choosing {{companyName}}. Please see attached invoice due {{invoiceDueTerms}}.",
-  smsTemplate: "Invoice due from {{companyName}}",
+  smsTemplate: "Invoice #{{invoiceNumber}} {{invoiceTotal}}: {{paymentUrl}}",
   reminderSubjectTemplate: "Reminder: Invoice {{invoiceNumber}} is due from {{companyName}} - {{invoiceTotal}}",
   reminderBodyTemplate: "Hi {{customerFirstName}},\n\nThis is a friendly reminder from {{companyName}} that invoice {{invoiceNumber}} for {{invoiceTotal}} is due. Please see the attached invoice to review and pay."
 };
@@ -1097,7 +1097,7 @@ const defaultMessagingSettings: MessagingSettings = {
     onMyWay: "Hi {{customerFirstName}}, {{technicianName}} is on the way for job #{{jobNumber}} with {{companyName}}.",
     workStarted: "Hi {{customerFirstName}}, work has started on job #{{jobNumber}}.",
     jobCompleted: "Hi {{customerFirstName}}, job #{{jobNumber}} has been completed. Thank you for choosing {{companyName}}.",
-    invoiceSent: "Hi {{customerFirstName}}, invoice #{{invoiceNumber}} for {{invoiceTotal}} from {{companyName}} is ready. Pay securely: {{paymentUrl}}",
+    invoiceSent: "Invoice #{{invoiceNumber}} {{invoiceTotal}}: {{paymentUrl}}",
     paymentReceived: "Hi {{customerFirstName}}, payment of {{paymentAmount}} was received. Thank you for choosing {{companyName}}."
   },
   reviewEmail: {
@@ -3424,7 +3424,8 @@ export function App() {
       ["{{companyName}}", companyName],
       ["{{invoiceTotal}}", money.format(invoice.total / 100)],
       ["{{customerFirstName}}", firstName],
-      ["{{invoiceDueTerms}}", dueTerms]
+      ["{{invoiceDueTerms}}", dueTerms],
+      ["{{paymentUrl}}", "payment link"]
     ].reduce((text, [tokenValue, replacement]) => text.split(tokenValue).join(replacement), template);
   }
 

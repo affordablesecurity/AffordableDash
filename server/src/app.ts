@@ -18,6 +18,7 @@ import { jobsRouter } from "./modules/jobs/jobs.routes.js";
 import { locationsRouter } from "./modules/locations/locations.routes.js";
 import { messagingRouter } from "./modules/messaging/messaging.routes.js";
 import { paymentsRouter } from "./modules/payments/payments.routes.js";
+import { publicPayRouter } from "./modules/payments/public-pay.routes.js";
 import { placesRouter } from "./modules/places/places.routes.js";
 import { priceBookRouter } from "./modules/pricebook/pricebook.routes.js";
 import { publicApiRouter } from "./modules/public-api/public-api.routes.js";
@@ -61,10 +62,11 @@ app.use("/api/settings", requireAuth, settingsRouter);
 app.use("/api/places", placesRouter);
 app.use("/api/webhooks", webhooksRouter);
 app.use("/location-api/v1", publicApiRouter);
+app.use("/pay", publicPayRouter);
 
 app.use(express.static(clientDistPath));
 app.get("*", (req, res, next) => {
-  if (req.path === "/api" || req.path.startsWith("/api/") || req.path === "/location-api" || req.path.startsWith("/location-api/")) return next();
+  if (req.path === "/api" || req.path.startsWith("/api/") || req.path === "/location-api" || req.path.startsWith("/location-api/") || req.path === "/pay" || req.path.startsWith("/pay/")) return next();
   res.sendFile(path.join(clientDistPath, "index.html"));
 });
 

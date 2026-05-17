@@ -203,7 +203,7 @@ const invoiceSettingsSchema = z.object({
   customerViewFormat: z.enum(["email", "envelope"]).default("email"),
   emailSubjectTemplate: z.string().default("Invoice {{invoiceNumber}} due from {{companyName}} - {{invoiceTotal}}"),
   emailBodyTemplate: z.string().default("Hi {{customerFirstName}},\n\nThank you for choosing {{companyName}}. Please see attached invoice due {{invoiceDueTerms}}."),
-  smsTemplate: z.string().default("Invoice due from {{companyName}}"),
+  smsTemplate: z.string().default("Invoice #{{invoiceNumber}} {{invoiceTotal}}: {{paymentUrl}}"),
   reminderSubjectTemplate: z.string().default("Reminder: Invoice {{invoiceNumber}} is due from {{companyName}} - {{invoiceTotal}}"),
   reminderBodyTemplate: z.string().default("Hi {{customerFirstName}},\n\nThis is a friendly reminder from {{companyName}} that invoice {{invoiceNumber}} for {{invoiceTotal}} is due. Please see the attached invoice to review and pay.")
 });

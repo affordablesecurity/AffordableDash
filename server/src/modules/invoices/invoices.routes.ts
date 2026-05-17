@@ -1,11 +1,11 @@
 import { InvoiceStatus } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
 import { queueInvoiceEmail, sendInvoiceTemplateSms } from "../messaging/messaging.service.js";
-import { createInvoiceCheckoutSession } from "../payments/stripe.service.js";
 
 export const invoicesRouter = Router();
 
@@ -116,20 +116,9 @@ invoicesRouter.post("/:id/send", asyncHandler(async (req, res) => {
   const deliveries: unknown[] = [];
   const wantsEmail = input.method === "email" || input.method === "both";
   const wantsText = input.method === "text" || input.method === "both";
-  const origin = req.header("origin") || `${req.protocol}://${req.get("host")}`;
-  let paymentUrl = "";
-  let checkoutSessionId = "";
-  let paymentLinkWarning: string | null = null;
-
-  if (invoice.total > 0) {
-    try {
-      const session = await createInvoiceCheckoutSession(invoice, origin);
-      paymentUrl = session.url ?? "";
-      checkoutSessionId = session.id;
-    } catch (err) {
-      paymentLinkWarning = err instanceof Error ? err.message : "Unable to create Stripe checkout link.";
-    }
-  }
+  const paymentUrl = invoice.total > 0 ? `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/pay/${invoice.invoiceNumber}` : "";
+  const checkoutSessionId = "";
+  const paymentLinkWarning = invoice.total > 0 ? null : "Invoice total must be greater than zero to create a payment link.";
 
   const appendPaymentLink = (message = "") => {
     if (!paymentUrl) return message;
@@ -140,7 +129,7 @@ invoicesRouter.post("/:id/send", asyncHandler(async (req, res) => {
 
   if (wantsText) {
     const to = input.method === "text" ? input.to : input.to?.split(",").map((part) => part.trim()).find((part) => /\d/.test(part));
-    deliveries.push(await sendInvoiceTemplateSms(locationId, invoice.id, to, input.message ? appendPaymentLink(input.message) : undefined, paymentUrl));
+    deliveries.push(await sendInvoiceTemplateSms(locationId, invoice.id, to, undefined, paymentUrl));
   }
   if (wantsEmail) {
     const to = input.method === "email" ? input.to : input.to?.split(",").map((part) => part.trim()).find((part) => part.includes("@"));

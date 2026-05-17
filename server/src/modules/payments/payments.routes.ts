@@ -42,7 +42,7 @@ paymentsRouter.post("/invoices/:invoiceId/checkout-session", asyncHandler(async 
   const invoiceId = String(req.params.invoiceId);
   const invoice = await prisma.invoice.findFirst({
     where: { id: invoiceId, locationId: activeLocationId(req) },
-    include: { customer: true }
+    include: { customer: true, job: true, items: true }
   });
   if (!invoice) return res.status(404).json({ error: "Invoice not found" });
   if (invoice.total <= 0) return res.status(422).json({ error: "Invoice total must be greater than zero" });

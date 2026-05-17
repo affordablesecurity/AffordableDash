@@ -43,7 +43,7 @@ export const defaultTemplates: Record<MessagingTemplateKey, string> = {
   onMyWay: "Hi {{customerFirstName}}, {{technicianName}} is on the way for job #{{jobNumber}} with {{companyName}}.",
   workStarted: "Hi {{customerFirstName}}, work has started on job #{{jobNumber}}.",
   jobCompleted: "Hi {{customerFirstName}}, job #{{jobNumber}} has been completed. Thank you for choosing {{companyName}}.",
-  invoiceSent: "Hi {{customerFirstName}}, invoice #{{invoiceNumber}} for {{invoiceTotal}} from {{companyName}} is ready. Pay securely: {{paymentUrl}}",
+  invoiceSent: "Invoice #{{invoiceNumber}} {{invoiceTotal}}: {{paymentUrl}}",
   paymentReceived: "Hi {{customerFirstName}}, payment of {{paymentAmount}} was received. Thank you for choosing {{companyName}}."
 };
 
@@ -428,13 +428,21 @@ export async function sendInvoiceTemplateSms(locationId: string, invoiceId: stri
     paymentUrl,
     scheduledWindow: invoice.job ? scheduledWindow(invoice.job.scheduledStart, invoice.job.scheduledEnd) : ""
   };
+  let body = bodyOverride || renderTemplate(settings.templates.invoiceSent, context);
+  if (paymentUrl && !body.includes(paymentUrl)) {
+    body = `${body.trim()} ${paymentUrl}`.trim();
+  }
+  if (paymentUrl && body.length > 155) {
+    body = `Invoice #${invoice.invoiceNumber} ${dollars(invoice.total)}: ${paymentUrl}`;
+  }
+
   return sendLocationSms({
     locationId,
     customerId: invoice.customerId,
     jobId: invoice.jobId,
     invoiceId: invoice.id,
     to: toOverride || invoice.customer.phone,
-    body: bodyOverride || renderTemplate(settings.templates.invoiceSent, context),
+    body,
     templateKey: "invoiceSent",
     customer: invoice.customer
   });

@@ -8,7 +8,7 @@ const schema = z.object({
   NODE_ENV: z.string().default("development"),
   PORT: z.coerce.number().default(4100),
   CLIENT_URL: z.string().default("http://localhost:5173"),
-  PUBLIC_BASE_URL: z.string().default("https://affordabledash.onrender.com"),
+  PUBLIC_BASE_URL: z.string().default("https://affordable-onrender.com"),
   DATABASE_URL: z.string(),
   JWT_SECRET: z.string().min(16),
   STRIPE_SECRET_KEY: z.string().optional(),
