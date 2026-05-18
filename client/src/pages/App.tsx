@@ -4,6 +4,7 @@ import {
   BookOpen,
   CalendarDays,
   CheckCheck,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -34,6 +35,7 @@ import {
   Printer,
   ReceiptText,
   Search,
+  Send,
   Settings,
   Smartphone,
   StickyNote,
@@ -6784,25 +6786,37 @@ export function App() {
                       </section>
                     </aside>
                     <main className="job-detail-main">
-                      <section className="panel job-workflow-panel">
-                        <div className="panel-header"><h2>Estimate workflow</h2><ListChecks size={18} /></div>
-                        <div className="workflow-steps">
-                          {[
-                            ["SCHEDULED", "Scheduled"],
-                            ["EN_ROUTE", "En route"],
-                            ["FINISHED", "Finished"]
-                          ].map(([workflowStatus, label]) => (
-                            <button
-                              key={workflowStatus}
-                              className={selectedEstimate.workflowStatus === workflowStatus ? "active" : ""}
-                              type="button"
-                              onClick={() => updateEstimateWorkflow(selectedEstimate, workflowStatus as Estimate["workflowStatus"])}
-                            >
-                              <strong>{label}</strong>
-                              <span>{workflowStatus === "SCHEDULED" ? "Estimate visit booked" : workflowStatus === "EN_ROUTE" ? "On the way to estimate" : "Ready to copy into job"}</span>
-                            </button>
-                          ))}
-                        </div>
+                      <section className="panel job-workflow-panel estimate-action-panel">
+                        <button className={selectedEstimate.workflowStatus === "SCHEDULED" ? "active" : ""} type="button" onClick={() => updateEstimateWorkflow(selectedEstimate, "SCHEDULED")}>
+                          <CalendarDays size={22} />
+                          <strong>Schedule</strong>
+                          <span>{selectedEstimate.scheduledStart ? new Date(selectedEstimate.scheduledStart).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "Set visit"}</span>
+                        </button>
+                        <button className={selectedEstimate.workflowStatus === "EN_ROUTE" ? "active" : ""} type="button" onClick={() => updateEstimateWorkflow(selectedEstimate, "EN_ROUTE")}>
+                          <Navigation size={22} />
+                          <strong>On My Way</strong>
+                          <span>Estimate visit</span>
+                        </button>
+                        <button className={selectedEstimate.workflowStatus === "FINISHED" ? "active" : ""} type="button" onClick={() => updateEstimateWorkflow(selectedEstimate, "FINISHED")}>
+                          <CheckCheck size={22} />
+                          <strong>Finish</strong>
+                          <span>Quote ready</span>
+                        </button>
+                        <button type="button" onClick={() => openEstimateSendDialog(selectedEstimate)}>
+                          <Send size={22} />
+                          <strong>Send</strong>
+                          <span>Send estimate</span>
+                        </button>
+                        <button className={selectedEstimate.status === "APPROVED" ? "approved" : selectedEstimate.status === "DECLINED" ? "declined" : ""} type="button" onClick={() => selectedEstimate.status === "APPROVED" ? undefined : approveEstimate(selectedEstimate)}>
+                          <CheckCircle2 size={22} />
+                          <strong>{selectedEstimate.status === "APPROVED" ? "Approved" : selectedEstimate.status === "DECLINED" ? "Declined" : "Approval"}</strong>
+                          <span>{selectedEstimate.status === "APPROVED" ? formatDate(selectedEstimate.approvedAt) : "Awaiting customer"}</span>
+                        </button>
+                        <button type="button" disabled={selectedEstimate.status !== "APPROVED"} onClick={() => convertEstimateToJob(selectedEstimate)}>
+                          <Copy size={22} />
+                          <strong>Copy to Job</strong>
+                          <span>{selectedEstimate.status === "APPROVED" ? "Create job" : "Needs approval"}</span>
+                        </button>
                       </section>
                       <section className="panel">
                         <div className="panel-header"><h2>Summary of work</h2><StickyNote size={18} /></div>
