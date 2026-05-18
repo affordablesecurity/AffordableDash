@@ -98,8 +98,6 @@ async function organizationLocations(organizationId: string) {
 }
 
 async function canManageOrganizationLocations(user: { id: string; role: string; organizationId: string }) {
-  if (user.role === "OWNER") return true;
-  if (user.role !== "ADMIN") return false;
   const membership = await prisma.userMembership.findFirst({
     where: {
       userId: user.id,
@@ -218,7 +216,7 @@ techniciansRouter.post("/", asyncHandler(async (req, res) => {
         }
       });
       locationId = createdLocation.id;
-      targetLocationIds = Array.from(new Set([...targetLocationIds, locationId]));
+      targetLocationIds = [locationId];
 
       await tx.userMembership.upsert({
         where: { userId_organizationId_locationId: { userId: req.user!.id, organizationId: req.user!.organizationId, locationId } },

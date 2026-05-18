@@ -42,8 +42,6 @@ function slugify(value: string) {
 }
 
 async function canManageOrganizationLocations(user: { id: string; role: string; organizationId: string }) {
-  if (user.role === "OWNER") return true;
-  if (user.role !== "ADMIN") return false;
   const membership = await prisma.userMembership.findFirst({
     where: {
       userId: user.id,

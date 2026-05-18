@@ -1,11 +1,15 @@
 const API_URL = import.meta.env.VITE_API_URL ?? "";
 
 export type LoginResponse = {
-  token: string;
-  user: { id: string; email: string; username: string; name: string; role: string };
+  token?: string;
+  user?: { id: string; email: string; username: string; name: string; role: string };
   organization?: { id: string; name: string };
   location?: { id: string; name: string };
   locations?: Array<{ role: string; organization: { id: string; name: string }; location: { id: string; name: string } }>;
+  mfaRequired?: boolean;
+  challengeId?: string;
+  method?: "email" | "sms" | "both";
+  deliveryTarget?: string;
 };
 
 export function getToken() {
@@ -68,6 +72,14 @@ export function login(identifier: string, password: string) {
     skipAuth: true,
     method: "POST",
     body: JSON.stringify({ identifier, password })
+  });
+}
+
+export function verifyLoginCode(challengeId: string, code: string) {
+  return api<LoginResponse>("/api/auth/verify-login-code", {
+    skipAuth: true,
+    method: "POST",
+    body: JSON.stringify({ challengeId, code })
   });
 }
 

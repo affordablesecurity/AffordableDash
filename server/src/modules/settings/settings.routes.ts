@@ -56,8 +56,6 @@ function rangeBounds(range: string, selectedDate?: string) {
 }
 
 async function canUseOrganizationScope(user: { id: string; role: string; organizationId: string }) {
-  if (user.role === "OWNER") return true;
-  if (user.role !== "ADMIN") return false;
   const membership = await prisma.userMembership.findFirst({
     where: {
       userId: user.id,
