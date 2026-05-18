@@ -2212,7 +2212,7 @@ button.stat-card {
 
 .jobs-tools {
   display: grid;
-  grid-template-columns: minmax(280px, 380px) 96px 84px 40px;
+  grid-template-columns: minmax(280px, 1fr) minmax(130px, 180px) auto 40px;
   gap: 12px;
   align-items: center;
   padding-bottom: 22px;
@@ -2244,13 +2244,19 @@ button.stat-card {
 }
 
 .jobs-table {
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid #e6e9f1;
+  border-radius: 10px;
+  margin-top: 14px;
 }
 
 .jobs-table-row {
-  min-width: 1120px;
+  min-width: 1580px;
   display: grid;
-  grid-template-columns: 44px 86px 180px 270px minmax(320px, 1fr) 150px 150px 100px 72px;
+  grid-template-columns: 44px 86px 190px 240px 320px 140px 150px 160px 150px 160px 110px 72px;
   gap: 14px;
   align-items: center;
   min-height: 56px;
@@ -7753,6 +7759,20 @@ button:disabled {
     max-width: none;
   }
 
+  .messages-layout,
+  .internal-messages-layout {
+    height: auto;
+    min-height: 0;
+  }
+
+  .message-conversation {
+    min-height: 560px;
+  }
+
+  .message-list {
+    max-height: 54vh;
+  }
+
   .employee-role-picker,
   .employee-permission-grid,
   .employee-profile-meta,
@@ -8135,14 +8155,19 @@ button:disabled {
 }
 
 .estimate-table-wrap {
-  overflow: auto;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid #e6e9f1;
   border-radius: 10px;
 }
 
 .estimate-management-table {
   min-width: 1450px;
-  width: 100%;
+  width: max-content;
+  max-width: none;
   border-collapse: collapse;
   color: #272d3d;
   font-size: 14px;
@@ -8344,10 +8369,12 @@ button:disabled {
 }
 
 .messages-layout {
-  min-height: calc(100vh - 210px);
+  height: calc(100vh - 240px);
+  min-height: 540px;
   display: grid;
   grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
   gap: 18px;
+  min-width: 0;
 }
 
 .message-thread-list,
@@ -8361,6 +8388,8 @@ button:disabled {
 .message-thread-list {
   display: grid;
   align-content: start;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .thread-list-head {
@@ -8435,7 +8464,7 @@ button:disabled {
 .message-conversation {
   display: grid;
   grid-template-rows: auto 1fr auto;
-  min-height: 620px;
+  min-height: 0;
 }
 
 .conversation-head {
@@ -8457,11 +8486,13 @@ button:disabled {
 }
 
 .message-list {
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 22px;
-  overflow: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: #fafbfe;
 }
 
@@ -8608,6 +8639,24 @@ button:disabled {
   align-items: end;
   padding: 16px;
   border-top: 1px solid #eef1f6;
+}
+
+.customer-profile-messages {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.customer-message-window {
+  height: min(560px, calc(100vh - 360px));
+  min-height: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  background: #fafbfe;
+  border: 1px solid #eef1f6;
+  border-radius: 12px;
+  padding: 18px;
 }
 
 .composer-attach-button {
@@ -8922,6 +8971,20 @@ button:disabled {
   .payment-kpi-grid,
   .payment-method-grid {
     grid-template-columns: 1fr;
+  }
+
+  .messages-layout,
+  .internal-messages-layout {
+    height: auto;
+    min-height: 0;
+  }
+
+  .message-conversation {
+    min-height: 560px;
+  }
+
+  .message-list {
+    max-height: 54vh;
   }
 
   .payments-hero,

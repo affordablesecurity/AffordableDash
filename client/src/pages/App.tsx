@@ -407,6 +407,19 @@ type EstimateFilters = {
   jobType: string;
 };
 
+type JobFilters = {
+  scheduledFrom: string;
+  scheduledTo: string;
+  createdFrom: string;
+  createdTo: string;
+  leadSource: string;
+  tag: string;
+  technicianId: string;
+  customer: string;
+  jobType: string;
+  paymentStatus: string;
+};
+
 type Invoice = {
   id: string;
   invoiceNumber: number;
@@ -1456,6 +1469,19 @@ const blankEstimateFilters: EstimateFilters = {
   jobType: ""
 };
 
+const blankJobFilters: JobFilters = {
+  scheduledFrom: "",
+  scheduledTo: "",
+  createdFrom: "",
+  createdTo: "",
+  leadSource: "",
+  tag: "",
+  technicianId: "",
+  customer: "",
+  jobType: "",
+  paymentStatus: ""
+};
+
 function profitPercent(revenue: number, cost: number) {
   if (revenue <= 0) return 0;
   return ((revenue - cost) / revenue) * 100;
@@ -1995,6 +2021,8 @@ export function App() {
   const [selectedJobId, setSelectedJobId] = useState("");
   const [jobSearch, setJobSearch] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState("all");
+  const [jobFilters, setJobFilters] = useState<JobFilters>(blankJobFilters);
+  const [jobFilterPanelOpen, setJobFilterPanelOpen] = useState(false);
   const [employeeSearch, setEmployeeSearch] = useState("");
   const [employeeActionMessage, setEmployeeActionMessage] = useState("");
   const [employeeModal, setEmployeeModal] = useState<EmployeeModalType | null>(null);
@@ -2143,6 +2171,9 @@ export function App() {
   });
   const [messages, setMessages] = useState<CrmMessage[]>([]);
   const [selectedMessageThread, setSelectedMessageThread] = useState("");
+  const customerMessageListRef = useRef<HTMLDivElement | null>(null);
+  const customerProfileMessageListRef = useRef<HTMLDivElement | null>(null);
+  const internalMessageListRef = useRef<HTMLDivElement | null>(null);
   const [messageDraft, setMessageDraft] = useState("");
   const [messageAttachments, setMessageAttachments] = useState<MessageAttachment[]>([]);
   const [messageMode, setMessageMode] = useState<"customers" | "internal">("customers");
@@ -2220,7 +2251,7 @@ export function App() {
   const [deletedCustomers, setDeletedCustomers] = useState<Customer[]>([]);
   const customerImportInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
-  const [customerProfileTab, setCustomerProfileTab] = useState<"profile" | "leads" | "estimates" | "jobs" | "invoices" | "attachments" | "notes">("profile");
+  const [customerProfileTab, setCustomerProfileTab] = useState<"profile" | "leads" | "estimates" | "jobs" | "invoices" | "messages" | "attachments" | "notes">("profile");
   const [customerNoteDraft, setCustomerNoteDraft] = useState("");
   const [customerAddressForm, setCustomerAddressForm] = useState({ label: "Service", street1: "", street2: "", city: "", state: "CA", postalCode: "", latitude: "", longitude: "" });
   const [customerAttachmentName, setCustomerAttachmentName] = useState("");
@@ -2527,20 +2558,39 @@ export function App() {
   const filteredJobs = useMemo(() => {
     const query = jobSearch.trim().toLowerCase();
     return jobs.filter((job) => {
+      const paymentStatus = jobPaymentStatus(job);
       const matchesStatus = jobStatusFilter === "all" || (jobStatusFilter === "open" ? job.status === "LEAD" || job.status === "SCHEDULED" : job.status === jobStatusFilter);
+      const matchesFilters = matchesDateRange(job.scheduledStart, jobFilters.scheduledFrom, jobFilters.scheduledTo)
+        && matchesDateRange(job.createdAt, jobFilters.createdFrom, jobFilters.createdTo)
+        && (!jobFilters.leadSource || job.leadSource === jobFilters.leadSource)
+        && (!jobFilters.tag || (job.tags ?? []).includes(jobFilters.tag))
+        && (!jobFilters.technicianId || job.technician?.id === jobFilters.technicianId)
+        && (!jobFilters.jobType || job.jobType === jobFilters.jobType)
+        && (!jobFilters.paymentStatus || paymentStatus.toLowerCase() === jobFilters.paymentStatus)
+        && (!jobFilters.customer || [
+          customerName(job.customer),
+          job.customer.email ?? "",
+          job.customer.phone,
+          addressLine(job.address ?? job.customer.addresses?.[0])
+        ].some((value) => value.toLowerCase().includes(jobFilters.customer.toLowerCase())));
       const matchesQuery = !query || [
         String(job.jobNumber),
         job.title,
         job.jobType,
         job.leadSource ?? "",
         ...(job.tags ?? []),
+        job.status,
+        paymentStatus,
+        job.technician?.name ?? "",
+        job.customer.phone,
+        job.customer.email ?? "",
         job.customer.firstName,
         job.customer.lastName,
         addressLine(job.address ?? job.customer.addresses?.[0])
       ].some((value) => value.toLowerCase().includes(query));
-      return matchesStatus && matchesQuery;
+      return matchesStatus && matchesFilters && matchesQuery;
     });
-  }, [jobSearch, jobStatusFilter, jobs]);
+  }, [jobFilters, jobSearch, jobStatusFilter, jobs]);
   const filteredEstimates = useMemo(() => {
     const query = estimateSearch.trim().toLowerCase();
     return estimates.filter((estimate) => {
@@ -2700,6 +2750,12 @@ export function App() {
     if (!selectedCustomer) return [];
     return estimates.filter((estimate) => estimate.customer.id === selectedCustomer.id);
   }, [estimates, selectedCustomer]);
+  const selectedCustomerMessages = useMemo(() => {
+    if (!selectedCustomer) return [];
+    return messages
+      .filter((message) => message.customerId === selectedCustomer.id || message.customer?.id === selectedCustomer.id)
+      .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  }, [messages, selectedCustomer]);
   const selectedCustomerLifetimeValue = selectedCustomerInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
   const selectedCustomerOutstanding = selectedCustomerInvoices
     .filter((invoice) => invoice.status !== "PAID")
@@ -3159,6 +3215,27 @@ export function App() {
       return next;
     });
   }, [activeView, messageMode, messageReadStorageKey, selectedThread?.id, selectedThread?.latest]);
+
+  useEffect(() => {
+    if (activeView !== "messages" || messageMode !== "customers") return;
+    const list = customerMessageListRef.current;
+    if (!list) return;
+    list.scrollTop = list.scrollHeight;
+  }, [activeView, messageMode, selectedThread?.id, selectedThread?.latest]);
+
+  useEffect(() => {
+    if (activeView !== "messages" || messageMode !== "internal") return;
+    const list = internalMessageListRef.current;
+    if (!list) return;
+    list.scrollTop = list.scrollHeight;
+  }, [activeView, internalAudience, internalRecipientId, messageMode, visibleInternalMessages.length]);
+
+  useEffect(() => {
+    if (activeView !== "customers" || customerProfileTab !== "messages") return;
+    const list = customerProfileMessageListRef.current;
+    if (!list) return;
+    list.scrollTop = list.scrollHeight;
+  }, [activeView, customerProfileTab, selectedCustomer?.id, selectedCustomerMessages.length]);
 
   useEffect(() => {
     if (canUseAdminChannel || internalAudience !== "admin") return;
@@ -6641,9 +6718,15 @@ export function App() {
   const estimateFilterCount = Object.values(estimateFilters).filter(Boolean).length
     + (estimateOutcomeFilter === "all" ? 0 : 1)
     + (estimateStatusFilter === "all" ? 0 : 1);
+  const jobFilterCount = Object.values(jobFilters).filter(Boolean).length
+    + (jobStatusFilter === "all" ? 0 : 1);
   const invoiceFilterCount = Object.values(invoiceFilters).filter(Boolean).length
     + (invoiceStatusFilter === "all" ? 0 : 1);
   const customerFilterCount = Object.values(customerFilters).filter(Boolean).length;
+
+  function updateJobFilter<K extends keyof JobFilters>(key: K, value: JobFilters[K]) {
+    setJobFilters((current) => ({ ...current, [key]: value }));
+  }
 
   function updateEstimateFilter<K extends keyof EstimateFilters>(key: K, value: EstimateFilters[K]) {
     setEstimateFilters((current) => ({ ...current, [key]: value }));
@@ -8092,7 +8175,7 @@ export function App() {
                         }}>Customer profile</button>
                       )}
                     </div>
-                    <div className="message-list">
+                    <div className="message-list" ref={customerMessageListRef}>
                       {selectedThread.messages.map((message) => (
                         <div key={message.id} className={`message-bubble ${message.direction.toLowerCase()}`}>
                           <p>{message.body}</p>
@@ -8194,7 +8277,7 @@ export function App() {
                       <span className="internal-channel-pill">{internalAudience === "direct" ? "Direct" : internalAudience === "admin" ? "Admins" : "Team"}</span>
                     </div>
                   </div>
-                  <div className="message-list">
+                  <div className="message-list" ref={internalMessageListRef}>
                     {visibleInternalMessages.length ? visibleInternalMessages.map((message) => (
                       <div key={message.id} className="message-bubble internal">
                         <small>{message.templateKey || "Team member"}{message.channel === "internal-direct" && message.providerRef ? ` → ${message.providerRef}` : ""}</small>
@@ -8341,7 +8424,7 @@ export function App() {
                 </div>
 
                 <div className="customer-tabs">
-                  {(["profile", "leads", "estimates", "jobs", "invoices", "attachments", "notes"] as const).map((tab) => (
+                  {(["profile", "leads", "estimates", "jobs", "invoices", "messages", "attachments", "notes"] as const).map((tab) => (
                     <button key={tab} className={customerProfileTab === tab ? "active" : ""} onClick={() => setCustomerProfileTab(tab)}>
                       {tab[0].toUpperCase() + tab.slice(1)}
                     </button>
@@ -8477,6 +8560,34 @@ export function App() {
                         </article>
                       ))}
                       {selectedCustomerEstimates.length === 0 && <p className="empty">No estimates for this customer yet.</p>}
+                    </div>
+                  </section>
+                )}
+
+                {customerProfileTab === "messages" && (
+                  <section className="panel customer-profile-messages">
+                    <div className="panel-header">
+                      <h2>Messages</h2>
+                      <button className="outline-button" type="button" onClick={() => {
+                        setSelectedMessageThread(selectedCustomer.id);
+                        setMessageMode("customers");
+                        setActiveView("messages");
+                      }}>Open full inbox</button>
+                    </div>
+                    <div className="customer-message-window" ref={customerProfileMessageListRef}>
+                      {selectedCustomerMessages.map((message) => (
+                        <div key={message.id} className={`message-bubble ${message.direction.toLowerCase()}`}>
+                          <p>{message.body}</p>
+                          {(message.attachments ?? []).length > 0 && (
+                            <div className="message-attachments">
+                              {(message.attachments ?? []).map((attachment, index) => renderMessageAttachment(attachment, message.id, index))}
+                            </div>
+                          )}
+                          <span>{formatDateTime(message.createdAt)} · {message.status ?? (message.direction === "INBOUND" ? "Received" : "Sent")}</span>
+                          {message.error && <strong>{message.error}</strong>}
+                        </div>
+                      ))}
+                      {selectedCustomerMessages.length === 0 && <p className="empty">No messages for this customer yet.</p>}
                     </div>
                   </section>
                 )}
@@ -8872,16 +8983,13 @@ export function App() {
                 <div className="jobs-tools">
                   <div className="search-box table-search">
                     <Search size={18} />
-                    <input placeholder="Search jobs, clients, addresses" value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} />
+                    <input placeholder="Search jobs, clients, addresses, phone, lead source, tech" value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} />
                   </div>
-                  <select aria-label="Tags">
-                    <option>Tags</option>
+                  <select aria-label="Tags" value={jobFilters.tag} onChange={(event) => updateJobFilter("tag", event.target.value)}>
+                    <option value="">All tags</option>
+                    {crmOptions.tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
                   </select>
-                  <select aria-label="Page size">
-                    <option>10</option>
-                    <option>25</option>
-                    <option>50</option>
-                  </select>
+                  <button className="outline-button" type="button" onClick={() => setJobFilterPanelOpen(true)}><Settings size={16} /> Filters{jobFilterCount ? ` (${jobFilterCount})` : ""}</button>
                   <button className="icon-button" aria-label="More actions"><MoreHorizontal size={18} /></button>
                 </div>
 
@@ -8907,6 +9015,9 @@ export function App() {
                     <span>Address</span>
                     <span>Status</span>
                     <span>Payment Status</span>
+                    <span>Job Type</span>
+                    <span>Lead Source</span>
+                    <span>Tech</span>
                     <span>Total</span>
                     <span>Actions</span>
                   </div>
@@ -8926,6 +9037,9 @@ export function App() {
                         <span>{addressLine(job.address ?? job.customer.addresses?.[0])}</span>
                         <span className={`status-pill job-status-${job.status.toLowerCase()}`}>{job.status === "DISPATCHED" ? "On My Way" : statusLabel(job.status)}</span>
                         <span className={`payment-pill ${paymentStatus.toLowerCase()}`}>{statusLabel(paymentStatus.toUpperCase())}</span>
+                        <span>{job.jobType || "--"}</span>
+                        <span>{job.leadSource || "--"}</span>
+                        <span>{job.technician?.name || "Unassigned"}</span>
                         <strong>{money.format(jobInvoiceTotal(job) / 100)}</strong>
                         <button className="text-button" aria-label={`Delete job ${job.jobNumber}`} onClick={(event) => { event.stopPropagation(); void deleteJob(job); }}><Trash2 size={16} /></button>
                       </div>
@@ -8933,6 +9047,46 @@ export function App() {
                   })}
                   {filteredJobs.length === 0 && <p className="empty table-empty">No jobs match this search.</p>}
                 </div>
+                {jobFilterPanelOpen && (
+                  <div className="modal-backdrop estimate-filter-backdrop" role="presentation" onClick={() => setJobFilterPanelOpen(false)}>
+                    <aside className="estimate-filter-panel" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                      <header><button className="icon-button" type="button" onClick={() => setJobFilterPanelOpen(false)}><X size={18} /></button><h2>Job filters</h2></header>
+                      <label>Job status
+                        <select value={jobStatusFilter} onChange={(event) => setJobStatusFilter(event.target.value)}>
+                          <option value="all">Any status</option><option value="open">Open</option><option value="DISPATCHED">On My Way</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETED">Completed</option><option value="CANCELED">Canceled</option>
+                        </select>
+                      </label>
+                      <label>Scheduled date
+                        <div className="two-column-inputs"><input type="date" value={jobFilters.scheduledFrom} onChange={(event) => updateJobFilter("scheduledFrom", event.target.value)} /><input type="date" value={jobFilters.scheduledTo} onChange={(event) => updateJobFilter("scheduledTo", event.target.value)} /></div>
+                      </label>
+                      <label>Created date
+                        <div className="two-column-inputs"><input type="date" value={jobFilters.createdFrom} onChange={(event) => updateJobFilter("createdFrom", event.target.value)} /><input type="date" value={jobFilters.createdTo} onChange={(event) => updateJobFilter("createdTo", event.target.value)} /></div>
+                      </label>
+                      <label>Lead source
+                        <select value={jobFilters.leadSource} onChange={(event) => updateJobFilter("leadSource", event.target.value)}><option value="">Any lead source</option>{crmOptions.leadSources.map((source) => <option key={source} value={source}>{source}</option>)}</select>
+                      </label>
+                      <label>Job tags
+                        <select value={jobFilters.tag} onChange={(event) => updateJobFilter("tag", event.target.value)}><option value="">Any tag</option>{crmOptions.tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select>
+                      </label>
+                      <label>Employee
+                        <select value={jobFilters.technicianId} onChange={(event) => updateJobFilter("technicianId", event.target.value)}><option value="">Any employee</option>{technicians.map((tech) => <option key={tech.id} value={tech.id}>{tech.name}</option>)}</select>
+                      </label>
+                      <label>Customer
+                        <input placeholder="Customer name, email, phone, or address" value={jobFilters.customer} onChange={(event) => updateJobFilter("customer", event.target.value)} />
+                      </label>
+                      <label>Job type
+                        <select value={jobFilters.jobType} onChange={(event) => updateJobFilter("jobType", event.target.value)}><option value="">Any job type</option>{crmOptions.jobTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select>
+                      </label>
+                      <label>Payment status
+                        <select value={jobFilters.paymentStatus} onChange={(event) => updateJobFilter("paymentStatus", event.target.value)}><option value="">Any payment status</option><option value="paid">Paid</option><option value="unpaid">Unpaid</option></select>
+                      </label>
+                      <div className="modal-actions">
+                        <button className="text-button" type="button" onClick={() => { setJobFilters(blankJobFilters); setJobStatusFilter("all"); }}>Clear filters</button>
+                        <button className="primary" type="button" onClick={() => setJobFilterPanelOpen(false)}>Apply</button>
+                      </div>
+                    </aside>
+                  </div>
+                )}
                   </div>
                 </>
               )}
