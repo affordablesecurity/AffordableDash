@@ -305,6 +305,16 @@ type Job = {
   notes?: Array<{ id: string; author: string; content: string; createdAt: string }>;
 };
 
+type EstimateAppointment = {
+  id: string;
+  technicianId?: string | null;
+  scheduledStart: string;
+  scheduledEnd?: string | null;
+  status: string;
+  canceledAt?: string | null;
+  technician?: Technician | null;
+};
+
 type Estimate = {
   id: string;
   estimateNumber: number;
@@ -315,8 +325,8 @@ type Estimate = {
   tags?: string[];
   status: "DRAFT" | "SENT" | "APPROVED" | "DECLINED" | "CONVERTED";
   workflowStatus?: "DRAFT" | "SCHEDULED" | "EN_ROUTE" | "FINISHED";
-  scheduledStart?: string;
-  scheduledEnd?: string;
+  scheduledStart?: string | null;
+  scheduledEnd?: string | null;
   description?: string;
   internalNotes?: string;
   approvalSignature?: string;
@@ -331,7 +341,9 @@ type Estimate = {
   convertedJobId?: string;
   customer: Customer;
   address?: Address;
-  technician?: Technician;
+  technicianId?: string | null;
+  technician?: Technician | null;
+  appointments?: EstimateAppointment[];
   lineItems?: Array<{ id: string; optionId?: string | null; category: string; name: string; description?: string; quantity: string; unitPrice: number; unitCost?: number; taxable?: boolean }>;
   options?: Array<{ id: string; title: string; description?: string; imageName?: string; sortOrder: number; lineItems?: Array<{ id: string; optionId?: string | null; category: string; name: string; description?: string; quantity: string; unitPrice: number; unitCost?: number; taxable?: boolean }> }>;
   convertedJob?: Job;
@@ -948,6 +960,33 @@ function estimateWorkflowLabel(status?: Estimate["workflowStatus"]) {
   return "Draft";
 }
 
+function estimateAppointmentsForDisplay(estimate: Estimate): EstimateAppointment[] {
+  const activeAppointments = (estimate.appointments ?? []).filter((appointment) => appointment.status !== "CANCELED");
+  if (activeAppointments.length) return activeAppointments;
+  if (!estimate.scheduledStart) return [];
+  return [{
+    id: "legacy",
+    technicianId: estimate.technician?.id ?? "",
+    scheduledStart: estimate.scheduledStart,
+    scheduledEnd: estimate.scheduledEnd,
+    status: "SCHEDULED",
+    technician: estimate.technician ?? null
+  }];
+}
+
+function appointmentTimeLabel(appointment: Pick<EstimateAppointment, "scheduledStart" | "scheduledEnd">) {
+  const start = new Date(appointment.scheduledStart);
+  const end = appointment.scheduledEnd ? new Date(appointment.scheduledEnd) : null;
+  return `${start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${end ? ` - ${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}`;
+}
+
+function appointmentDurationLabel(appointment: Pick<EstimateAppointment, "scheduledStart" | "scheduledEnd">) {
+  if (!appointment.scheduledEnd) return "1h";
+  const minutes = Math.max(15, Math.round((new Date(appointment.scheduledEnd).getTime() - new Date(appointment.scheduledStart).getTime()) / 60000));
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 function jobPaymentStatus(job: Job) {
   const invoices = job.invoices ?? [];
   if (!invoices.length) return "Unpaid";
@@ -1308,6 +1347,9 @@ export function App() {
   });
   const [appointmentDialogOpen, setAppointmentDialogOpen] = useState(false);
   const [appointmentMenuOpen, setAppointmentMenuOpen] = useState(false);
+  const [estimateAppointmentDialogOpen, setEstimateAppointmentDialogOpen] = useState(false);
+  const [estimateEditingAppointmentId, setEstimateEditingAppointmentId] = useState("");
+  const [estimateAppointmentMenuId, setEstimateAppointmentMenuId] = useState("");
   const [appointmentForm, setAppointmentForm] = useState({
     scheduledStart: "",
     scheduledEnd: "",
@@ -1470,6 +1512,7 @@ export function App() {
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? null;
   const selectedJobInvoice = selectedJob?.invoices?.[0] ?? null;
   const selectedEstimate = estimates.find((estimate) => estimate.id === selectedEstimateId) ?? null;
+  const activeEstimateAppointments = selectedEstimate ? estimateAppointmentsForDisplay(selectedEstimate) : [];
   const selectedEstimateOptions = selectedEstimate?.options?.length ? selectedEstimate.options : [];
   const activeEstimateOption = selectedEstimateOptions.find((option) => option.id === activeEstimateOptionId) ?? selectedEstimateOptions[0];
   const activeEstimateCreateOption = estimateCreateOptions.find((option) => option.id === activeEstimateCreateOptionId) ?? estimateCreateOptions[0];
@@ -3569,6 +3612,136 @@ export function App() {
     setAppointmentDialogOpen(true);
     setAppointmentMenuOpen(false);
     setError("");
+  }
+
+  function openEstimateAppointmentEditor(estimate: Estimate, appointment?: EstimateAppointment) {
+    const start = appointment?.scheduledStart ? new Date(appointment.scheduledStart) : estimate.scheduledStart ? new Date(estimate.scheduledStart) : new Date();
+    if (!appointment?.scheduledStart && !estimate.scheduledStart) start.setHours(start.getHours() + 1, 0, 0, 0);
+    const end = appointment?.scheduledEnd ? new Date(appointment.scheduledEnd) : estimate.scheduledEnd ? new Date(estimate.scheduledEnd) : new Date(start.getTime() + 60 * 60 * 1000);
+    setAppointmentForm({
+      scheduledStart: toDateTimeLocal(start),
+      scheduledEnd: toDateTimeLocal(end),
+      technicianId: appointment?.technicianId || appointment?.technician?.id || estimate.technician?.id || ""
+    });
+    setEstimateEditingAppointmentId(appointment?.id === "legacy" ? "" : appointment?.id ?? "");
+    setEstimateAppointmentDialogOpen(true);
+    setEstimateAppointmentMenuId("");
+    setError("");
+  }
+
+  function addAppointmentForEstimate(estimate: Estimate) {
+    const appointments = estimateAppointmentsForDisplay(estimate);
+    const lastAppointment = appointments.at(-1);
+    const start = lastAppointment?.scheduledEnd ? new Date(lastAppointment.scheduledEnd) : new Date();
+    if (!lastAppointment?.scheduledEnd) start.setHours(start.getHours() + 1, 0, 0, 0);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    setAppointmentForm({
+      scheduledStart: toDateTimeLocal(start),
+      scheduledEnd: toDateTimeLocal(end),
+      technicianId: estimate.technician?.id ?? ""
+    });
+    setEstimateEditingAppointmentId("");
+    setEstimateAppointmentDialogOpen(true);
+    setEstimateAppointmentMenuId("");
+    setError("");
+  }
+
+  async function saveEstimateAppointment(estimate: Estimate) {
+    if (!appointmentForm.scheduledStart) {
+      setError("Choose an appointment start time.");
+      return;
+    }
+    const startDate = new Date(appointmentForm.scheduledStart);
+    const endDate = appointmentForm.scheduledEnd ? new Date(appointmentForm.scheduledEnd) : new Date(startDate.getTime() + 60 * 60 * 1000);
+    if (endDate <= startDate) {
+      setError("Appointment end time must be after the start time.");
+      return;
+    }
+    const endpoint = estimateEditingAppointmentId
+      ? `/api/estimates/${estimate.id}/appointments/${estimateEditingAppointmentId}`
+      : `/api/estimates/${estimate.id}/appointments`;
+    const result = await api<{ estimate: Estimate }>(endpoint, {
+      method: estimateEditingAppointmentId ? "PATCH" : "POST",
+      body: JSON.stringify({
+        scheduledStart: startDate.toISOString(),
+        scheduledEnd: endDate.toISOString(),
+        technicianId: appointmentForm.technicianId || null,
+        notify: true
+      })
+    });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setSelectedEstimateId(result.estimate.id);
+    setEstimateAppointmentDialogOpen(false);
+    setEstimateEditingAppointmentId("");
+    setEstimateActionMessage("Estimate appointment saved and customer notification queued.");
+    await loadDashboard();
+  }
+
+  async function assignEstimateAppointmentTechnician(estimate: Estimate, appointment: EstimateAppointment, technicianId: string) {
+    const start = new Date(appointment.scheduledStart);
+    const end = appointment.scheduledEnd ? new Date(appointment.scheduledEnd) : new Date(start.getTime() + 60 * 60 * 1000);
+    const endpoint = appointment.id === "legacy"
+      ? `/api/estimates/${estimate.id}/appointments`
+      : `/api/estimates/${estimate.id}/appointments/${appointment.id}`;
+    const result = await api<{ estimate: Estimate }>(endpoint, {
+      method: appointment.id === "legacy" ? "POST" : "PATCH",
+      body: JSON.stringify({
+        scheduledStart: start.toISOString(),
+        scheduledEnd: end.toISOString(),
+        technicianId: technicianId || null,
+        notify: true
+      })
+    });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setSelectedEstimateId(result.estimate.id);
+    setEstimateActionMessage("Estimate technician updated and customer notification queued.");
+    await loadDashboard();
+  }
+
+  async function sendEstimateAppointmentOmw(estimate: Estimate, appointment: EstimateAppointment) {
+    if (appointment.id === "legacy") {
+      setError("Save this appointment once before sending an on-my-way text.");
+      return;
+    }
+    const result = await api<{ estimate: Estimate }>(`/api/estimates/${estimate.id}/appointments/${appointment.id}/omw`, { method: "POST" });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setSelectedEstimateId(result.estimate.id);
+    setEstimateAppointmentMenuId("");
+    setEstimateActionMessage("On-my-way text queued for this estimate appointment.");
+  }
+
+  async function cancelEstimateAppointment(estimate: Estimate, appointment: EstimateAppointment) {
+    if (appointment.id === "legacy") {
+      await updateEstimate(estimate, { scheduledStart: null, scheduledEnd: null, technicianId: null, workflowStatus: "DRAFT" });
+      setEstimateAppointmentMenuId("");
+      setEstimateActionMessage("Estimate appointment removed.");
+      return;
+    }
+    const confirmed = window.confirm("Cancel this estimate appointment and notify the customer?");
+    if (!confirmed) return;
+    const result = await api<{ estimate: Estimate }>(`/api/estimates/${estimate.id}/appointments/${appointment.id}/cancel`, { method: "POST" });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setSelectedEstimateId(result.estimate.id);
+    setEstimateAppointmentMenuId("");
+    setEstimateActionMessage("Estimate appointment canceled and customer notification queued.");
+    await loadDashboard();
+  }
+
+  async function deleteEstimateAppointment(estimate: Estimate, appointment: EstimateAppointment) {
+    const confirmed = window.confirm("Delete this estimate appointment?");
+    if (!confirmed) return;
+    if (appointment.id === "legacy") {
+      await updateEstimate(estimate, { scheduledStart: null, scheduledEnd: null, technicianId: null, workflowStatus: "DRAFT" });
+      setEstimateAppointmentMenuId("");
+      setEstimateActionMessage("Estimate appointment deleted.");
+      return;
+    }
+    const result = await api<{ estimate: Estimate }>(`/api/estimates/${estimate.id}/appointments/${appointment.id}`, { method: "DELETE" });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setSelectedEstimateId(result.estimate.id);
+    setEstimateAppointmentMenuId("");
+    setEstimateActionMessage("Estimate appointment deleted.");
+    await loadDashboard();
   }
 
   async function createInvoiceFromJob(job: Job) {
@@ -6830,6 +7003,43 @@ export function App() {
                         <div className="action-buttons"><button className="primary" type="button" onClick={() => updateEstimate(selectedEstimate, { description: detailSummary || selectedEstimate.description || "" })}>Save summary</button></div>
                       </section>
                       <section className="panel">
+                        <div className="panel-header"><h2>Appointments <span className="count-chip">{activeEstimateAppointments.length}</span></h2><button className="outline-button" type="button" onClick={() => addAppointmentForEstimate(selectedEstimate)}><Plus size={17} /> Appointment</button></div>
+                        <div className="appointment-table">
+                          <span>#</span><span>Date</span><span>Time</span><span>Arrival window</span><span>Employees</span><span>Edit</span><span>More</span>
+                          {activeEstimateAppointments.length ? activeEstimateAppointments.map((appointment, index) => (
+                            <Fragment key={appointment.id}>
+                              <strong>{index + 1}</strong>
+                              <strong>{new Date(appointment.scheduledStart).toLocaleDateString([], { weekday: "short", month: "2-digit", day: "2-digit", year: "numeric" })}</strong>
+                              <strong>{appointmentTimeLabel(appointment)}</strong>
+                              <strong>{appointmentDurationLabel(appointment)}</strong>
+                              <strong className="appointment-employee-cell">
+                                <select value={appointment.technicianId || appointment.technician?.id || ""} onChange={(event) => assignEstimateAppointmentTechnician(selectedEstimate, appointment, event.target.value)} aria-label="Estimate appointment employee">
+                                  <option value="">Unassigned</option>
+                                  {technicians.filter((tech) => tech.active && tech.fieldTech).map((tech) => <option value={tech.id} key={tech.id}>{tech.name}</option>)}
+                                </select>
+                              </strong>
+                              <strong>
+                                <button className="icon-button appointment-row-button" type="button" onClick={() => openEstimateAppointmentEditor(selectedEstimate, appointment)} aria-label="Edit estimate appointment">
+                                  <CalendarDays size={17} />
+                                </button>
+                              </strong>
+                              <strong className="appointment-menu-cell">
+                                <button className="icon-button appointment-row-button" type="button" onClick={() => setEstimateAppointmentMenuId((current) => current === appointment.id ? "" : appointment.id)} aria-label="Estimate appointment actions">
+                                  <MoreHorizontal size={18} />
+                                </button>
+                                {estimateAppointmentMenuId === appointment.id && (
+                                  <div className="appointment-menu">
+                                    <button type="button" onClick={() => sendEstimateAppointmentOmw(selectedEstimate, appointment)}><Navigation size={17} /> Send OMW</button>
+                                    <button type="button" onClick={() => cancelEstimateAppointment(selectedEstimate, appointment)}><X size={17} /> Cancel appointment</button>
+                                    <button className="danger" type="button" onClick={() => deleteEstimateAppointment(selectedEstimate, appointment)}><Trash2 size={17} /> Delete</button>
+                                  </div>
+                                )}
+                              </strong>
+                            </Fragment>
+                          )) : <p className="empty appointment-empty">No appointments scheduled.</p>}
+                        </div>
+                      </section>
+                      <section className="panel">
                         <div className="panel-header"><h2>Estimate options</h2><button className="text-button" type="button" onClick={() => addEstimateOption(selectedEstimate)}>Create another option</button></div>
                         <div className="estimate-option-tabs">
                           {selectedEstimateOptions.map((option, index) => (
@@ -8531,6 +8741,46 @@ export function App() {
               <div className="modal-actions">
                 <button className="outline-button" type="button" onClick={() => setAppointmentDialogOpen(false)}>Cancel</button>
                 <button className="primary" type="button" onClick={() => saveAppointment(selectedJob)}>Save appointment</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {estimateAppointmentDialogOpen && selectedEstimate && (
+          <div className="modal-backdrop" onClick={() => setEstimateAppointmentDialogOpen(false)}>
+            <div className="appointment-modal" onClick={(event) => event.stopPropagation()}>
+              <header>
+                <div>
+                  <h2>{estimateEditingAppointmentId ? "Edit estimate appointment" : "Add estimate appointment"}</h2>
+                  <p>Set the visit window, assign the field tech, and notify the customer.</p>
+                </div>
+                <button className="icon-button" type="button" onClick={() => setEstimateAppointmentDialogOpen(false)} aria-label="Close estimate appointment editor"><X size={20} /></button>
+              </header>
+              <div className="appointment-form-grid">
+                <label>Start
+                  <input
+                    type="datetime-local"
+                    value={appointmentForm.scheduledStart}
+                    onChange={(event) => setAppointmentForm((current) => ({ ...current, scheduledStart: event.target.value }))}
+                  />
+                </label>
+                <label>End
+                  <input
+                    type="datetime-local"
+                    value={appointmentForm.scheduledEnd}
+                    onChange={(event) => setAppointmentForm((current) => ({ ...current, scheduledEnd: event.target.value }))}
+                  />
+                </label>
+              </div>
+              <label>Field tech
+                <select value={appointmentForm.technicianId} onChange={(event) => setAppointmentForm((current) => ({ ...current, technicianId: event.target.value }))}>
+                  <option value="">Unassigned</option>
+                  {technicians.filter((tech) => tech.active && tech.fieldTech).map((tech) => <option value={tech.id} key={tech.id}>{tech.name}</option>)}
+                </select>
+              </label>
+              <div className="modal-actions">
+                <button className="outline-button" type="button" onClick={() => setEstimateAppointmentDialogOpen(false)}>Cancel</button>
+                <button className="primary" type="button" onClick={() => saveEstimateAppointment(selectedEstimate)}>Save appointment</button>
               </div>
             </div>
           </div>

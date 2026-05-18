@@ -106,6 +106,7 @@ model Location {
   jobs           Job[]
   events         Event[]
   estimates      Estimate[]
+  estimateAppointments EstimateAppointment[]
   invoices       Invoice[]
   messages       Message[]
   apiKeys        LocationApiKey[]
@@ -226,6 +227,7 @@ model Technician {
   jobs           Job[]
   events         Event[]
   estimates      Estimate[]
+  estimateAppointments EstimateAppointment[]
   location       Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@index([locationId, userId])
@@ -320,7 +322,28 @@ model Estimate {
   convertedJob      Job?           @relation("EstimateConvertedJob", fields: [convertedJobId], references: [id], onDelete: SetNull)
   lineItems         EstimateLineItem[]
   options           EstimateOption[]
+  appointments      EstimateAppointment[]
   approvedOption    EstimateOption? @relation("EstimateApprovedOption", fields: [approvedOptionId], references: [id], onDelete: SetNull)
+}
+
+model EstimateAppointment {
+  id             String      @id @default(cuid())
+  locationId     String
+  estimateId     String
+  technicianId   String?
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  status         String      @default("SCHEDULED")
+  canceledAt     DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  location       Location    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  estimate       Estimate    @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  technician     Technician? @relation(fields: [technicianId], references: [id], onDelete: SetNull)
+
+  @@index([locationId, scheduledStart])
+  @@index([estimateId, scheduledStart])
+  @@index([technicianId])
 }
 
 model EstimateOption {
