@@ -161,12 +161,16 @@ async function notifyEstimateAppointment(estimate: {
   customerId: string;
   location: { timezone: string | null };
   customer: { firstName: string; phone: string; communicationPrefs: Prisma.JsonValue };
-}, appointment: { scheduledStart: Date; scheduledEnd: Date; technician?: { name: string } | null }, kind: "scheduled" | "changed" | "omw" | "canceled") {
+}, appointment: { scheduledStart?: Date | null; scheduledEnd?: Date | null; technician?: { name: string } | null }, kind: "scheduled" | "changed" | "omw" | "finished" | "canceled") {
   const firstName = estimate.customer.firstName || "there";
   const techName = appointment.technician?.name || "Affordable Security";
-  const window = appointmentWindow(appointment.scheduledStart, appointment.scheduledEnd, estimate.location.timezone);
+  const window = appointment.scheduledStart && appointment.scheduledEnd
+    ? appointmentWindow(appointment.scheduledStart, appointment.scheduledEnd, estimate.location.timezone)
+    : "";
   const body = kind === "omw"
     ? `${techName} with Affordable Security is on the way for your estimate.`
+    : kind === "finished"
+      ? `Hi ${firstName}, your Affordable Security estimate visit is complete.`
     : kind === "canceled"
       ? `Your Affordable Security estimate appointment for ${window} was canceled.`
       : `Hi ${firstName}, ${techName} with Affordable Security is ${kind === "changed" ? "now " : ""}scheduled for ${window}.`;
@@ -175,7 +179,7 @@ async function notifyEstimateAppointment(estimate: {
     customerId: estimate.customerId,
     to: estimate.customer.phone,
     body,
-    templateKey: kind === "omw" ? "estimateOnMyWay" : kind === "canceled" ? "estimateAppointmentCanceled" : "estimateAppointmentScheduled",
+    templateKey: kind === "omw" ? "estimateOnMyWay" : kind === "finished" ? "estimateFinished" : kind === "canceled" ? "estimateAppointmentCanceled" : "estimateAppointmentScheduled",
     customer: estimate.customer
   });
 }
@@ -449,6 +453,49 @@ estimatesRouter.post("/:id/appointments/:appointmentId/omw", asyncHandler(async 
   });
   const delivery = await notifyEstimateAppointment(estimate, appointment, "omw");
   res.json({ estimate: updatedEstimate, appointment, delivery });
+}));
+
+estimatesRouter.post("/:id/omw", asyncHandler(async (req, res) => {
+  const locationId = activeLocationId(req);
+  const estimate = await prisma.estimate.findFirst({
+    where: { id: String(req.params.id), locationId },
+    include: { customer: true, location: true, technician: true, appointments: { include: { technician: true }, orderBy: { scheduledStart: "asc" } } }
+  });
+  if (!estimate) return res.status(404).json({ error: "Estimate not found" });
+  const appointment = estimate.appointments.find((item) => item.status !== "CANCELED") ?? {
+    scheduledStart: estimate.scheduledStart,
+    scheduledEnd: estimate.scheduledEnd,
+    technician: estimate.technician
+  };
+  if (!appointment.scheduledStart) return res.status(422).json({ error: "Schedule this estimate before sending an on-my-way text." });
+  const updatedEstimate = await prisma.estimate.update({
+    where: { id: estimate.id },
+    data: { workflowStatus: "EN_ROUTE" },
+    include: estimateInclude
+  });
+  const delivery = await notifyEstimateAppointment(estimate, appointment, "omw");
+  res.json({ estimate: updatedEstimate, delivery });
+}));
+
+estimatesRouter.post("/:id/finish", asyncHandler(async (req, res) => {
+  const locationId = activeLocationId(req);
+  const estimate = await prisma.estimate.findFirst({
+    where: { id: String(req.params.id), locationId },
+    include: { customer: true, location: true, technician: true, appointments: { include: { technician: true }, orderBy: { scheduledStart: "asc" } } }
+  });
+  if (!estimate) return res.status(404).json({ error: "Estimate not found" });
+  const appointment = estimate.appointments.find((item) => item.status !== "CANCELED") ?? {
+    scheduledStart: estimate.scheduledStart,
+    scheduledEnd: estimate.scheduledEnd,
+    technician: estimate.technician
+  };
+  const updatedEstimate = await prisma.estimate.update({
+    where: { id: estimate.id },
+    data: { workflowStatus: "FINISHED" },
+    include: estimateInclude
+  });
+  const delivery = await notifyEstimateAppointment(estimate, appointment, "finished");
+  res.json({ estimate: updatedEstimate, delivery });
 }));
 
 estimatesRouter.post("/:id/appointments/:appointmentId/cancel", asyncHandler(async (req, res) => {

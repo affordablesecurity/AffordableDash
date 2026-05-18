@@ -3183,6 +3183,27 @@ export function App() {
     setEstimateActionMessage(`Estimate #${updated.estimateNumber} marked ${estimateWorkflowLabel(workflowStatus).toLowerCase()}.`);
   }
 
+  function scheduleEstimateFromWorkflow(estimate: Estimate) {
+    const appointments = estimateAppointmentsForDisplay(estimate);
+    openEstimateAppointmentEditor(estimate, appointments[0]);
+  }
+
+  async function sendEstimateOmwFromWorkflow(estimate: Estimate) {
+    const result = await api<{ estimate: Estimate }>(`/api/estimates/${estimate.id}/omw`, { method: "POST" });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setSelectedEstimateId(result.estimate.id);
+    setEstimateActionMessage("On-my-way text queued for this estimate.");
+    await loadDashboard();
+  }
+
+  async function finishEstimateFromWorkflow(estimate: Estimate) {
+    const result = await api<{ estimate: Estimate }>(`/api/estimates/${estimate.id}/finish`, { method: "POST" });
+    setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
+    setSelectedEstimateId(result.estimate.id);
+    setEstimateActionMessage("Estimate finished and customer notification queued.");
+    await loadDashboard();
+  }
+
   async function addEstimateOption(estimate: Estimate) {
     const title = window.prompt("Option name", `Option #${(estimate.options?.length ?? 0) + 1}`);
     if (!title?.trim()) return;
@@ -6961,17 +6982,17 @@ export function App() {
                     </aside>
                     <main className="job-detail-main">
                       <section className="panel job-workflow-panel estimate-action-panel">
-                        <button className={selectedEstimate.workflowStatus === "SCHEDULED" ? "active" : ""} type="button" onClick={() => updateEstimateWorkflow(selectedEstimate, "SCHEDULED")}>
+                        <button className={selectedEstimate.workflowStatus === "SCHEDULED" ? "active" : ""} type="button" onClick={() => scheduleEstimateFromWorkflow(selectedEstimate)}>
                           <CalendarDays size={22} />
                           <strong>Schedule</strong>
                           <span>{selectedEstimate.scheduledStart ? new Date(selectedEstimate.scheduledStart).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "Set visit"}</span>
                         </button>
-                        <button className={selectedEstimate.workflowStatus === "EN_ROUTE" ? "active" : ""} type="button" onClick={() => updateEstimateWorkflow(selectedEstimate, "EN_ROUTE")}>
+                        <button className={selectedEstimate.workflowStatus === "EN_ROUTE" ? "active" : ""} type="button" onClick={() => sendEstimateOmwFromWorkflow(selectedEstimate)}>
                           <Navigation size={22} />
                           <strong>On My Way</strong>
                           <span>Estimate visit</span>
                         </button>
-                        <button className={selectedEstimate.workflowStatus === "FINISHED" ? "active" : ""} type="button" onClick={() => updateEstimateWorkflow(selectedEstimate, "FINISHED")}>
+                        <button className={selectedEstimate.workflowStatus === "FINISHED" ? "active" : ""} type="button" onClick={() => finishEstimateFromWorkflow(selectedEstimate)}>
                           <CheckCheck size={22} />
                           <strong>Finish</strong>
                           <span>Quote ready</span>
