@@ -204,6 +204,24 @@ jobsRouter.patch("/:id", asyncHandler(async (req, res) => {
   res.json({ job });
 }));
 
+jobsRouter.delete("/:id", asyncHandler(async (req, res) => {
+  const jobId = String(req.params.id);
+  const locationId = activeLocationId(req);
+  const job = await prisma.job.findFirst({
+    where: { id: jobId, locationId },
+    include: { invoices: { include: { payments: true } } }
+  });
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  if (job.invoices.some((invoice) => invoice.status === InvoiceStatus.PAID || invoice.payments.some((payment) => payment.status === "SUCCEEDED"))) {
+    return res.status(422).json({ error: "Jobs with paid invoices cannot be deleted. Cancel the job instead." });
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.invoice.updateMany({ where: { jobId }, data: { jobId: null } });
+    await tx.job.delete({ where: { id: jobId } });
+  });
+  res.status(204).send();
+}));
+
 jobsRouter.post("/:id/notes", asyncHandler(async (req, res) => {
   const jobId = String(req.params.id);
   const input = z.object({ author: z.string().default("Office"), content: z.string().min(1) }).parse(req.body);

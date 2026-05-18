@@ -1541,6 +1541,7 @@ export function App() {
   });
   const [appointmentDialogOpen, setAppointmentDialogOpen] = useState(false);
   const [appointmentMenuOpen, setAppointmentMenuOpen] = useState(false);
+  const [jobActionMenuOpen, setJobActionMenuOpen] = useState(false);
   const [estimateAppointmentDialogOpen, setEstimateAppointmentDialogOpen] = useState(false);
   const [estimateEditingAppointmentId, setEstimateEditingAppointmentId] = useState("");
   const [estimateAppointmentMenuId, setEstimateAppointmentMenuId] = useState("");
@@ -3695,6 +3696,92 @@ export function App() {
     return result.job;
   }
 
+  function resetCreateJobFlow(mode: "jobs" | "estimates" = "jobs") {
+    setJobForm({
+      customerId: "",
+      addressId: "",
+      technicianId: "",
+      title: "",
+      jobType: "Car Lockout Service",
+      scheduledStart: "",
+      scheduledEnd: "",
+      description: "",
+      internalNotes: "",
+      leadSource: "",
+      tags: "",
+      depositType: "NONE",
+      depositPercent: "50",
+      depositAmount: ""
+    });
+    setJobClientForm(blankCustomerForm());
+    setCreateClientInline(false);
+    setJobClientSearch("");
+    setJobAddressSearch("");
+    setTagDraft("");
+    setJobTemplateId("");
+    setJobLines([]);
+    setJobAttachments([]);
+    if (mode === "estimates") {
+      setEstimateCreateOptions([{ id: "option-1", title: "Option #1", description: "" }]);
+      setActiveEstimateCreateOptionId("option-1");
+      setEstimatePageMode("list");
+    } else {
+      setJobPageMode("list");
+    }
+  }
+
+  async function cancelJob(job: Job) {
+    const confirmed = window.confirm(`Cancel job #${job.jobNumber}?`);
+    if (!confirmed) return;
+    await updateJobStatus(job, "CANCELED");
+    setJobActionMenuOpen(false);
+    setDetailSavedMessage("Job canceled");
+  }
+
+  async function deleteJob(job: Job) {
+    const confirmed = window.confirm(`Delete job #${job.jobNumber}? This cannot be undone.`);
+    if (!confirmed) return;
+    setError("");
+    await api(`/api/jobs/${job.id}`, { method: "DELETE" });
+    setJobs((current) => current.filter((item) => item.id !== job.id));
+    setSelectedJobId("");
+    setJobActionMenuOpen(false);
+    await loadDashboard();
+  }
+
+  async function copyJobToNewJob(job: Job) {
+    const result = await api<{ job: Job }>("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify({
+        customerId: job.customer.id,
+        addressId: job.address?.id,
+        technicianId: job.technician?.id ?? null,
+        title: job.title,
+        jobType: job.jobType,
+        leadSource: job.leadSource,
+        tags: job.tags ?? [],
+        status: "LEAD",
+        priority: "normal",
+        description: job.description,
+        internalNotes: job.internalNotes,
+        attachments: job.attachments ?? [],
+        lineItems: (job.lineItems ?? []).map((item) => ({
+          category: item.category === "material" ? "material" : "service",
+          name: item.name,
+          description: item.description || undefined,
+          quantity: Number(item.quantity || "1"),
+          unitPrice: item.unitPrice,
+          unitCost: item.unitCost ?? 0,
+          taxable: item.category === "material" && item.taxable !== false
+        }))
+      })
+    });
+    setJobs((current) => [result.job, ...current.filter((item) => item.id !== result.job.id)]);
+    setSelectedJobId(result.job.id);
+    setJobActionMenuOpen(false);
+    await loadDashboard();
+  }
+
   async function addJobDetailTag(job: Job) {
     const cleanName = detailTagDraft.trim();
     if (!cleanName) return;
@@ -4855,6 +4942,7 @@ export function App() {
   function openJobDetail(job: Job) {
     setSelectedJobId(job.id);
     setSelectedScheduleJob(null);
+    setJobActionMenuOpen(false);
     setJobPageMode("list");
     setActiveView("jobs");
   }
@@ -6396,7 +6484,7 @@ export function App() {
                 <div className="action-buttons">
                   {selectedJob && <button className="outline-button" type="button" onClick={() => setSelectedJobId("")}>All Jobs</button>}
                   <button className="outline-button"><Upload size={17} /> Import Jobs</button>
-                  <button className="primary" onClick={() => { setSelectedJobId(""); setJobPageMode("create"); }}><Plus size={18} /> Create Job</button>
+                  <button className="primary" onClick={() => { setSelectedJobId(""); resetCreateJobFlow("jobs"); setJobPageMode("create"); }}><Plus size={18} /> Create Job</button>
                 </div>
               </div>
 
@@ -6416,6 +6504,17 @@ export function App() {
                       <button className="outline-button" type="button" onClick={() => updateJobStatus(selectedJob, "COMPLETED")}><CheckCheck size={17} /> Finish</button>
                       <button className="primary" type="button" onClick={() => openJobInvoice(selectedJob)}><ReceiptText size={17} /> Invoice</button>
                       <button className="primary" type="button" onClick={() => openJobPayment(selectedJob)}><WalletCards size={17} /> Pay</button>
+                      <div className="job-action-menu-cell">
+                        <button className="icon-button" type="button" onClick={() => setJobActionMenuOpen((open) => !open)} aria-label="Job actions"><MoreHorizontal size={18} /></button>
+                        {jobActionMenuOpen && (
+                          <div className="appointment-menu job-action-menu">
+                            <button type="button" onClick={() => { addAppointmentForJob(selectedJob); setJobActionMenuOpen(false); }}><Plus size={17} /> Add appointment</button>
+                            <button type="button" onClick={() => copyJobToNewJob(selectedJob)}><Copy size={17} /> Copy to new job</button>
+                            <button type="button" onClick={() => cancelJob(selectedJob)}><X size={17} /> Cancel job</button>
+                            <button className="danger" type="button" onClick={() => deleteJob(selectedJob)}><Trash2 size={17} /> Delete job</button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </section>
 
@@ -6793,7 +6892,7 @@ export function App() {
                         <span className={`status-pill job-status-${job.status.toLowerCase()}`}>{job.status === "DISPATCHED" ? "On My Way" : statusLabel(job.status)}</span>
                         <span className={`payment-pill ${paymentStatus.toLowerCase()}`}>{statusLabel(paymentStatus.toUpperCase())}</span>
                         <strong>{money.format(jobInvoiceTotal(job) / 100)}</strong>
-                        <button className="text-button" aria-label={`Delete job ${job.jobNumber}`} onClick={(event) => event.stopPropagation()}><Trash2 size={16} /></button>
+                        <button className="text-button" aria-label={`Delete job ${job.jobNumber}`} onClick={(event) => { event.stopPropagation(); void deleteJob(job); }}><Trash2 size={16} /></button>
                       </div>
                     );
                   })}
@@ -6813,6 +6912,7 @@ export function App() {
                     {jobTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
                   </select>
                   <button className="outline-button" type="button" onClick={() => setJobPageMode("list")}>Back to Jobs</button>
+                  <button className="outline-button" type="button" onClick={() => resetCreateJobFlow("jobs")}>Cancel</button>
                   <button className="primary" type="submit" form="create-job-form">Save Job</button>
                 </div>
               </div>
@@ -7127,6 +7227,7 @@ export function App() {
                     {jobTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
                   </select>
                   <button className="outline-button" type="button" onClick={() => setEstimatePageMode("list")}>Back to Estimates</button>
+                  <button className="outline-button" type="button" onClick={() => resetCreateJobFlow("estimates")}>Cancel</button>
                   <button className="primary" type="submit" form="create-estimate-form">Save Estimate</button>
                 </div>
               </div>
