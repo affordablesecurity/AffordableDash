@@ -2706,24 +2706,6 @@ export function App() {
   const selectedCustomerLastService = [...selectedCustomerJobs]
     .filter((job) => job.scheduledStart || job.completedAt)
     .sort((a, b) => new Date(b.completedAt ?? b.scheduledStart ?? "").getTime() - new Date(a.completedAt ?? a.scheduledStart ?? "").getTime())[0];
-  const filteredEmployees = useMemo(() => {
-    const query = employeeSearch.trim().toLowerCase();
-    if (!query) return technicians;
-    return technicians.filter((employee) => [
-      employee.name,
-      employee.email ?? "",
-      employee.phone,
-      employee.employmentType,
-      employee.role,
-      employee.username ?? "",
-      employeeCategoryDefinitions.find((definition) => definition.id === employeeCategory(employee))?.title ?? ""
-    ].some((value) => value.toLowerCase().includes(query)));
-  }, [employeeSearch, technicians]);
-  const employeeGroups = useMemo(() => employeeCategoryDefinitions.map((definition) => ({
-    ...definition,
-    employees: filteredEmployees.filter((employee) => employeeCategory(employee) === definition.id),
-    total: technicians.filter((employee) => employeeCategory(employee) === definition.id).length
-  })), [filteredEmployees, technicians]);
   const jobCounts = useMemo(() => ({
     open: jobs.filter((job) => job.status === "LEAD" || job.status === "SCHEDULED").length,
     dispatched: jobs.filter((job) => job.status === "DISPATCHED").length,
@@ -2766,6 +2748,25 @@ export function App() {
   const activeLocationAccess = locations.find((item) => item.location.id === activeLocationId) ?? locations[0];
   const canUseMainLocation = organizationWideAccess;
   const canManageEmployees = ["OWNER", "ADMIN"].includes(currentRole);
+  const visibleEmployees = useMemo(() => canUseMainLocation ? technicians : technicians.filter((employee) => !employee.allLocations), [canUseMainLocation, technicians]);
+  const filteredEmployees = useMemo(() => {
+    const query = employeeSearch.trim().toLowerCase();
+    if (!query) return visibleEmployees;
+    return visibleEmployees.filter((employee) => [
+      employee.name,
+      employee.email ?? "",
+      employee.phone,
+      employee.employmentType,
+      employee.role,
+      employee.username ?? "",
+      employeeCategoryDefinitions.find((definition) => definition.id === employeeCategory(employee))?.title ?? ""
+    ].some((value) => value.toLowerCase().includes(query)));
+  }, [employeeSearch, visibleEmployees]);
+  const employeeGroups = useMemo(() => employeeCategoryDefinitions.map((definition) => ({
+    ...definition,
+    employees: filteredEmployees.filter((employee) => employeeCategory(employee) === definition.id),
+    total: visibleEmployees.filter((employee) => employeeCategory(employee) === definition.id).length
+  })), [filteredEmployees, visibleEmployees]);
   const locationSearchMatches = useMemo(() => {
     const query = locationSearch.trim().toLowerCase();
     if (!query) return locations;
@@ -3492,6 +3493,28 @@ export function App() {
       setEmployeeActionMessage(`Password reset email sent to ${employee.email}. Username: ${result.username}`);
     } catch (err) {
       handleApiError(err, "Unable to send password reset");
+    }
+  }
+
+  function canDeleteEmployee(employee: Technician) {
+    const category = employeeCategory(employee);
+    if (category === "superAdmin") return false;
+    if (canUseMainLocation) return true;
+    return ["contractor", "fieldTech", "officeStaff", "employee"].includes(category);
+  }
+
+  async function deleteEmployee(employee: Technician) {
+    if (!canDeleteEmployee(employee)) return;
+    const category = employeeCategory(employee);
+    const label = category === "locationOwner" ? "location owner" : "employee";
+    if (!window.confirm(`Delete ${employee.name} as a ${label}? This removes their access to this location.`)) return;
+    setError("");
+    try {
+      await api<{ ok: boolean }>(`/api/technicians/${employee.id}`, { method: "DELETE" });
+      setTechnicians((current) => current.filter((item) => item.id !== employee.id));
+      setEmployeeActionMessage(`${employee.name} was deleted from this location.`);
+    } catch (err) {
+      handleApiError(err, "Unable to delete employee");
     }
   }
 
@@ -10148,6 +10171,7 @@ export function App() {
                                   {employee.active ? "Revoke" : "Restore"}
                                 </button>
                                 {employee.userId && employee.email && <button className="text-button" onClick={() => sendEmployeePasswordReset(employee)}>Send reset email</button>}
+                                {canDeleteEmployee(employee) && <button className="text-button danger" onClick={() => deleteEmployee(employee)}>Delete</button>}
                               </>
                             ) : <span>-</span>}
                           </div>

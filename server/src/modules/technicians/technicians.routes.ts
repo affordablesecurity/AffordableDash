@@ -179,7 +179,9 @@ techniciansRouter.get("/", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
   await ensureMembershipRoster(locationId);
   const technicians = await prisma.technician.findMany({ where: { locationId }, orderBy: { name: "asc" } });
-  res.json({ technicians: await enrichTechnicians(technicians, req.user!.organizationId) });
+  const enriched = await enrichTechnicians(technicians, req.user!.organizationId);
+  const canManageAllLocations = await canManageOrganizationLocations(req.user!);
+  res.json({ technicians: canManageAllLocations ? enriched : enriched.filter((technician) => !technician.allLocations) });
 }));
 
 techniciansRouter.post("/", asyncHandler(async (req, res) => {
@@ -435,4 +437,53 @@ techniciansRouter.post("/:id/password-reset", asyncHandler(async (req, res) => {
   await prisma.user.update({ where: { id: user.id }, data: { passwordHash, active: true } });
 
   res.json({ ok: true, username: user.username });
+}));
+
+techniciansRouter.delete("/:id", asyncHandler(async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user!.role)) {
+    return res.status(403).json({ error: "Only owners and admins can delete employees" });
+  }
+  const locationId = activeLocationId(req);
+  const existing = await prisma.technician.findFirst({ where: { id: String(req.params.id), locationId } });
+  if (!existing) return res.status(404).json({ error: "Employee not found" });
+
+  const canManageAllLocations = await canManageOrganizationLocations(req.user!);
+  const memberships = existing.userId ? await prisma.userMembership.findMany({
+    where: { userId: existing.userId, organizationId: req.user!.organizationId },
+    select: { id: true, locationId: true, role: true }
+  }) : [];
+  const hasOrganizationWideAccess = memberships.some((membership) => !membership.locationId && ["OWNER", "ADMIN"].includes(membership.role));
+  const isLocationOwner = existing.role === "OWNER" && !hasOrganizationWideAccess;
+  const isStaff = existing.role !== "OWNER" && !hasOrganizationWideAccess;
+
+  if (hasOrganizationWideAccess) {
+    return res.status(403).json({ error: "Super admins cannot be deleted from a location" });
+  }
+  if (!canManageAllLocations && !isStaff) {
+    return res.status(403).json({ error: "Location owners can only delete staff in their own location" });
+  }
+  if (canManageAllLocations && !isLocationOwner && !isStaff) {
+    return res.status(403).json({ error: "This employee cannot be deleted" });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.technician.delete({ where: { id: existing.id } });
+    if (!existing.userId) return;
+
+    await tx.userMembership.deleteMany({
+      where: {
+        userId: existing.userId,
+        organizationId: req.user!.organizationId,
+        locationId
+      }
+    });
+    const remainingMemberships = await tx.userMembership.count({
+      where: { userId: existing.userId, organizationId: req.user!.organizationId }
+    });
+    if (remainingMemberships === 0) {
+      await tx.user.update({ where: { id: existing.userId }, data: { active: false } });
+    }
+  });
+
+  res.json({ ok: true });
 }));
