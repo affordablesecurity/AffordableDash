@@ -7218,6 +7218,84 @@ button:disabled {
   gap: 20px;
 }
 
+.map-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.map-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 20px;
+  min-width: 0;
+}
+
+.live-map-panel,
+.map-side-panel {
+  min-width: 0;
+}
+
+.google-map-frame,
+.public-service-map-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  background: #eef3f8;
+  min-height: 520px;
+}
+
+.google-map-frame iframe,
+.public-service-map-frame iframe {
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  border: 0;
+  display: block;
+}
+
+.heat-map-overlay {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+}
+
+.heat-map-overlay span {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(37, 99, 235, 0.78) 0%, rgba(37, 99, 235, 0.45) 40%, rgba(37, 99, 235, 0.1) 72%, rgba(37, 99, 235, 0) 100%);
+  box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.08);
+}
+
+.map-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.map-filter-row button {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: #475569;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.map-filter-row button.active {
+  border-color: #2563eb;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
 .route-map-board {
   min-height: 420px;
   display: grid;
@@ -7262,6 +7340,173 @@ button:disabled {
 
 .map-stop-card.event-stop {
   border-left-color: #0284c7;
+}
+
+.map-job-card {
+  border: 1px solid #dbe4f0;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.map-job-card img,
+.map-job-placeholder {
+  width: 76px;
+  height: 62px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #eff6ff;
+  color: #2563eb;
+  display: grid;
+  place-items: center;
+}
+
+.map-job-card span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.map-job-card small,
+.map-job-card em,
+.muted-copy {
+  color: #64748b;
+}
+
+.map-job-card em {
+  font-style: normal;
+  font-size: 12px;
+}
+
+.embed-code-box {
+  display: grid;
+  gap: 6px;
+  color: #334155;
+  font-weight: 700;
+}
+
+.embed-code-box input,
+.embed-code-box textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font: inherit;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+.embed-code-box textarea {
+  min-height: 118px;
+  resize: vertical;
+}
+
+.public-service-map-shell {
+  min-height: 100vh;
+  background: #f8fafc;
+  padding: 20px;
+  color: #111827;
+}
+
+.public-service-map-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.public-service-map-top span {
+  color: var(--booking-color);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.public-service-map-top h1 {
+  margin: 2px 0 0;
+  font-size: clamp(24px, 4vw, 38px);
+}
+
+.public-service-map-top select {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 10px 14px;
+  font-weight: 700;
+}
+
+.public-service-map-frame {
+  min-height: 430px;
+}
+
+.public-service-map-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.public-service-map-stats strong {
+  color: var(--booking-color);
+  font-size: 34px;
+}
+
+.public-map-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.public-map-card-grid.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.public-map-job-card {
+  border: 1px solid #1d4ed8;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+  display: grid;
+}
+
+.public-map-job-card img,
+.public-map-image-placeholder {
+  width: 100%;
+  height: 170px;
+  object-fit: cover;
+  background: #e0ecff;
+  color: #2563eb;
+  display: grid;
+  place-items: center;
+}
+
+.public-map-job-card strong,
+.public-map-job-card p,
+.public-map-job-card small {
+  margin: 0;
+  padding: 0 14px;
+}
+
+.public-map-job-card strong {
+  padding-top: 12px;
+}
+
+.public-map-job-card p {
+  color: #334155;
+  line-height: 1.45;
+  min-height: 62px;
+}
+
+.public-map-job-card small {
+  color: #64748b;
+  padding-bottom: 14px;
 }
 
 .event-create-overlay {
@@ -8971,6 +9216,19 @@ button:disabled {
   .payment-kpi-grid,
   .payment-method-grid {
     grid-template-columns: 1fr;
+  }
+
+  .map-dashboard-grid,
+  .map-page-grid,
+  .public-map-card-grid,
+  .public-map-card-grid.compact {
+    grid-template-columns: 1fr;
+  }
+
+  .public-service-map-top,
+  .map-actions {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .messages-layout,

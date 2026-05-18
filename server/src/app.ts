@@ -18,6 +18,7 @@ import { integrationsRouter, stripeOAuthRouter } from "./modules/integrations/in
 import { invoicesRouter } from "./modules/invoices/invoices.routes.js";
 import { jobsRouter } from "./modules/jobs/jobs.routes.js";
 import { locationsRouter } from "./modules/locations/locations.routes.js";
+import { publicServiceMapRouter } from "./modules/maps/public-service-map.routes.js";
 import { messagingRouter } from "./modules/messaging/messaging.routes.js";
 import { paymentsRouter } from "./modules/payments/payments.routes.js";
 import { publicPayRouter } from "./modules/payments/public-pay.routes.js";
@@ -43,7 +44,7 @@ app.use(helmet({
       "font-src": ["'self'", "https:", "data:"],
       "form-action": ["'self'"],
       "frame-ancestors": ["'self'"],
-      "frame-src": ["'self'", "https://js.stripe.com", "https://hooks.stripe.com"],
+      "frame-src": ["'self'", "https://js.stripe.com", "https://hooks.stripe.com", "https://www.google.com", "https://maps.google.com"],
       "img-src": ["'self'", "data:", "https:"],
       "object-src": ["'none'"],
       "script-src": ["'self'", "'unsafe-inline'", "https://js.stripe.com"],
@@ -87,6 +88,7 @@ app.use("/location-api/v1", publicApiRouter);
 app.use("/pay", publicPayRouter);
 app.use("/estimate", publicEstimateRouter);
 app.use("/e", publicEstimateRouter);
+app.use("/api/public-service-map", publicServiceMapRouter);
 
 app.use(express.static(clientDistPath));
 app.get("*", (req, res, next) => {

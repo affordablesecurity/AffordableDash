@@ -561,6 +561,32 @@ type PublicBookingPayload = {
   slots: Array<{ start: string; end: string }>;
 };
 
+type PublicServiceMapPayload = {
+  location: {
+    id: string;
+    name: string;
+    city?: string | null;
+    state?: string | null;
+    postalCode?: string | null;
+    companyColor?: string | null;
+  };
+  range: string;
+  jobs: Array<{
+    id: string;
+    jobNumber: number;
+    completedAt?: string | null;
+    jobType: string;
+    title: string;
+    city?: string | null;
+    state?: string | null;
+    postalCode?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    description?: string | null;
+    imageUrl?: string | null;
+  }>;
+};
+
 type OnlineBookingSettings = {
   serviceAreaZipCodes: string[];
   helpHeading: string;
@@ -1144,6 +1170,94 @@ function statusLabel(status: string) {
 function addressLine(address?: Partial<Pick<Address, "street1" | "city" | "state" | "postalCode">>) {
   if (!address) return "No address selected";
   return [address.street1, address.city, address.state, address.postalCode].filter(Boolean).join(", ");
+}
+
+function coordinateValue(value?: string | number | null) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function addressCoordinates(address?: Pick<Address, "latitude" | "longitude"> | null) {
+  const latitude = coordinateValue(address?.latitude);
+  const longitude = coordinateValue(address?.longitude);
+  return latitude === null || longitude === null ? null : { latitude, longitude };
+}
+
+function jobPrimaryAddress(job: Pick<Job, "address" | "customer">) {
+  return job.address ?? job.customer.addresses?.[0];
+}
+
+function eventCoordinates(calendarEvent: CalendarEvent) {
+  const latitude = coordinateValue(calendarEvent.latitude);
+  const longitude = coordinateValue(calendarEvent.longitude);
+  return latitude === null || longitude === null ? null : { latitude, longitude };
+}
+
+function periodStart(range: string) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  if (range === "today") return start;
+  if (range === "week") {
+    start.setDate(start.getDate() - 6);
+    return start;
+  }
+  if (range === "quarter") {
+    start.setMonth(start.getMonth() - 3);
+    return start;
+  }
+  start.setMonth(start.getMonth() - 1);
+  return start;
+}
+
+function completedWithinRange(job: Pick<Job, "completedAt" | "scheduledStart">, range: string) {
+  const value = job.completedAt ?? job.scheduledStart;
+  if (!value) return false;
+  return new Date(value).getTime() >= periodStart(range).getTime();
+}
+
+function jobTotalCents(job: Pick<Job, "lineItems" | "invoices">) {
+  const invoiceTotal = job.invoices?.[0]?.total;
+  if (typeof invoiceTotal === "number") return invoiceTotal;
+  return (job.lineItems ?? []).reduce((sum, item) => sum + Number(item.quantity || 0) * item.unitPrice, 0);
+}
+
+function attachmentImageUrl(attachments?: string[]) {
+  const image = (attachments ?? []).find((attachment) => /\.(png|jpe?g|gif|webp)$/i.test(attachment) || attachment.startsWith("data:image/") || attachment.startsWith("http"));
+  return image || "";
+}
+
+function googleMapsEmbedUrl(stops: Array<{ location: string; latitude?: number | null; longitude?: number | null }>, fallbackQuery: string) {
+  const located = stops.filter((stop) => stop.latitude !== null && stop.latitude !== undefined && stop.longitude !== null && stop.longitude !== undefined);
+  if (located.length >= 2) {
+    const origin = `${located[0].latitude},${located[0].longitude}`;
+    const destination = `${located[located.length - 1].latitude},${located[located.length - 1].longitude}`;
+    const waypoints = located.slice(1, -1).slice(0, 8).map((stop) => `${stop.latitude},${stop.longitude}`).join("|");
+    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}${waypoints ? `&waypoints=${encodeURIComponent(waypoints)}` : ""}&output=embed`;
+  }
+  const query = located[0] ? `${located[0].latitude},${located[0].longitude}` : stops.find((stop) => stop.location)?.location || fallbackQuery;
+  return `https://maps.google.com/maps?q=${encodeURIComponent(query)}&z=10&output=embed`;
+}
+
+function privacySafeJobSummary(job: Pick<Job, "description" | "jobType" | "title" | "lineItems">) {
+  const line = job.lineItems?.[0]?.name;
+  return job.description || line || job.title || `${job.jobType} service`;
+}
+
+function heatPointPosition(points: Array<{ latitude?: number | null; longitude?: number | null }>, point: { latitude?: number | null; longitude?: number | null }, index: number) {
+  const located = points.filter((item) => item.latitude !== null && item.latitude !== undefined && item.longitude !== null && item.longitude !== undefined) as Array<{ latitude: number; longitude: number }>;
+  if (!located.length || point.latitude === null || point.latitude === undefined || point.longitude === null || point.longitude === undefined) {
+    return { left: `${12 + ((index * 17) % 76)}%`, top: `${16 + ((index * 29) % 62)}%` };
+  }
+  const minLat = Math.min(...located.map((item) => item.latitude));
+  const maxLat = Math.max(...located.map((item) => item.latitude));
+  const minLng = Math.min(...located.map((item) => item.longitude));
+  const maxLng = Math.max(...located.map((item) => item.longitude));
+  const latRange = Math.max(maxLat - minLat, 0.01);
+  const lngRange = Math.max(maxLng - minLng, 0.01);
+  const left = 10 + ((point.longitude - minLng) / lngRange) * 80;
+  const top = 88 - ((point.latitude - minLat) / latRange) * 76;
+  return { left: `${Math.max(8, Math.min(92, left))}%`, top: `${Math.max(10, Math.min(90, top))}%` };
 }
 
 type AddressSuggestion = {
@@ -1948,6 +2062,10 @@ export function App() {
   const [globalSearchFocused, setGlobalSearchFocused] = useState(false);
   const [recentGlobalSearchIds, setRecentGlobalSearchIds] = useState<string[]>([]);
   const [bookingData, setBookingData] = useState<PublicBookingPayload | null>(null);
+  const [publicServiceMapData, setPublicServiceMapData] = useState<PublicServiceMapPayload | null>(null);
+  const [publicServiceMapRange, setPublicServiceMapRange] = useState("month");
+  const [mapMode, setMapMode] = useState<"today" | "heat" | "embed">("today");
+  const [mapRange, setMapRange] = useState("month");
   const [bookingStep, setBookingStep] = useState<"zip" | "service" | "time" | "contact" | "done">("zip");
   const [bookingForm, setBookingForm] = useState({
     zipCode: "",
@@ -2333,6 +2451,8 @@ export function App() {
   const activeEstimateCreateOption = estimateCreateOptions.find((option) => option.id === activeEstimateCreateOptionId) ?? estimateCreateOptions[0];
   const publicBookingMatch = typeof window === "undefined" ? null : /^\/book\/([^/?#]+)/.exec(window.location.pathname);
   const publicBookingLocationKey = publicBookingMatch?.[1] ?? "";
+  const publicServiceMapMatch = typeof window === "undefined" ? null : /^\/service-map\/([^/?#]+)/.exec(window.location.pathname);
+  const publicServiceMapLocationKey = publicServiceMapMatch?.[1] ?? "";
   const publicBookingAttr = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("attr") ?? "";
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2362,7 +2482,13 @@ export function App() {
       .catch((err) => setBookingSubmitMessage(err instanceof Error ? err.message : "Booking page could not be loaded."));
   }, [publicBookingLocationKey]);
   useEffect(() => {
-    if (!token || publicBookingLocationKey || activeView !== "onlineBooking" || !activeLocationId) return;
+    if (!publicServiceMapLocationKey) return;
+    api<PublicServiceMapPayload>(`/api/public-service-map/${encodeURIComponent(publicServiceMapLocationKey)}?range=${encodeURIComponent(publicServiceMapRange)}`, { skipAuth: true })
+      .then(setPublicServiceMapData)
+      .catch((err) => setBookingSubmitMessage(err instanceof Error ? err.message : "Service map could not be loaded."));
+  }, [publicServiceMapLocationKey, publicServiceMapRange]);
+  useEffect(() => {
+    if (!token || publicBookingLocationKey || publicServiceMapLocationKey || activeView !== "onlineBooking" || !activeLocationId) return;
     api<{ settings: OnlineBookingSettings; services: Array<{ name: string; onlineBooking: boolean }> }>("/api/booking/settings")
       .then((payload) => {
         setBookingSettings(payload.settings);
@@ -2371,7 +2497,7 @@ export function App() {
         setBookingQuestionsDraft(Object.entries(payload.settings.serviceQuestions ?? {}).map(([service, choices]) => `${service}: ${choices.join(", ")}`).join("\n"));
       })
       .catch((err) => setBookingSettingsMessage(err instanceof Error ? err.message : "Could not load online booking settings."));
-  }, [activeLocationId, activeView, publicBookingLocationKey, token]);
+  }, [activeLocationId, activeView, publicBookingLocationKey, publicServiceMapLocationKey, token]);
   useEffect(() => {
     if (!selectedEstimate) return;
     setEstimateDepositDraft({
@@ -3009,17 +3135,27 @@ export function App() {
   const dispatchStops = useMemo(() => {
     const jobStops = scheduledJobs
       .filter((job) => job.scheduledStart)
-      .map((job) => ({
+      .map((job) => {
+        const address = jobPrimaryAddress(job);
+        const coordinates = addressCoordinates(address);
+        return {
         id: `job-${job.id}`,
         type: "job" as const,
         time: job.scheduledStart ?? "",
         title: `Job #${job.jobNumber} - ${customerName(job.customer)}`,
         detail: job.title || job.jobType,
-        location: addressLine(job.address ?? job.customer.addresses?.[0]),
+        location: addressLine(address),
         technician: job.technician?.name ?? "Unassigned",
+        technicianColor: job.technician?.color ?? "#2563eb",
+        latitude: coordinates?.latitude,
+        longitude: coordinates?.longitude,
+        amount: jobTotalCents(job),
         onOpen: () => openJobDetail(job)
-      }));
-    const eventStops = scheduledEvents.map((calendarEvent) => ({
+      };
+      });
+    const eventStops = scheduledEvents.map((calendarEvent) => {
+      const coordinates = eventCoordinates(calendarEvent);
+      return {
       id: `event-${calendarEvent.id}`,
       type: "event" as const,
       time: calendarEvent.scheduledStart,
@@ -3027,18 +3163,31 @@ export function App() {
       detail: calendarEvent.notes || "Event",
       location: calendarEvent.eventLocation || "No location saved",
       technician: calendarEvent.technician?.name ?? "Unassigned",
+      technicianColor: calendarEvent.technician?.color ?? "#0284c7",
+      latitude: coordinates?.latitude,
+      longitude: coordinates?.longitude,
+      amount: 0,
       onOpen: () => setSelectedScheduleEvent(calendarEvent)
-    }));
-    const estimateStops = scheduledEstimates.map((estimate) => ({
+    };
+    });
+    const estimateStops = scheduledEstimates.map((estimate) => {
+      const address = estimate.address ?? estimate.customer.addresses?.[0];
+      const coordinates = addressCoordinates(address);
+      return {
       id: `estimate-${estimate.id}`,
       type: "estimate" as const,
       time: estimate.scheduledStart ?? "",
       title: `Estimate #${estimate.estimateNumber} - ${customerName(estimate.customer)}`,
       detail: estimate.title || estimate.jobType,
-      location: addressLine(estimate.address ?? estimate.customer.addresses?.[0]),
+      location: addressLine(address),
       technician: estimate.technician?.name ?? "Unassigned",
+      technicianColor: estimate.technician?.color ?? "#7c3aed",
+      latitude: coordinates?.latitude,
+      longitude: coordinates?.longitude,
+      amount: 0,
       onOpen: () => setSelectedScheduleEstimate(estimate)
-    }));
+    };
+    });
     return [...jobStops, ...estimateStops, ...eventStops].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
   }, [scheduledJobs, scheduledEstimates, scheduledEvents]);
   const todaysDispatchStops = useMemo(() => dispatchStops.filter((stop) => sameCalendarDay(new Date(stop.time), new Date())), [dispatchStops]);
@@ -3048,6 +3197,29 @@ export function App() {
     activeLocationAccess?.location.state,
     activeLocationAccess?.location.postalCode
   ].filter(Boolean).join(", ") || "No company address saved yet";
+  const completedMapJobs = useMemo(() => jobs
+    .filter((job) => job.status === "COMPLETED" && completedWithinRange(job, mapRange))
+    .map((job) => {
+      const address = jobPrimaryAddress(job);
+      const coordinates = addressCoordinates(address);
+      return {
+        job,
+        address,
+        latitude: coordinates?.latitude,
+        longitude: coordinates?.longitude,
+        location: addressLine(address),
+        amount: jobTotalCents(job),
+        imageUrl: attachmentImageUrl(job.attachments)
+      };
+    }), [jobs, mapRange]);
+  const locatedCompletedMapJobs = completedMapJobs.filter((item) => item.latitude !== undefined && item.longitude !== undefined);
+  const mapFallbackQuery = companyAddressPreview || activeLocationAccess?.location.city || "Yuma, AZ";
+  const currentMapStops = mapMode === "heat"
+    ? locatedCompletedMapJobs.map((item) => ({ location: item.location, latitude: item.latitude, longitude: item.longitude }))
+    : todaysDispatchStops.map((stop) => ({ location: stop.location, latitude: stop.latitude, longitude: stop.longitude }));
+  const mapEmbedUrl = googleMapsEmbedUrl(currentMapStops, mapFallbackQuery);
+  const serviceMapPublicLink = `${typeof window === "undefined" ? "" : window.location.origin}/service-map/${activeLocationAccess?.location.id ?? activeLocationId}?range=${encodeURIComponent(mapRange)}`;
+  const serviceMapEmbedCode = `<iframe src="${serviceMapPublicLink}" style="width:100%;height:720px;border:0;border-radius:8px" loading="lazy" title="Affordable Security service map"></iframe>`;
 
   async function loadDashboard() {
     const dashboardQuery = new URLSearchParams({ dateRange: dashboardDateRange });
@@ -3146,33 +3318,33 @@ export function App() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (publicBookingLocationKey) return;
+    if (publicBookingLocationKey || publicServiceMapLocationKey) return;
     const nextPath = activeView === "settings" && settingsSection === "stripe" ? "/settings/stripe" : viewPathMap[activeView];
     if (window.location.pathname !== nextPath) {
       window.history.pushState({ view: activeView }, "", nextPath);
     }
-  }, [activeView, settingsSection, publicBookingLocationKey]);
+  }, [activeView, settingsSection, publicBookingLocationKey, publicServiceMapLocationKey]);
 
   useEffect(() => {
-    if (!token || publicBookingLocationKey || activeView !== "payments") return;
+    if (!token || publicBookingLocationKey || publicServiceMapLocationKey || activeView !== "payments") return;
     void loadPaymentSummary();
-  }, [activeView, paymentSummaryRange, publicBookingLocationKey, token]);
+  }, [activeView, paymentSummaryRange, publicBookingLocationKey, publicServiceMapLocationKey, token]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (publicBookingLocationKey) return;
+    if (publicBookingLocationKey || publicServiceMapLocationKey) return;
     if (window.location.pathname === "/settings/stripe" || window.location.search.includes("stripe=")) {
       setSettingsSection("stripe");
       setActiveView("settings");
     }
     const handlePopState = () => {
-      if (/^\/book\/[^/?#]+/.test(window.location.pathname)) return;
+      if (/^\/book\/[^/?#]+/.test(window.location.pathname) || /^\/service-map\/[^/?#]+/.test(window.location.pathname)) return;
       setActiveView(viewFromPath(window.location.pathname));
       if (window.location.pathname === "/settings/stripe" || window.location.search.includes("stripe=")) setSettingsSection("stripe");
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [publicBookingLocationKey]);
+  }, [publicBookingLocationKey, publicServiceMapLocationKey]);
 
   useEffect(() => {
     if (!token) return;
@@ -6465,6 +6637,64 @@ export function App() {
     }
   }
 
+  function renderPublicServiceMapPage() {
+    const payload = publicServiceMapData;
+    const jobsForMap = payload?.jobs ?? [];
+    const color = payload?.location.companyColor || "#1d4ed8";
+    const widgetMapUrl = googleMapsEmbedUrl(
+      jobsForMap.map((job) => ({
+        location: [job.city, job.state, job.postalCode].filter(Boolean).join(", "),
+        latitude: job.latitude,
+        longitude: job.longitude
+      })),
+      [payload?.location.city, payload?.location.state, payload?.location.postalCode].filter(Boolean).join(", ") || "Yuma, AZ"
+    );
+    return (
+      <main className="public-service-map-shell" style={{ "--booking-color": color } as CSSProperties}>
+        <section className="public-service-map-top">
+          <div>
+            <span>Affordable Security service map</span>
+            <h1>{payload?.location.name || "Recent completed jobs"}</h1>
+          </div>
+          <select value={publicServiceMapRange} onChange={(event) => setPublicServiceMapRange(event.target.value)}>
+            <option value="today">Today</option>
+            <option value="week">Past week</option>
+            <option value="month">Past month</option>
+            <option value="quarter">Past 3 months</option>
+          </select>
+        </section>
+        <section className="public-service-map-frame">
+          <iframe title="Affordable Security completed job map" src={widgetMapUrl} loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
+          <div className="heat-map-overlay" aria-hidden="true">
+            {jobsForMap.slice(0, 36).map((job, index) => (
+              <span
+                key={job.id}
+                style={{
+                  ...heatPointPosition(jobsForMap, job, index)
+                }}
+              />
+            ))}
+          </div>
+        </section>
+        <section className="public-service-map-stats">
+          <strong>{jobsForMap.length}</strong>
+          <span>completed jobs shown for this area</span>
+        </section>
+        <section className="public-map-card-grid">
+          {jobsForMap.slice(0, 8).map((job) => (
+            <article key={job.id} className="public-map-job-card">
+              {job.imageUrl ? <img src={job.imageUrl} alt="" /> : <div className="public-map-image-placeholder"><Wrench size={28} /></div>}
+              <strong>{job.jobType}</strong>
+              <p>{job.description || job.title}</p>
+              <small>{[job.city, job.state, job.postalCode].filter(Boolean).join(", ")}</small>
+            </article>
+          ))}
+          {!jobsForMap.length && <p className="empty-state">No completed jobs are available for this range yet.</p>}
+        </section>
+      </main>
+    );
+  }
+
   function renderPublicBookingPage() {
     const color = bookingData?.location.companyColor || "#2647c7";
     const monthStart = startOfMonth(bookingCalendarMonth);
@@ -6637,6 +6867,7 @@ export function App() {
     );
   }
 
+  if (publicServiceMapLocationKey) return renderPublicServiceMapPage();
   if (publicBookingLocationKey) return renderPublicBookingPage();
 
   if (!token) {
@@ -7818,35 +8049,113 @@ export function App() {
           <section className="map-page">
             <div className="section-actions">
               <div className="breadcrumb"><Map size={17} /> Map</div>
-              <button className="primary" onClick={() => setActiveView("schedule")}><CalendarDays size={18} /> View schedule</button>
-            </div>
-            <div className="map-page-grid">
-              <section className="panel route-map-board">
-                <div className="panel-header"><h2>Today's route map</h2><span>{todaysDispatchStops.length} stops</span></div>
-                <div className="map-stop-list">
-                  {(todaysDispatchStops.length ? todaysDispatchStops : dispatchStops.slice(0, 8)).map((stop, index) => (
-                    <button key={stop.id} className={stop.type === "event" ? "map-stop-card event-stop" : "map-stop-card"} onClick={stop.onOpen}>
-                      <strong>{index + 1}. {stop.title}</strong>
-                      <span>{new Date(stop.time).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })} - {stop.technician}</span>
-                      <small>{stop.location}</small>
-                    </button>
-                  ))}
-                  {!dispatchStops.length && <p className="empty-state">Create jobs or events with locations to build the route map.</p>}
+              <div className="map-actions">
+                <div className="segmented-control">
+                  <button className={mapMode === "today" ? "active" : ""} type="button" onClick={() => setMapMode("today")}>Today</button>
+                  <button className={mapMode === "heat" ? "active" : ""} type="button" onClick={() => setMapMode("heat")}>Heat map</button>
+                  <button className={mapMode === "embed" ? "active" : ""} type="button" onClick={() => setMapMode("embed")}>Website widget</button>
                 </div>
-              </section>
-              <section className="panel">
-                <div className="panel-header"><h2>Stops</h2></div>
-                <div className="record-list">
-                  {dispatchStops.slice(0, 12).map((stop) => (
-                    <button key={stop.id} className="record-row" onClick={stop.onOpen}>
-                      <strong>{stop.title}</strong>
-                      <span>{stop.detail}</span>
-                      <small>{stop.location}</small>
-                    </button>
-                  ))}
-                </div>
-              </section>
+                <button className="primary" onClick={() => setActiveView("schedule")}><CalendarDays size={18} /> View schedule</button>
+              </div>
             </div>
+            {mapMode !== "embed" && (
+              <div className="map-dashboard-grid">
+                <section className="panel live-map-panel">
+                  <div className="panel-header">
+                    <h2>{mapMode === "heat" ? "Completed job heat map" : "Today's technician map"}</h2>
+                    <span>{mapMode === "heat" ? `${locatedCompletedMapJobs.length} mapped` : `${todaysDispatchStops.length} stops today`}</span>
+                  </div>
+                  {mapMode === "heat" && (
+                    <div className="map-filter-row">
+                      {[
+                        ["today", "Today"],
+                        ["week", "Week"],
+                        ["month", "Month"],
+                        ["quarter", "Last 3 months"]
+                      ].map(([value, label]) => <button key={value} className={mapRange === value ? "active" : ""} type="button" onClick={() => setMapRange(value)}>{label}</button>)}
+                    </div>
+                  )}
+                  <div className="google-map-frame">
+                    <iframe title={mapMode === "heat" ? "Completed job heat map" : "Today's route map"} src={mapEmbedUrl} loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
+                    {mapMode === "heat" && (
+                      <div className="heat-map-overlay" aria-hidden="true">
+                        {locatedCompletedMapJobs.slice(0, 28).map((item, index) => (
+                          <span
+                            key={item.job.id}
+                            style={{
+                              ...heatPointPosition(locatedCompletedMapJobs, item, index),
+                              width: `${36 + Math.min(46, Math.max(10, Math.round(item.amount / 1200)))}px`,
+                              height: `${36 + Math.min(46, Math.max(10, Math.round(item.amount / 1200)))}px`
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </section>
+                <section className="panel map-side-panel">
+                  <div className="panel-header"><h2>{mapMode === "heat" ? "Completed jobs" : "Stops"}</h2></div>
+                  <div className="map-stop-list">
+                    {(mapMode === "heat" ? completedMapJobs.slice(0, 12) : (todaysDispatchStops.length ? todaysDispatchStops : dispatchStops.slice(0, 12))).map((entry, index) => {
+                      if ("job" in entry) {
+                        return (
+                          <button key={entry.job.id} className="map-job-card" type="button" onClick={() => openJobDetail(entry.job)}>
+                            {entry.imageUrl ? <img src={entry.imageUrl} alt="" /> : <div className="map-job-placeholder"><Wrench size={20} /></div>}
+                            <span><strong>Job #{entry.job.jobNumber} - {entry.job.jobType}</strong><small>{entry.location}</small><em>{money.format(entry.amount / 100)} completed {formatDate(entry.job.completedAt ?? entry.job.scheduledStart)}</em></span>
+                          </button>
+                        );
+                      }
+                      return (
+                        <button key={entry.id} className={entry.type === "event" ? "map-stop-card event-stop" : "map-stop-card"} type="button" onClick={entry.onOpen} style={{ borderLeftColor: entry.technicianColor }}>
+                          <strong>{index + 1}. {entry.title}</strong>
+                          <span>{new Date(entry.time).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })} - {entry.technician}</span>
+                          <small>{entry.location}</small>
+                        </button>
+                      );
+                    })}
+                    {mapMode === "today" && !dispatchStops.length && <p className="empty-state">Create jobs or events with locations to build the route map.</p>}
+                    {mapMode === "heat" && !completedMapJobs.length && <p className="empty-state">No completed jobs found for this range.</p>}
+                  </div>
+                </section>
+              </div>
+            )}
+            {mapMode === "embed" && (
+              <div className="map-page-grid">
+                <section className="panel route-map-board">
+                  <div className="panel-header"><h2>Website service-area widget</h2><span>Public and auto-updating</span></div>
+                  <p className="muted-copy">This public widget shows completed jobs for the selected range with customer-safe details, job type, city/ZIP, photos when saved, and a live map visitors can zoom.</p>
+                  <div className="map-filter-row">
+                    {[
+                      ["today", "Today"],
+                      ["week", "Week"],
+                      ["month", "Month"],
+                      ["quarter", "Last 3 months"]
+                    ].map(([value, label]) => <button key={value} className={mapRange === value ? "active" : ""} type="button" onClick={() => setMapRange(value)}>{label}</button>)}
+                  </div>
+                  <label className="embed-code-box">
+                    Public link
+                    <input readOnly value={serviceMapPublicLink} onFocus={(event) => event.currentTarget.select()} />
+                  </label>
+                  <label className="embed-code-box">
+                    Embed code
+                    <textarea readOnly value={serviceMapEmbedCode} onFocus={(event) => event.currentTarget.select()} />
+                  </label>
+                </section>
+                <section className="panel">
+                  <div className="panel-header"><h2>Preview cards</h2><span>{completedMapJobs.length} jobs</span></div>
+                  <div className="public-map-card-grid compact">
+                    {completedMapJobs.slice(0, 4).map((item) => (
+                      <article key={item.job.id} className="public-map-job-card">
+                        {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <div className="public-map-image-placeholder"><Wrench size={24} /></div>}
+                        <strong>{item.job.jobType}</strong>
+                        <p>{privacySafeJobSummary(item.job)}</p>
+                        <small>{item.address?.city || activeLocationAccess?.location.city || "Service area"} {item.address?.postalCode || ""}</small>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            )}
           </section>
         )}
 
