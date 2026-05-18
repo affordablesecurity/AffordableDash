@@ -83,10 +83,11 @@ app.use("/api/webhooks", webhooksRouter);
 app.use("/location-api/v1", publicApiRouter);
 app.use("/pay", publicPayRouter);
 app.use("/estimate", publicEstimateRouter);
+app.use("/e", publicEstimateRouter);
 
 app.use(express.static(clientDistPath));
 app.get("*", (req, res, next) => {
-  if (req.path === "/api" || req.path.startsWith("/api/") || req.path === "/location-api" || req.path.startsWith("/location-api/") || req.path === "/pay" || req.path.startsWith("/pay/") || req.path === "/estimate" || req.path.startsWith("/estimate/")) return next();
+  if (req.path === "/api" || req.path.startsWith("/api/") || req.path === "/location-api" || req.path.startsWith("/location-api/") || req.path === "/pay" || req.path.startsWith("/pay/") || req.path === "/estimate" || req.path.startsWith("/estimate/") || req.path === "/e" || req.path.startsWith("/e/")) return next();
   res.sendFile(path.join(clientDistPath, "index.html"));
 });
 

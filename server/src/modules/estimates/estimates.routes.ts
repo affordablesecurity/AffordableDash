@@ -286,8 +286,11 @@ estimatesRouter.post("/:id/send", asyncHandler(async (req, res) => {
   });
   if (!estimate) return res.status(404).json({ error: "Estimate not found" });
 
-  const estimateUrl = `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/estimate/${estimate.estimateNumber}`;
+  const publicBaseUrl = env.PUBLIC_BASE_URL.replace(/\/$/, "");
+  const estimateUrl = `${publicBaseUrl}/estimate/${estimate.estimateNumber}`;
+  const shortEstimateUrl = `${publicBaseUrl}/e/${estimate.estimateNumber}`;
   const total = estimateTotal(estimate);
+  const defaultTextBody = `Estimate #${estimate.estimateNumber} ${cents(total)}: ${shortEstimateUrl}`;
   const defaultBody = `Estimate #${estimate.estimateNumber} ${cents(total)}: ${estimateUrl}`;
   const body = input.message?.includes(estimateUrl)
     ? input.message
@@ -302,7 +305,7 @@ estimatesRouter.post("/:id/send", asyncHandler(async (req, res) => {
       locationId,
       customerId: estimate.customerId,
       to: to || estimate.customer.phone,
-      body: body.length > 155 ? defaultBody : body,
+      body: body.length > 155 ? defaultTextBody : body.replace(estimateUrl, shortEstimateUrl),
       templateKey: "estimateSent",
       customer: estimate.customer
     }));

@@ -3823,7 +3823,8 @@ export function App() {
   function estimateDefaultMessage(estimate: Estimate, method: "email" | "text" | "both" = "email") {
     const total = money.format(estimateTotal(estimate) / 100);
     const url = `${window.location.origin}/estimate/${estimate.estimateNumber}`;
-    if (method === "text") return `Estimate #${estimate.estimateNumber} ${total}: ${url}`;
+    const textUrl = `${window.location.origin}/e/${estimate.estimateNumber}`;
+    if (method === "text") return `Estimate #${estimate.estimateNumber} ${total}: ${textUrl}`;
     return `Hi ${estimate.customer.firstName || customerName(estimate.customer).split(" ")[0] || "there"},\n\nPlease review your estimate from ${activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security"}.\n\nView estimate: ${url}`;
   }
 
