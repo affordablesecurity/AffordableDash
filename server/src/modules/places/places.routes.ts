@@ -167,3 +167,52 @@ placesRouter.get("/street-view", asyncHandler(async (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=86400");
   res.send(Buffer.from(arrayBuffer));
 }));
+
+placesRouter.get("/static-map", asyncHandler(async (req, res) => {
+  const points = typeof req.query.points === "string" ? req.query.points.trim() : "";
+  const focus = typeof req.query.focus === "string" ? req.query.focus.trim() : "";
+  const requestedSize = typeof req.query.size === "string" ? req.query.size.trim() : "";
+  const size = /^[0-9]{2,4}x[0-9]{2,4}$/.test(requestedSize) ? requestedSize : "900x520";
+  const markerPoints = points.split("|")
+    .map((point) => point.trim())
+    .filter((point) => /^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(point))
+    .slice(0, 80);
+  const focusPoint = /^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(focus) ? focus : "";
+
+  const key = env.GOOGLE_MAPS_API_KEY;
+  if (!key) {
+    res.status(503).send("");
+    return;
+  }
+
+  const url = new URL("https://maps.googleapis.com/maps/api/staticmap");
+  url.searchParams.set("size", size);
+  url.searchParams.set("scale", "2");
+  url.searchParams.set("maptype", "roadmap");
+  if (focusPoint) {
+    url.searchParams.set("center", focusPoint);
+    url.searchParams.set("zoom", "13");
+  }
+  if (markerPoints.length) {
+    url.searchParams.append("markers", `color:blue|size:mid|${markerPoints.join("|")}`);
+  }
+  if (focusPoint) {
+    url.searchParams.append("markers", `color:red|size:mid|${focusPoint}`);
+  }
+  if (!markerPoints.length && !focusPoint) {
+    url.searchParams.set("center", "Arizona, United States");
+    url.searchParams.set("zoom", "6");
+  }
+  url.searchParams.set("key", key);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    res.status(response.status).send("");
+    return;
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  res.setHeader("Content-Type", response.headers.get("content-type") ?? "image/png");
+  res.setHeader("Cache-Control", "public, max-age=300");
+  res.send(Buffer.from(arrayBuffer));
+}));
