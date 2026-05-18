@@ -198,7 +198,7 @@ export async function createInvoiceCheckoutSession(invoice: InvoiceCheckoutInput
         tipAmount: String(options.tipAmount ?? 0)
       }
     },
-    success_url: `${baseUrl}/pay/${invoice.invoiceNumber}/complete`,
+    success_url: `${baseUrl}/pay/${invoice.invoiceNumber}/complete?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/pay/${invoice.invoiceNumber}`
   }, { stripeAccount });
 }

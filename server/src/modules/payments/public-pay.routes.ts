@@ -3,7 +3,8 @@ import { z } from "zod";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { asyncHandler } from "../../utils/async-handler.js";
-import { createInvoiceCheckoutSession, createInvoicePaymentIntent, getLocationStripeAccountId } from "./stripe.service.js";
+import { sendPaymentReceiptSms } from "../messaging/messaging.service.js";
+import { createInvoiceCheckoutSession, createInvoicePaymentIntent, getLocationStripeAccountId, stripe } from "./stripe.service.js";
 
 export const publicPayRouter = Router();
 
@@ -29,6 +30,11 @@ function invoiceNumberFromParam(value: string) {
   return Number.isInteger(invoiceNumber) && invoiceNumber > 0 ? invoiceNumber : null;
 }
 
+function queryValue(value: unknown) {
+  if (Array.isArray(value)) return queryValue(value[0]);
+  return typeof value === "string" ? value.trim() : "";
+}
+
 async function loadInvoice(invoiceNumber: number) {
   return prisma.invoice.findUnique({
     where: { invoiceNumber },
@@ -39,6 +45,85 @@ async function loadInvoice(invoiceNumber: number) {
       location: { include: { organization: true } }
     }
   });
+}
+
+async function recordPaidStripeInvoice(input: {
+  invoice: NonNullable<Awaited<ReturnType<typeof loadInvoice>>>;
+  paymentId: string;
+  providerRef: string;
+  amount: number;
+}) {
+  const { invoice, paymentId, providerRef, amount } = input;
+  if (amount <= 0) return false;
+  const existingInvoice = await prisma.invoice.findUnique({
+    where: { id: invoice.id },
+    select: { status: true, total: true }
+  });
+  await prisma.payment.upsert({
+    where: { id: paymentId },
+    update: {
+      status: "SUCCEEDED",
+      amount,
+      provider: "stripe",
+      providerRef,
+      paidAt: new Date()
+    },
+    create: {
+      id: paymentId,
+      invoiceId: invoice.id,
+      amount,
+      status: "SUCCEEDED",
+      provider: "stripe",
+      providerRef,
+      paidAt: new Date()
+    }
+  });
+  const paidTotal = await prisma.payment.aggregate({
+    where: { invoiceId: invoice.id, status: "SUCCEEDED" },
+    _sum: { amount: true }
+  });
+  const isPaidInFull = (paidTotal._sum.amount ?? 0) >= (existingInvoice?.total ?? invoice.total);
+  if (isPaidInFull) {
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { status: "PAID" }
+    });
+    if (existingInvoice?.status !== "PAID") {
+      await sendPaymentReceiptSms(invoice.locationId, invoice.id, amount);
+    }
+  }
+  return isPaidInFull;
+}
+
+async function reconcileStripeReturn(invoice: NonNullable<Awaited<ReturnType<typeof loadInvoice>>>, query: Record<string, unknown>) {
+  if (!stripe) return false;
+  const stripeAccount = await getLocationStripeAccountId(invoice.locationId);
+  if (!stripeAccount) return false;
+
+  const sessionId = queryValue(query.session_id);
+  if (sessionId) {
+    const session = await stripe.checkout.sessions.retrieve(sessionId, { expand: ["payment_intent"] }, { stripeAccount });
+    if (session.payment_status !== "paid" || session.metadata?.invoiceId !== invoice.id) return false;
+    const paymentIntent = typeof session.payment_intent === "string" ? null : session.payment_intent;
+    const paymentId = typeof session.payment_intent === "string" ? session.payment_intent : paymentIntent?.id ?? session.id;
+    const amount = session.amount_total ?? paymentIntent?.amount_received ?? paymentIntent?.amount ?? 0;
+    return recordPaidStripeInvoice({ invoice, paymentId, providerRef: session.id, amount });
+  }
+
+  const paymentIntentId = queryValue(query.payment_intent);
+  if (paymentIntentId) {
+    const intent = await stripe.paymentIntents.retrieve(paymentIntentId, {}, { stripeAccount });
+    const matchesInvoice = intent.metadata.invoiceId === invoice.id || invoice.stripePaymentIntentId === intent.id;
+    if (!matchesInvoice || intent.status !== "succeeded") return false;
+    return recordPaidStripeInvoice({
+      invoice,
+      paymentId: intent.id,
+      providerRef: intent.id,
+      amount: intent.amount_received || intent.amount
+    });
+  }
+
+  return false;
 }
 
 function publicCompanyName(invoice: NonNullable<Awaited<ReturnType<typeof loadInvoice>>>) {
@@ -337,7 +422,13 @@ publicPayRouter.get("/:invoiceNumber/complete", asyncHandler(async (req, res) =>
   if (!invoiceNumber) return res.status(404).send("Invoice not found");
   const invoice = await loadInvoice(invoiceNumber);
   if (!invoice) return res.status(404).send("Invoice not found");
-  res.status(200).send(`<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Payment received</title><style>body{font-family:Inter,system-ui,sans-serif;background:#f6f7f9;color:#232735;display:grid;min-height:100vh;place-items:center;margin:0}.card{background:#fff;border:1px solid #e3e6eb;border-radius:12px;padding:32px;max-width:560px;box-shadow:0 8px 26px rgba(25,32,46,.08)}h1{margin-top:0}</style></head><body><section class="card"><h1>Payment received</h1><p>Thank you. Invoice #${escapeHtml(invoice.invoiceNumber)} is being confirmed. You may close this page.</p><p><a href="/pay/${escapeHtml(invoice.invoiceNumber)}">View invoice</a></p></section></body></html>`);
+  let confirmed = invoice.status === "PAID";
+  try {
+    confirmed = confirmed || await reconcileStripeReturn(invoice, req.query);
+  } catch {
+    confirmed = invoice.status === "PAID";
+  }
+  res.status(200).send(`<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${confirmed ? "Payment confirmed" : "Payment received"}</title><style>body{font-family:Inter,system-ui,sans-serif;background:#f6f7f9;color:#232735;display:grid;min-height:100vh;place-items:center;margin:0}.card{background:#fff;border:1px solid #e3e6eb;border-radius:12px;padding:32px;max-width:560px;box-shadow:0 8px 26px rgba(25,32,46,.08)}h1{margin-top:0}</style></head><body><section class="card"><h1>${confirmed ? "Payment confirmed" : "Payment received"}</h1><p>${confirmed ? `Thank you. Invoice #${escapeHtml(invoice.invoiceNumber)} has been marked paid.` : `Thank you. Invoice #${escapeHtml(invoice.invoiceNumber)} is being confirmed. You may close this page.`}</p><p><a href="/pay/${escapeHtml(invoice.invoiceNumber)}">View invoice</a></p></section></body></html>`);
 }));
 
 publicPayRouter.post("/:invoiceNumber/intent", asyncHandler(async (req, res) => {
