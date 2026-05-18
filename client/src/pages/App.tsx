@@ -549,6 +549,36 @@ type PaymentRecord = {
   createdAt: string;
 };
 
+type PaymentSummaryTransaction = {
+  id: string;
+  date: string;
+  paymentMethod: string;
+  jobNumber?: string | null;
+  invoiceNumber: string;
+  customer: string;
+  amount: number;
+  gross: number;
+  fees: number;
+  net: number;
+  note?: string | null;
+};
+
+type PaymentSummary = {
+  range: { from: string; to: string };
+  totals: { gross: number; fees: number; net: number; count: number };
+  methodTotals: Record<"card" | "cash" | "check" | "other", { label: string; count: number; gross: number; fees: number; net: number }>;
+  pendingTransactions: PaymentSummaryTransaction[];
+  payouts: Array<{
+    id: string;
+    depositDate: string;
+    totalAmount: number;
+    gross: number;
+    fees: number;
+    status: "pending" | "paid";
+    transactions: PaymentSummaryTransaction[];
+  }>;
+};
+
 type SendInvoiceResponse = {
   invoice: Invoice;
   deliveries: Array<CrmMessage | null>;
@@ -601,7 +631,7 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "map" | "messages" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "events" | "onlineBooking" | "settings" | "api";
+type View = "dispatch" | "schedule" | "map" | "messages" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "payments" | "reports" | "pricebook" | "servicePlans" | "events" | "onlineBooking" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number; minute: number; technicianId?: string } | null;
 type SchedulePickerState = { key: string; mode: "date" | "time" } | null;
@@ -844,6 +874,7 @@ const viewPathMap: Record<View, string> = {
   estimates: "/estimates",
   employees: "/employees",
   invoices: "/invoices",
+  payments: "/payments",
   reports: "/reports",
   pricebook: "/pricebook",
   servicePlans: "/service-plans",
@@ -2039,6 +2070,10 @@ export function App() {
   const [invoiceFilterPanelOpen, setInvoiceFilterPanelOpen] = useState(false);
   const [invoiceColumnDialogOpen, setInvoiceColumnDialogOpen] = useState(false);
   const [visibleInvoiceColumns, setVisibleInvoiceColumns] = useState<InvoiceColumnId[]>(defaultInvoiceColumns);
+  const [paymentSummary, setPaymentSummary] = useState<PaymentSummary | null>(null);
+  const [paymentSummaryRange, setPaymentSummaryRange] = useState<"today" | "week" | "month">("month");
+  const [expandedPayoutId, setExpandedPayoutId] = useState("");
+  const [paymentSummaryMessage, setPaymentSummaryMessage] = useState("");
   const [signatureName, setSignatureName] = useState("");
   const [signatureHasInk, setSignatureHasInk] = useState(false);
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -2806,6 +2841,18 @@ export function App() {
     setReports(result);
   }
 
+  async function loadPaymentSummary() {
+    try {
+      setPaymentSummaryMessage("");
+      const query = new URLSearchParams({ range: paymentSummaryRange });
+      const result = await api<PaymentSummary>(`/api/payments/summary?${query.toString()}`);
+      setPaymentSummary(result);
+      setExpandedPayoutId((current) => current || result.payouts[0]?.id || "");
+    } catch (err) {
+      setPaymentSummaryMessage(err instanceof Error ? err.message : "Payments could not be loaded.");
+    }
+  }
+
   function openDashboardReport(reportId: string, dashboard: "businessOwner" | "leads" | "jobs" = "businessOwner") {
     setSelectedReportId(reportId);
     setReportDashboard(dashboard);
@@ -2828,6 +2875,11 @@ export function App() {
       window.history.pushState({ view: activeView }, "", nextPath);
     }
   }, [activeView, settingsSection, publicBookingLocationKey]);
+
+  useEffect(() => {
+    if (!token || publicBookingLocationKey || activeView !== "payments") return;
+    void loadPaymentSummary();
+  }, [activeView, paymentSummaryRange, publicBookingLocationKey, token]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -6608,7 +6660,7 @@ export function App() {
           <button className={activeView === "employees" ? "active" : ""} onClick={() => setActiveView("employees")}><UserPlus size={18} /> Employees</button>
           <button className={activeView === "invoices" ? "active" : ""} onClick={() => setActiveView("invoices")}><ReceiptText size={18} /> Invoices</button>
           <button className={activeView === "estimates" ? "active" : ""} onClick={() => setActiveView("estimates")}><FileText size={18} /> Estimates</button>
-          <button><WalletCards size={18} /> Payments</button>
+          <button className={activeView === "payments" ? "active" : ""} onClick={() => setActiveView("payments")}><WalletCards size={18} /> Payments</button>
           <button className={activeView === "events" ? "active" : ""} onClick={() => setActiveView("events")}><CalendarDays size={18} /> Events</button>
           <button><Clock3 size={18} /> Time Clock</button>
           <button className={activeView === "onlineBooking" ? "active" : ""} onClick={() => setActiveView("onlineBooking")}><Laptop size={18} /> Online Booking</button>
@@ -11329,6 +11381,141 @@ export function App() {
               </div>
             </div>
           </div>
+        )}
+
+        {activeView === "payments" && (
+          <section className="payments-page">
+            <div className="payments-hero">
+              <div>
+                <span>My Money &gt; Payouts</span>
+                <h2>Payments</h2>
+                <p>Track card deposits, estimated Stripe fees, cash, checks, and other collected payments from invoices and jobs.</p>
+              </div>
+              <div className="payment-range-controls" role="tablist" aria-label="Payment date range">
+                {[
+                  ["today", "Today"],
+                  ["week", "This week"],
+                  ["month", "This month"]
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    className={paymentSummaryRange === value ? "active" : ""}
+                    type="button"
+                    onClick={() => setPaymentSummaryRange(value as typeof paymentSummaryRange)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {paymentSummaryMessage && <p className="inline-confirm danger">{paymentSummaryMessage}</p>}
+            <div className="payment-kpi-grid">
+              <article><span>Pending card transactions</span><strong>{money.format((paymentSummary?.pendingTransactions.reduce((sum, item) => sum + item.net, 0) ?? 0) / 100)}</strong><small>{paymentSummary?.pendingTransactions.length ?? 0} payments waiting to deposit</small></article>
+              <article><span>Card gross</span><strong>{money.format((paymentSummary?.methodTotals.card.gross ?? 0) / 100)}</strong><small>{paymentSummary?.methodTotals.card.count ?? 0} card payments</small></article>
+              <article><span>Estimated fees</span><strong>{money.format((paymentSummary?.methodTotals.card.fees ?? 0) / 100)}</strong><small>2.9% + 30 cents until Stripe fee sync is added</small></article>
+              <article><span>Net card deposits</span><strong>{money.format((paymentSummary?.methodTotals.card.net ?? 0) / 100)}</strong><small>Gross card payments minus estimated fees</small></article>
+              <article><span>Cash collected</span><strong>{money.format((paymentSummary?.methodTotals.cash.gross ?? 0) / 100)}</strong><small>{paymentSummary?.methodTotals.cash.count ?? 0} cash payments</small></article>
+              <article><span>Checks collected</span><strong>{money.format((paymentSummary?.methodTotals.check.gross ?? 0) / 100)}</strong><small>{paymentSummary?.methodTotals.check.count ?? 0} check payments</small></article>
+            </div>
+            <div className="payment-section-card">
+              <div className="payment-section-header">
+                <div>
+                  <h3>Pending transactions</h3>
+                  <span>Card payments expected to be issued in the next payout window.</span>
+                </div>
+                <strong>{money.format((paymentSummary?.pendingTransactions.reduce((sum, item) => sum + item.net, 0) ?? 0) / 100)}</strong>
+              </div>
+              <div className="payment-table-wrap">
+                <table className="payment-table">
+                  <thead><tr><th>Charge date</th><th>Payment method</th><th>Job #</th><th>Customer</th><th>Amount</th></tr></thead>
+                  <tbody>
+                    {(paymentSummary?.pendingTransactions ?? []).map((transaction) => (
+                      <tr key={transaction.id}>
+                        <td>{formatDate(transaction.date)}</td>
+                        <td><span className="payment-method-cell"><CreditCard size={14} /> {statusLabel(transaction.paymentMethod)}</span></td>
+                        <td>{transaction.jobNumber ? `#${transaction.jobNumber}` : "--"}</td>
+                        <td>{transaction.customer}</td>
+                        <td>{money.format(transaction.amount / 100)}</td>
+                      </tr>
+                    ))}
+                    {(!paymentSummary || paymentSummary.pendingTransactions.length === 0) && <tr><td colSpan={5}><p className="empty table-empty">No pending card transactions for this range.</p></td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="payment-section-card">
+              <div className="payment-section-header">
+                <div>
+                  <h3>My payouts</h3>
+                  <span>Card payments grouped by estimated deposit date.</span>
+                </div>
+                <button className="outline-button" type="button" onClick={() => void loadPaymentSummary()}>Refresh</button>
+              </div>
+              <div className="payment-table-wrap">
+                <table className="payment-table payout-table">
+                  <thead><tr><th>Deposit date</th><th>Total amount</th><th>Payment</th></tr></thead>
+                  <tbody>
+                    {(paymentSummary?.payouts ?? []).map((payout) => (
+                      <Fragment key={payout.id}>
+                        <tr className="payout-summary-row">
+                          <td>{formatDate(payout.depositDate)}</td>
+                          <td>{money.format(payout.totalAmount / 100)}</td>
+                          <td>
+                            <button className="table-link payout-toggle" type="button" onClick={() => setExpandedPayoutId((current) => current === payout.id ? "" : payout.id)}>
+                              {statusLabel(payout.status)} <ChevronDown size={15} />
+                            </button>
+                          </td>
+                        </tr>
+                        {expandedPayoutId === payout.id && (
+                          <tr className="payout-detail-row">
+                            <td colSpan={3}>
+                              <table className="payment-detail-table">
+                                <thead><tr><th>Transaction date</th><th>Transaction type</th><th>Gross</th><th>Fees</th><th>Payout total</th><th>Job #</th><th>Customer</th></tr></thead>
+                                <tbody>
+                                  {payout.transactions.map((transaction) => (
+                                    <tr key={transaction.id}>
+                                      <td>{formatDate(transaction.date)}</td>
+                                      <td>{statusLabel(transaction.paymentMethod)}</td>
+                                      <td>{money.format(transaction.gross / 100)}</td>
+                                      <td>{money.format(transaction.fees / 100)}</td>
+                                      <td>{money.format(transaction.net / 100)}</td>
+                                      <td>{transaction.jobNumber ? `#${transaction.jobNumber}` : "--"}</td>
+                                      <td>{transaction.customer}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    ))}
+                    {(!paymentSummary || paymentSummary.payouts.length === 0) && <tr><td colSpan={3}><p className="empty table-empty">No card payouts for this range.</p></td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="payment-section-card">
+              <div className="payment-section-header">
+                <div>
+                  <h3>Cash, checks, and other</h3>
+                  <span>Manual collections recorded through the CRM payment window.</span>
+                </div>
+              </div>
+              <div className="payment-method-grid">
+                {(["cash", "check", "other"] as const).map((method) => {
+                  const item = paymentSummary?.methodTotals[method];
+                  return (
+                    <article key={method}>
+                      <span>{item?.label ?? statusLabel(method)}</span>
+                      <strong>{money.format((item?.gross ?? 0) / 100)}</strong>
+                      <small>{item?.count ?? 0} recorded payments</small>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
         )}
 
         {activeView === "invoices" && (
