@@ -109,7 +109,7 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
   const { start, end } = rangeBounds(dateRange);
   const previousStart = addYears(start, -1);
   const previousEnd = addYears(end, -1);
-  const [jobs, invoices, customers] = await Promise.all([
+  const [jobs, invoices, customers, estimates] = await Promise.all([
     prisma.job.findMany({
       where: { locationId },
       include: { customer: { include: { addresses: true } }, address: true, technician: true, lineItems: true, invoices: { include: { payments: true } } },
@@ -122,12 +122,15 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
       orderBy: { createdAt: "desc" },
       take: 500
     }),
-    prisma.customer.findMany({ where: { locationId }, include: { addresses: true }, take: 500 })
+    prisma.customer.findMany({ where: { locationId }, include: { addresses: true }, take: 500 }),
+    prisma.estimate.findMany({ where: { locationId }, include: { customer: true }, orderBy: { createdAt: "desc" }, take: 500 })
   ]);
   const periodJobs = jobs.filter((job) => job.createdAt >= start && job.createdAt < end);
   const previousJobs = jobs.filter((job) => job.createdAt >= previousStart && job.createdAt < previousEnd);
   const periodInvoices = invoices.filter((invoice) => invoice.createdAt >= start && invoice.createdAt < end);
   const previousInvoices = invoices.filter((invoice) => invoice.createdAt >= previousStart && invoice.createdAt < previousEnd);
+  const periodEstimates = estimates.filter((estimate) => estimate.createdAt >= start && estimate.createdAt < end);
+  const previousEstimates = estimates.filter((estimate) => estimate.createdAt >= previousStart && estimate.createdAt < previousEnd);
 
   const jobRevenue = new Map<string, number>();
   periodInvoices.forEach((invoice) => {
@@ -166,6 +169,10 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
   const averageByPeriod = new Map<string, number>();
   const previousSourceCounts = new Map<string, number>();
   const previousTechSales = new Map<string, number>();
+  const estimatesByPeriod = new Map<string, number>();
+  const previousEstimatesByPeriod = new Map<string, number>();
+  const estimatesByStatus = new Map<string, number>();
+  const estimatesByTag = new Map<string, number>();
 
   periodInvoices.forEach((invoice) => {
     addRow(revenueByDay, dateKey(invoice.createdAt, "daily"), invoice.total);
@@ -208,6 +215,18 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
     addRow(previousSourceCounts, job.customer.source || job.leadSource || "Unknown", 1);
     addRow(previousTechSales, job.technician?.name || "Unassigned", previousInvoices.filter((invoice) => invoice.jobId === job.id).reduce((sum, invoice) => sum + invoice.total, 0));
   });
+  periodEstimates.forEach((estimate) => {
+    addRow(estimatesByPeriod, dateKey(estimate.createdAt, showBy), 1);
+    addRow(estimatesByStatus, estimate.status, 1);
+    estimate.tags.forEach((tag) => {
+      addRow(estimatesByTag, tag, 1);
+    });
+  });
+  previousEstimates.forEach((estimate) => addRow(previousEstimatesByPeriod, dateKey(addYears(estimate.createdAt, 1), showBy), 1));
+  const approvedEstimates = periodEstimates.filter((estimate) => estimate.status === "APPROVED" || estimate.status === "CONVERTED");
+  const declinedEstimates = periodEstimates.filter((estimate) => estimate.status === "DECLINED");
+  const sentEstimates = periodEstimates.filter((estimate) => estimate.status === "SENT");
+  const estimateCloseRate = periodEstimates.length ? approvedEstimates.length / periodEstimates.length : 0;
   revenueByPeriod.forEach((value, label) => {
     const jobsInPeriod = periodJobs.filter((job) => dateKey(job.createdAt, showBy) === label).length || 1;
     averageByPeriod.set(label, Math.round(value / jobsInPeriod));
@@ -261,6 +280,16 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
       ]
     },
     {
+      title: "Estimates",
+      items: [
+        { id: "estimate-count", label: "Estimate count", value: String(periodEstimates.length), detail: "Estimates created in the selected date range.", rows: countRows(estimatesByPeriod) },
+        { id: "estimate-approved", label: "Approved estimates", value: String(approvedEstimates.length), detail: "Approved or converted estimates in the selected date range.", rows: [{ label: "Approved", value: String(approvedEstimates.length) }, { label: "Pending", value: String(sentEstimates.length) }, { label: "Declined", value: String(declinedEstimates.length) }] },
+        { id: "estimate-close-rate", label: "Estimate approval rate", value: percent(estimateCloseRate), detail: "Approved and converted estimates divided by estimates created.", rows: [{ label: "Approval rate", value: percent(estimateCloseRate) }] },
+        { id: "estimate-tags", label: "Estimate tags", value: String(estimatesByTag.size), detail: "Estimates grouped by tag.", rows: countRows(estimatesByTag) },
+        { id: "estimate-status", label: "Estimate status", value: String(estimatesByStatus.size), detail: "Estimates grouped by current status.", rows: countRows(estimatesByStatus) }
+      ]
+    },
+    {
       title: "Employee",
       items: [
         { id: "tech-leaderboard", label: "Tech leaderboard", value: String(techCounts.size), detail: "Job count by technician.", rows: countRows(techCounts) },
@@ -309,6 +338,11 @@ reportsRouter.get("/jobs", asyncHandler(async (req, res) => {
         { id: "leads-by-source", title: "Leads by source", metricLabel: "Lead count total", metricValue: String(sumMap(customerLeadSources)), format: "number", bars: chartRows(customerLeadSources, previousSourceCounts) },
         { id: "revenue-by-lead-source", title: "Revenue by lead source", metricLabel: "Job revenue total", metricValue: cents(sumMap(revenueBySource)), format: "money", bars: chartRows(revenueBySource) },
         { id: "booking-by-job-type", title: "Bookings by job type", metricLabel: "Job count total", metricValue: String(periodJobs.length), format: "number", bars: chartRows(jobTypeCounts) }
+      ],
+      estimates: [
+        { id: "estimate-count", title: "Estimate count", metricLabel: "Estimates created", metricValue: String(periodEstimates.length), format: "number", bars: chartRows(estimatesByPeriod, previousEstimatesByPeriod) },
+        { id: "estimate-status", title: "Estimate status", metricLabel: "Current status", metricValue: String(periodEstimates.length), format: "number", bars: chartRows(estimatesByStatus) },
+        { id: "estimate-tags", title: "Estimate tags", metricLabel: "Tagged estimates", metricValue: String(sumMap(estimatesByTag)), format: "number", bars: chartRows(estimatesByTag) }
       ]
     },
     sections

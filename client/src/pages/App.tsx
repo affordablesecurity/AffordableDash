@@ -613,6 +613,7 @@ type ReportsPayload = {
   dashboards: {
     businessOwner: ReportChart[];
     leads: ReportChart[];
+    estimates?: ReportChart[];
   };
   sections: ReportSection[];
 };
@@ -1418,7 +1419,7 @@ export function App() {
   });
   const [reports, setReports] = useState<ReportsPayload | null>(null);
   const [selectedReportId, setSelectedReportId] = useState("job-revenue-earned");
-  const [reportDashboard, setReportDashboard] = useState<"businessOwner" | "leads" | "jobs">("businessOwner");
+  const [reportDashboard, setReportDashboard] = useState<"businessOwner" | "leads" | "jobs" | "estimates">("businessOwner");
   const [reportDateRange, setReportDateRange] = useState("monthToDate");
   const [reportShowBy, setReportShowBy] = useState("year");
   const [dashboardDateRange, setDashboardDateRange] = useState("monthToDate");
@@ -1865,8 +1866,10 @@ export function App() {
   const selectedReport = reportItems.find((item) => item.id === selectedReportId) ?? reportItems[0];
   const activeCharts = reportDashboard === "leads"
     ? reports?.dashboards.leads ?? []
-    : reports?.dashboards.businessOwner ?? [];
-  const reportTitle = reportDashboard === "leads" ? "Leads" : reportDashboard === "jobs" ? "Jobs" : "Business Owner";
+    : reportDashboard === "estimates"
+      ? reports?.dashboards.estimates ?? []
+      : reports?.dashboards.businessOwner ?? [];
+  const reportTitle = reportDashboard === "leads" ? "Leads" : reportDashboard === "jobs" ? "Jobs" : reportDashboard === "estimates" ? "Estimates" : "Business Owner";
   const dashboardDateRangeLabel = dashboardDateRanges.find((item) => item.value === dashboardDateRange)?.label ?? "Month to date";
   const dashboardScheduledJobs = useMemo(() => [...scheduledJobs]
     .filter((job) => job.scheduledStart)
@@ -3441,6 +3444,21 @@ export function App() {
 
   async function removeJobDetailTag(job: Job, tag: string) {
     await updateJobDetails(job, { tags: (job.tags ?? []).filter((item) => item !== tag) });
+  }
+
+  async function addEstimateDetailTag(estimate: Estimate) {
+    const cleanName = detailTagDraft.trim();
+    if (!cleanName) return;
+    const tags = [...new Set([...(estimate.tags ?? []), cleanName])];
+    await saveJobOption("tag", cleanName);
+    await updateEstimate(estimate, { tags });
+    setEstimateActionMessage(`Added tag ${cleanName}`);
+    setDetailTagDraft("");
+  }
+
+  async function removeEstimateDetailTag(estimate: Estimate, tag: string) {
+    await updateEstimate(estimate, { tags: (estimate.tags ?? []).filter((item) => item !== tag) });
+    setEstimateActionMessage(`Removed tag ${tag}`);
   }
 
   async function saveJobDetailLeadSource(job: Job) {
@@ -7233,7 +7251,29 @@ export function App() {
                       <section className="panel">
                         <div className="panel-header"><h2>Estimate details</h2><FileText size={18} /></div>
                         <p>{selectedEstimate.description || "No visible description yet."}</p>
-                        <div className="job-detail-tags">{(selectedEstimate.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>
+                        {!!selectedEstimate.tags?.length ? (
+                          <div className="job-detail-tags">{selectedEstimate.tags.map((tag) => <span key={tag}>{tag}<button type="button" onClick={() => removeEstimateDetailTag(selectedEstimate, tag)}>x</button></span>)}</div>
+                        ) : <p className="empty">No tags added.</p>}
+                        <form className="detail-inline-form single" onSubmit={(event) => { event.preventDefault(); addEstimateDetailTag(selectedEstimate); }}>
+                          <input
+                            list="estimate-detail-tags-list"
+                            placeholder="Add tag and press Enter"
+                            value={detailTagDraft}
+                            onChange={(event) => setDetailTagDraft(event.target.value)}
+                            onBlur={() => {
+                              if (detailTagDraft.trim()) addEstimateDetailTag(selectedEstimate);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                addEstimateDetailTag(selectedEstimate);
+                              }
+                            }}
+                          />
+                        </form>
+                        <datalist id="estimate-detail-tags-list">
+                          {crmOptions.tags.map((tag) => <option value={tag} key={tag} />)}
+                        </datalist>
                         <p className="muted">Flow: estimate approval creates the quote record; converting creates the job/work order. The invoice is generated from the job when you are ready to bill or take payment.</p>
                       </section>
                     </main>
@@ -7474,7 +7514,7 @@ export function App() {
               <button className={reportDashboard === "businessOwner" ? "active" : ""} onClick={() => setReportDashboard("businessOwner")}>Business Owner</button>
               <strong>All Reports</strong>
               <button className={reportDashboard === "jobs" ? "active" : ""} onClick={() => setReportDashboard("jobs")}>Jobs</button>
-              <button>Estimates</button>
+              <button className={reportDashboard === "estimates" ? "active" : ""} onClick={() => setReportDashboard("estimates")}>Estimates</button>
               <button className={reportDashboard === "leads" ? "active" : ""} onClick={() => setReportDashboard("leads")}>Leads</button>
               <button>Service plans</button>
               <button>Invoices</button>

@@ -82,6 +82,8 @@ async function queueEstimateApprovedNotifications(estimate: NonNullable<Awaited<
   const business = companyName(estimate);
   const customerName = [estimate.customer.firstName, estimate.customer.lastName].filter(Boolean).join(" ") || estimate.customer.companyName || "Customer";
   const estimateUrl = `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/estimate/${estimate.estimateNumber}`;
+  const approvedOption = estimate.approvedOption?.title ? `\nApproved option: ${estimate.approvedOption.title}` : "";
+  const ipLine = estimate.approvalIpAddress ? `\nIP address: ${estimate.approvalIpAddress}` : "";
   const recipients = await prisma.userMembership.findMany({
     where: {
       organizationId: estimate.location.organizationId,
@@ -96,7 +98,7 @@ async function queueEstimateApprovedNotifications(estimate: NonNullable<Awaited<
     customerId: estimate.customerId,
     to: email,
     subject: `Estimate #${estimate.estimateNumber} approved by ${customerName}`,
-    body: `Estimate #${estimate.estimateNumber} from ${customerName} was approved.\n\nView the signed estimate: ${estimateUrl}`,
+    body: `Estimate #${estimate.estimateNumber} from ${customerName} was approved.\n\nApproved by: ${estimate.approvalName || customerName}${approvedOption}${ipLine}\n\nView the signed estimate: ${estimateUrl}`,
     templateKey: "estimateApprovedInternal"
   })));
   await prisma.customerNote.create({
@@ -384,7 +386,7 @@ publicEstimateRouter.post("/:estimateNumber/approve", asyncHandler(async (req, r
   const estimate = await loadEstimate(estimateNumber);
   if (!estimate) return res.status(404).json({ error: "Estimate not found" });
   if (estimate.status === EstimateStatus.DECLINED) return res.status(409).json({ error: "This estimate was already declined." });
-  const updated = await prisma.estimate.update({
+  await prisma.estimate.update({
     where: { id: estimate.id },
     data: {
       status: EstimateStatus.APPROVED,
@@ -395,7 +397,8 @@ publicEstimateRouter.post("/:estimateNumber/approve", asyncHandler(async (req, r
       approvedAt: new Date()
     }
   });
-  await queueEstimateApprovedNotifications(estimate);
+  const updated = await loadEstimate(estimateNumber);
+  if (updated) await queueEstimateApprovedNotifications(updated);
   res.json({ estimate: updated });
 }));
 
