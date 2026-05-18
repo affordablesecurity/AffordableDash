@@ -20,6 +20,7 @@ import {
   KeyRound,
   Laptop,
   ListChecks,
+  Lock,
   LogOut,
   Map,
   MapPin,
@@ -588,6 +589,8 @@ type PublicServiceMapPayload = {
     customerLastInitial?: string | null;
     tags?: string[];
     imageUrl?: string | null;
+    imageUrls?: string[];
+    imageName?: string | null;
   }>;
 };
 
@@ -2078,6 +2081,7 @@ export function App() {
   const [selectedMapFocusId, setSelectedMapFocusId] = useState("");
   const [publicMapZoom, setPublicMapZoom] = useState(10);
   const [publicMapPan, setPublicMapPan] = useState({ x: 0, y: 0 });
+  const [publicMapPhotoIndex, setPublicMapPhotoIndex] = useState(0);
   const publicMapDragRef = useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null);
   const [bookingStep, setBookingStep] = useState<"zip" | "service" | "time" | "contact" | "done">("zip");
   const [bookingForm, setBookingForm] = useState({
@@ -2499,6 +2503,11 @@ export function App() {
     api<PublicServiceMapPayload>(`/api/public-service-map/${encodeURIComponent(publicServiceMapLocationKey)}`, { skipAuth: true })
       .then(setPublicServiceMapData)
       .catch((err) => setBookingSubmitMessage(err instanceof Error ? err.message : "Service map could not be loaded."));
+  }, [publicServiceMapLocationKey]);
+  useEffect(() => {
+    if (!publicServiceMapLocationKey) return;
+    const timer = window.setInterval(() => setPublicMapPhotoIndex((current) => current + 1), 4500);
+    return () => window.clearInterval(timer);
   }, [publicServiceMapLocationKey]);
   useEffect(() => {
     if (!token || publicBookingLocationKey || publicServiceMapLocationKey || activeView !== "onlineBooking" || !activeLocationId) return;
@@ -4225,6 +4234,21 @@ export function App() {
     };
     reader.onerror = () => setError("Unable to read invoice logo file.");
     reader.readAsDataURL(file);
+  }
+
+  async function readJobAttachmentFiles(fileList: FileList | null) {
+    const files = Array.from(fileList ?? []);
+    const attachments = await Promise.all(files.map((file) => new Promise<string>((resolve) => {
+      if (!file.type.startsWith("image/") || file.size > 4_000_000) {
+        resolve(file.name);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : file.name);
+      reader.onerror = () => resolve(file.name);
+      reader.readAsDataURL(file);
+    })));
+    setJobAttachments(attachments);
   }
 
   async function saveInlineJobClient(event?: FormEvent) {
@@ -6703,8 +6727,17 @@ export function App() {
     const centerWorld = mapWorldPoint(mapCenter.latitude, mapCenter.longitude, publicMapZoom);
     const centerTileX = Math.floor(centerWorld.x / 256);
     const centerTileY = Math.floor(centerWorld.y / 256);
-    const tileOffsets = Array.from({ length: 7 }, (_item, xIndex) => xIndex - 3).flatMap((xOffset) => Array.from({ length: 5 }, (_item, yIndex) => ({ xOffset, yOffset: yIndex - 2 })));
+    const tileOffsets = Array.from({ length: 13 }, (_item, xIndex) => xIndex - 6).flatMap((xOffset) => Array.from({ length: 9 }, (_item, yIndex) => ({ xOffset, yOffset: yIndex - 4 })));
     const publicLocationName = "Affordable Security";
+    const clampPublicMapPan = (x: number, y: number) => ({ x: Math.max(-840, Math.min(840, x)), y: Math.max(-520, Math.min(520, y)) });
+    const publicJobImages = (job: (typeof jobsForMap)[number]) => {
+      const images = job.imageUrls?.length ? job.imageUrls : job.imageUrl ? [job.imageUrl] : [];
+      return images.filter(Boolean) as string[];
+    };
+    const publicJobImage = (job: (typeof jobsForMap)[number], offset = 0) => {
+      const images = publicJobImages(job);
+      return images.length ? images[(publicMapPhotoIndex + offset) % images.length] : "";
+    };
     const startPublicMapDrag = (event: ReactPointerEvent<HTMLElement>) => {
       event.currentTarget.setPointerCapture(event.pointerId);
       publicMapDragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, panX: publicMapPan.x, panY: publicMapPan.y };
@@ -6712,7 +6745,7 @@ export function App() {
     const movePublicMapDrag = (event: ReactPointerEvent<HTMLElement>) => {
       const drag = publicMapDragRef.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
-      setPublicMapPan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y });
+      setPublicMapPan(clampPublicMapPan(drag.panX + event.clientX - drag.x, drag.panY + event.clientY - drag.y));
     };
     const endPublicMapDrag = (event: ReactPointerEvent<HTMLElement>) => {
       if (publicMapDragRef.current?.pointerId === event.pointerId) publicMapDragRef.current = null;
@@ -6742,7 +6775,7 @@ export function App() {
             const point = mapWorldPoint(job.latitude, job.longitude, publicMapZoom);
             return (
               <button key={job.id} className="public-map-lock-marker" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => setSelectedPublicMapJobId(job.id)} style={{ left: `calc(50% + ${point.x - centerWorld.x + publicMapPan.x}px)`, top: `calc(50% + ${point.y - centerWorld.y + publicMapPan.y}px)` }} aria-label={`Open ${job.jobType}`}>
-                <KeyRound size={18} />
+                <Lock size={15} />
               </button>
             );
           })}
@@ -6757,17 +6790,22 @@ export function App() {
           <span>completed jobs shown from our service history</span>
         </section>
         <section className="public-map-card-grid">
-          {jobsForMap.slice(0, 8).map((job) => (
-            <button key={job.id} className="public-map-job-card" type="button" onClick={() => setSelectedPublicMapJobId(job.id)}>
-              <div className="public-map-image-wrap">
-                {job.imageUrl ? <img src={job.imageUrl} alt="" /> : <div className="public-map-image-placeholder"><Wrench size={28} /></div>}
-                <strong>{[job.customerFirstName, job.customerLastInitial ? `${job.customerLastInitial}.` : ""].filter(Boolean).join(" ") || "Customer"}</strong>
-              </div>
-              <h2>{job.jobType}</h2>
-              <p>{job.description || job.title}</p>
-              <small>{[job.city, job.state, job.postalCode].filter(Boolean).join(", ")}</small>
-            </button>
-          ))}
+          {jobsForMap.slice(0, 8).map((job, index) => {
+            const image = publicJobImage(job, index);
+            return (
+              <button key={job.id} className="public-map-job-card" type="button" onClick={() => setSelectedPublicMapJobId(job.id)}>
+                <div className="public-map-image-wrap">
+                  {image ? <img src={image} alt={job.imageName || `${job.jobType} completed by Affordable Security`} title={job.imageName || undefined} /> : <div className="public-map-image-placeholder"><Lock size={28} /></div>}
+                  {image && <div className="public-map-card-watermark">{publicLogo ? <img src={publicLogo} alt="" /> : "A"}</div>}
+                  {(job.imageUrls?.length ?? 0) > 1 && <span className="public-map-photo-count">{(job.imageUrls ?? []).length} photos</span>}
+                  <strong>{[job.customerFirstName, job.customerLastInitial ? `${job.customerLastInitial}.` : ""].filter(Boolean).join(" ") || "Customer"}</strong>
+                </div>
+                <h2>{job.jobType}</h2>
+                <p>{job.description || job.title}</p>
+                <small>{[job.city, job.state, job.postalCode].filter(Boolean).join(", ")}</small>
+              </button>
+            );
+          })}
           {!jobsForMap.length && <p className="empty-state">No completed jobs are available yet.</p>}
         </section>
         {selectedPublicJob && (
@@ -6775,7 +6813,7 @@ export function App() {
             <article className="public-map-modal" onClick={(event) => event.stopPropagation()}>
               <button className="public-map-modal-close" type="button" onClick={() => setSelectedPublicMapJobId("")}>Close <X size={18} /></button>
               <div className="public-map-modal-image">
-                {selectedPublicJob.imageUrl ? <img src={selectedPublicJob.imageUrl} alt="" /> : <div className="public-map-image-placeholder"><Wrench size={34} /></div>}
+                {publicJobImage(selectedPublicJob) ? <img src={publicJobImage(selectedPublicJob)} alt={selectedPublicJob.imageName || `${selectedPublicJob.jobType} completed by Affordable Security`} title={selectedPublicJob.imageName || undefined} /> : <div className="public-map-image-placeholder"><Lock size={34} /></div>}
                 <div className="public-map-logo-watermark">{publicLogo ? <img src={publicLogo} alt="" /> : "A"}</div>
               </div>
               <aside>
@@ -9627,7 +9665,7 @@ export function App() {
                   <button className="job-collapsed-row" type="button"><ListChecks size={18} /> Checklists <Plus size={18} /></button>
                   <label className="job-collapsed-row file-row">
                     <Paperclip size={18} /> Attachments <Plus size={18} />
-                    <input type="file" multiple onChange={(event) => setJobAttachments(Array.from(event.currentTarget.files ?? []).map((file) => file.name))} />
+                    <input type="file" multiple accept="image/*" onChange={(event) => readJobAttachmentFiles(event.currentTarget.files)} />
                   </label>
 
                   <section className="panel job-detail-card">
@@ -9894,7 +9932,7 @@ export function App() {
                   <button className="job-collapsed-row" type="button"><ListChecks size={18} /> Checklists <Plus size={18} /></button>
                   <label className="job-collapsed-row file-row">
                     <Paperclip size={18} /> {jobAttachments.length ? `${jobAttachments.length} attachment${jobAttachments.length === 1 ? "" : "s"}` : "Attachments"} <Plus size={18} />
-                    <input type="file" multiple onChange={(event) => setJobAttachments(Array.from(event.currentTarget.files ?? []).map((file) => file.name))} />
+                    <input type="file" multiple accept="image/*" onChange={(event) => readJobAttachmentFiles(event.currentTarget.files)} />
                   </label>
 
                   <section className="panel job-detail-card">
