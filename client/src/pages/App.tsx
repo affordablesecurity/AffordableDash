@@ -139,7 +139,7 @@ type Technician = {
   allLocations?: boolean;
 };
 
-type EmployeeModalType = "employee" | "contractor" | "owner" | "admin" | "fieldTech" | "officeStaff";
+type EmployeeModalType = "employee" | "contractor" | "owner" | "locationOwner" | "admin" | "fieldTech" | "officeStaff";
 type EmployeePermissionId =
   | "jobs:write"
   | "jobs:delete"
@@ -1703,6 +1703,14 @@ const rolePresets: Record<EmployeeModalType, {
     allLocations: false,
     permissions: ["jobs:write", "jobs:delete", "payments:read", "customers:contact", "messages:write", "customers:write", "company:write", "booking:write", "schedule:full", "invoices:message", "home:data", "margins:read", "pricebook:write", "employees:write", "reports:read"]
   },
+  locationOwner: {
+    title: "Create Location Owner",
+    role: "OWNER",
+    employmentType: "employee",
+    fieldTech: false,
+    allLocations: false,
+    permissions: ["jobs:write", "jobs:delete", "payments:read", "customers:contact", "messages:write", "customers:write", "company:write", "booking:write", "schedule:full", "invoices:message", "home:data", "margins:read", "pricebook:write", "employees:write", "reports:read"]
+  },
   admin: {
     title: "Add Super Admin",
     role: "ADMIN",
@@ -1883,6 +1891,19 @@ export function App() {
   const [locationScope, setLocationScope] = useState<"location" | "main">("location");
   const [locationMenuOpen, setLocationMenuOpen] = useState(false);
   const [locationSearch, setLocationSearch] = useState("");
+  const [locationCreateOpen, setLocationCreateOpen] = useState(false);
+  const [locationCreateForm, setLocationCreateForm] = useState({
+    name: "",
+    displayName: "",
+    slug: "",
+    phone: "",
+    street1: "",
+    street2: "",
+    city: "",
+    state: "CA",
+    postalCode: "",
+    timezone: "America/Phoenix"
+  });
   const [activeView, setActiveView] = useState<View>(() => typeof window === "undefined" ? "dispatch" : viewFromPath(window.location.pathname));
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [employeeCreateMenuOpen, setEmployeeCreateMenuOpen] = useState(false);
@@ -3254,6 +3275,30 @@ export function App() {
     await loadDashboard();
   }
 
+  async function createLocation(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    const result = await api<{ location: LocationAccess["location"] }>("/api/locations", {
+      method: "POST",
+      body: JSON.stringify({
+        name: locationCreateForm.name,
+        displayName: locationCreateForm.displayName || undefined,
+        slug: locationCreateForm.slug || undefined,
+        phone: locationCreateForm.phone || undefined,
+        street1: locationCreateForm.street1 || undefined,
+        street2: locationCreateForm.street2 || undefined,
+        city: locationCreateForm.city || undefined,
+        state: locationCreateForm.state || undefined,
+        postalCode: locationCreateForm.postalCode || undefined,
+        timezone: locationCreateForm.timezone
+      })
+    });
+    const organization = activeLocationAccess?.organization ?? locations[0]?.organization ?? { id: "", name: "Affordable Security" };
+    setLocations((current) => [...current, { role: currentRole || "ADMIN", organization, location: result.location }]);
+    setLocationCreateOpen(false);
+    setLocationCreateForm({ name: "", displayName: "", slug: "", phone: "", street1: "", street2: "", city: "", state: "CA", postalCode: "", timezone: "America/Phoenix" });
+  }
+
   function selectMainLocation() {
     if (!canUseMainLocation) return;
     setLocationScope("main");
@@ -3446,6 +3491,15 @@ export function App() {
       : employee.locationAccess?.length
         ? employee.locationAccess.map((location) => locationDisplayName(location)).join(", ")
         : employee.userId ? "Current location" : "Roster only";
+  }
+
+  function addStaffToLocation(locationId: string, type: EmployeeModalType = "employee") {
+    openEmployeeModal(type);
+    setEmployeeForm((current) => ({
+      ...current,
+      locationIds: [locationId],
+      allLocations: false
+    }));
   }
 
   async function revokeApiKey(id: string) {
@@ -9899,8 +9953,8 @@ export function App() {
             <div className="section-actions">
               <div className="breadcrumb"><MapPin size={17} /> Locations</div>
               <div className="employee-create-menu-wrap">
-                <button className="primary" type="button" onClick={() => { setActiveView("employees"); openEmployeeModal("owner"); }}>
-                  <Plus size={17} /> Create Owner + Location
+                <button className="primary" type="button" onClick={() => setLocationCreateOpen(true)}>
+                  <Plus size={17} /> Create location
                 </button>
               </div>
             </div>
@@ -9931,7 +9985,8 @@ export function App() {
                   </dl>
                   <div className="employee-actions">
                     <button className="outline-button" type="button" onClick={() => void switchLocation(item.location.id)}>Open location</button>
-                    <button className="text-button" type="button" onClick={() => { setActiveView("employees"); openEmployeeModal("employee"); setEmployeeForm((current) => ({ ...current, locationIds: [item.location.id] })); }}>Add staff here</button>
+                    <button className="text-button" type="button" onClick={() => { setActiveView("employees"); addStaffToLocation(item.location.id, "locationOwner"); }}>Add owner here</button>
+                    <button className="text-button" type="button" onClick={() => { setActiveView("employees"); addStaffToLocation(item.location.id, "employee"); }}>Add staff here</button>
                   </div>
                 </section>
               ))}
@@ -9941,6 +9996,57 @@ export function App() {
 
         {activeView === "locations" && !canUseMainLocation && (
           <section className="employees-page"><div className="error">Only super admins can manage locations.</div></section>
+        )}
+
+        {locationCreateOpen && (
+          <div className="modal-backdrop" onClick={() => setLocationCreateOpen(false)}>
+            <form className="employee-modal record-form" onSubmit={createLocation} onClick={(event) => event.stopPropagation()}>
+              <h2>Create location</h2>
+              <section className="owner-location-flow-card">
+                <MapPin size={24} />
+                <span>
+                  <strong>Create the location first</strong>
+                  <small>After it is created, use the location card to add an owner, tech, contractor, or office staff.</small>
+                </span>
+              </section>
+              <div className="employee-form-grid">
+                <label>Location Name
+                  <input value={locationCreateForm.name} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, name: event.target.value })} placeholder="San Diego" required />
+                </label>
+                <label>Switcher Name
+                  <input value={locationCreateForm.displayName} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, displayName: event.target.value })} placeholder="San Diego" />
+                </label>
+                <label>Location Slug
+                  <input value={locationCreateForm.slug} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, slug: event.target.value })} placeholder="san-diego" />
+                </label>
+                <label>Company Phone
+                  <input value={locationCreateForm.phone} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, phone: event.target.value })} />
+                </label>
+                <label>Street Address
+                  <input value={locationCreateForm.street1} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, street1: event.target.value })} required />
+                </label>
+                <label>Unit / Suite
+                  <input value={locationCreateForm.street2} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, street2: event.target.value })} />
+                </label>
+                <label>City
+                  <input value={locationCreateForm.city} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, city: event.target.value })} required />
+                </label>
+                <label>State
+                  <input value={locationCreateForm.state} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, state: event.target.value })} required />
+                </label>
+                <label>ZIP
+                  <input value={locationCreateForm.postalCode} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, postalCode: event.target.value })} required />
+                </label>
+                <label>Timezone
+                  <input value={locationCreateForm.timezone} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, timezone: event.target.value })} required />
+                </label>
+              </div>
+              <div className="modal-actions">
+                <button className="outline-button" type="button" onClick={() => setLocationCreateOpen(false)}>Cancel</button>
+                <button className="primary" type="submit">Create location</button>
+              </div>
+            </form>
+          </div>
         )}
 
         {activeView === "employees" && (
