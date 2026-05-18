@@ -349,6 +349,37 @@ type Estimate = {
   convertedJob?: Job;
 };
 
+type EstimateColumnId =
+  | "customer"
+  | "options"
+  | "employee"
+  | "status"
+  | "created"
+  | "scheduled"
+  | "outcome"
+  | "openValue"
+  | "wonValue"
+  | "lostValue"
+  | "leadSource"
+  | "tags"
+  | "jobType"
+  | "address"
+  | "customerPhone"
+  | "customerEmail"
+  | "location";
+
+type EstimateFilters = {
+  createdFrom: string;
+  createdTo: string;
+  scheduledFrom: string;
+  scheduledTo: string;
+  leadSource: string;
+  tag: string;
+  technicianId: string;
+  customer: string;
+  jobType: string;
+};
+
 type Invoice = {
   id: string;
   invoiceNumber: number;
@@ -949,6 +980,100 @@ function estimateOptionCost(option: NonNullable<Estimate["options"]>[number]) {
   return (option.lineItems ?? []).reduce((sum, item) => sum + Number(item.quantity || "0") * (item.unitCost ?? 0), 0);
 }
 
+function estimateListTotal(estimate: Estimate) {
+  const approvedOption = estimate.approvedOptionId ? estimate.options?.find((option) => option.id === estimate.approvedOptionId) : null;
+  const option = approvedOption ?? estimate.options?.[0];
+  return option ? estimateOptionTotal(option) : estimateTotal(estimate);
+}
+
+function estimateOutcome(estimate: Estimate): "open" | "won" | "lost" {
+  if (estimate.status === "APPROVED" || estimate.status === "CONVERTED") return "won";
+  if (estimate.status === "DECLINED") return "lost";
+  return "open";
+}
+
+function estimateOutcomeLabel(estimate: Estimate) {
+  const outcome = estimateOutcome(estimate);
+  return outcome === "won" ? "Won" : outcome === "lost" ? "Lost" : "Open";
+}
+
+function estimateEmployeeName(estimate: Estimate) {
+  return estimate.technician?.name
+    ?? estimate.appointments?.find((appointment) => appointment.technician)?.technician?.name
+    ?? "Unassigned";
+}
+
+function estimateScheduledValue(estimate: Estimate) {
+  return estimate.scheduledStart ?? estimate.appointments?.find((appointment) => appointment.status !== "CANCELED")?.scheduledStart ?? null;
+}
+
+function estimateScheduledLabel(estimate: Estimate) {
+  return formatDateTime(estimateScheduledValue(estimate));
+}
+
+function matchesDateRange(value: string | null | undefined, from: string, to: string) {
+  if (!from && !to) return true;
+  if (!value) return false;
+  const date = new Date(value);
+  if (from) {
+    const start = new Date(`${from}T00:00:00`);
+    if (date < start) return false;
+  }
+  if (to) {
+    const end = new Date(`${to}T23:59:59`);
+    if (date > end) return false;
+  }
+  return true;
+}
+
+const estimateColumnOptions: Array<{ id: EstimateColumnId; label: string }> = [
+  { id: "customer", label: "Customer name" },
+  { id: "options", label: "Options count" },
+  { id: "employee", label: "Employees" },
+  { id: "status", label: "Estimate status" },
+  { id: "created", label: "Created date" },
+  { id: "scheduled", label: "Scheduled date" },
+  { id: "outcome", label: "Outcome" },
+  { id: "openValue", label: "Open value" },
+  { id: "wonValue", label: "Won value" },
+  { id: "lostValue", label: "Lost value" },
+  { id: "leadSource", label: "Estimate lead source" },
+  { id: "tags", label: "Estimate tags" },
+  { id: "jobType", label: "Job type" },
+  { id: "address", label: "Address" },
+  { id: "customerPhone", label: "Customer mobile number" },
+  { id: "customerEmail", label: "Customer email" },
+  { id: "location", label: "Location name" }
+];
+
+const defaultEstimateColumns: EstimateColumnId[] = [
+  "customer",
+  "options",
+  "employee",
+  "status",
+  "created",
+  "scheduled",
+  "outcome",
+  "openValue",
+  "wonValue",
+  "lostValue",
+  "leadSource",
+  "tags",
+  "location"
+];
+
+const blankEstimateFilters: EstimateFilters = {
+  createdFrom: "",
+  createdTo: "",
+  scheduledFrom: "",
+  scheduledTo: "",
+  leadSource: "",
+  tag: "",
+  technicianId: "",
+  customer: "",
+  jobType: ""
+};
+
 function profitPercent(revenue: number, cost: number) {
   if (revenue <= 0) return 0;
   return ((revenue - cost) / revenue) * 100;
@@ -1463,6 +1588,11 @@ export function App() {
   const [selectedEstimateId, setSelectedEstimateId] = useState("");
   const [estimateSearch, setEstimateSearch] = useState("");
   const [estimateStatusFilter, setEstimateStatusFilter] = useState("all");
+  const [estimateOutcomeFilter, setEstimateOutcomeFilter] = useState<"all" | "open" | "won" | "lost">("all");
+  const [estimateFilters, setEstimateFilters] = useState<EstimateFilters>(blankEstimateFilters);
+  const [estimateFilterPanelOpen, setEstimateFilterPanelOpen] = useState(false);
+  const [estimateColumnDialogOpen, setEstimateColumnDialogOpen] = useState(false);
+  const [visibleEstimateColumns, setVisibleEstimateColumns] = useState<EstimateColumnId[]>(defaultEstimateColumns);
   const [signatureName, setSignatureName] = useState("");
   const [signatureHasInk, setSignatureHasInk] = useState(false);
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1691,18 +1821,41 @@ export function App() {
     const query = estimateSearch.trim().toLowerCase();
     return estimates.filter((estimate) => {
       const matchesStatus = estimateStatusFilter === "all" || estimate.status === estimateStatusFilter;
+      const outcome = estimateOutcome(estimate);
+      const matchesOutcome = estimateOutcomeFilter === "all" || outcome === estimateOutcomeFilter;
+      const scheduledValue = estimateScheduledValue(estimate);
+      const matchesFilters = matchesDateRange(estimate.createdAt, estimateFilters.createdFrom, estimateFilters.createdTo)
+        && matchesDateRange(scheduledValue, estimateFilters.scheduledFrom, estimateFilters.scheduledTo)
+        && (!estimateFilters.leadSource || estimate.leadSource === estimateFilters.leadSource)
+        && (!estimateFilters.tag || (estimate.tags ?? []).includes(estimateFilters.tag))
+        && (!estimateFilters.technicianId || estimate.technicianId === estimateFilters.technicianId || estimate.appointments?.some((appointment) => appointment.technicianId === estimateFilters.technicianId))
+        && (!estimateFilters.jobType || estimate.jobType === estimateFilters.jobType)
+        && (!estimateFilters.customer || [
+          customerName(estimate.customer),
+          estimate.customer.email ?? "",
+          estimate.customer.phone,
+          addressLine(estimate.address ?? estimate.customer.addresses?.[0])
+        ].some((value) => value.toLowerCase().includes(estimateFilters.customer.toLowerCase())));
       const matchesQuery = !query || [
         String(estimate.estimateNumber),
         estimate.title,
         estimate.jobType,
         estimate.leadSource ?? "",
         ...(estimate.tags ?? []),
+        estimate.status,
+        estimate.workflowStatus ?? "",
+        estimateOutcomeLabel(estimate),
+        estimateEmployeeName(estimate),
+        estimate.customer.phone,
+        estimate.customer.email ?? "",
+        formatDate(estimate.createdAt),
+        estimateScheduledLabel(estimate),
         customerName(estimate.customer),
         addressLine(estimate.address ?? estimate.customer.addresses?.[0])
       ].some((value) => value.toLowerCase().includes(query));
-      return matchesStatus && matchesQuery;
+      return matchesStatus && matchesOutcome && matchesFilters && matchesQuery;
     });
-  }, [estimateSearch, estimateStatusFilter, estimates]);
+  }, [estimateFilters, estimateOutcomeFilter, estimateSearch, estimateStatusFilter, estimates]);
   const filteredCustomers = useMemo(() => {
     const query = customerSearch.trim().toLowerCase();
     if (!query) return customers;
@@ -3169,6 +3322,16 @@ export function App() {
     setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
     setSelectedEstimateId(result.estimate.id);
     return result.estimate;
+  }
+
+  async function deleteEstimate(estimate: Estimate) {
+    if (!window.confirm(`Delete estimate #${estimate.estimateNumber}? This removes the estimate and its options.`)) return;
+    setError("");
+    await api(`/api/estimates/${estimate.id}`, { method: "DELETE" });
+    setEstimates((current) => current.filter((item) => item.id !== estimate.id));
+    if (selectedEstimateId === estimate.id) setSelectedEstimateId("");
+    setEstimateActionMessage(`Estimate #${estimate.estimateNumber} deleted.`);
+    await loadDashboard();
   }
 
   async function saveEstimateDepositTerms(estimate: Estimate) {
@@ -4797,6 +4960,57 @@ export function App() {
         </form>
       </main>
     );
+  }
+
+  const estimateFilterCount = Object.values(estimateFilters).filter(Boolean).length
+    + (estimateOutcomeFilter === "all" ? 0 : 1)
+    + (estimateStatusFilter === "all" ? 0 : 1);
+
+  function updateEstimateFilter<K extends keyof EstimateFilters>(key: K, value: EstimateFilters[K]) {
+    setEstimateFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function renderEstimateColumn(estimate: Estimate, columnId: EstimateColumnId) {
+    const total = estimateListTotal(estimate);
+    const outcome = estimateOutcome(estimate);
+    switch (columnId) {
+      case "customer":
+        return <button className="table-link" type="button" onClick={() => setSelectedEstimateId(estimate.id)}>{customerName(estimate.customer)}</button>;
+      case "options":
+        return estimate.options?.length ?? 1;
+      case "employee":
+        return estimateEmployeeName(estimate);
+      case "status":
+        return <span className={`status-pill estimate-status-${estimate.status.toLowerCase()}`}>{statusLabel(estimate.status)}</span>;
+      case "created":
+        return formatDateTime(estimate.createdAt);
+      case "scheduled":
+        return estimateScheduledLabel(estimate);
+      case "outcome":
+        return <span className={`status-pill estimate-outcome-${outcome}`}>{estimateOutcomeLabel(estimate)}</span>;
+      case "openValue":
+        return outcome === "open" ? money.format(total / 100) : "--";
+      case "wonValue":
+        return outcome === "won" ? money.format(total / 100) : "--";
+      case "lostValue":
+        return outcome === "lost" ? money.format(total / 100) : "--";
+      case "leadSource":
+        return estimate.leadSource || "--";
+      case "tags":
+        return (estimate.tags?.length ? <span className="table-tag-wrap">{estimate.tags.map((tag) => <span className="tag-chip compact" key={tag}>{tag}</span>)}</span> : "--");
+      case "jobType":
+        return estimate.jobType || "--";
+      case "address":
+        return addressLine(estimate.address ?? estimate.customer.addresses?.[0]) || "--";
+      case "customerPhone":
+        return estimate.customer.phone || "--";
+      case "customerEmail":
+        return estimate.customer.email || "--";
+      case "location":
+        return activeLocationAccess?.organization.name || activeLocationAccess?.location.name || "Affordable Security";
+      default:
+        return "--";
+    }
   }
 
   return (
@@ -7302,24 +7516,123 @@ export function App() {
                       ["CONVERTED", "Converted", estimateCounts.converted]
                     ].map(([status, label, count]) => <button key={status} onClick={() => setEstimateStatusFilter(status as string)} className={estimateStatusFilter === status ? "selected" : ""}><FileText size={21} /><strong>{count}</strong><span>{label}</span></button>)}
                   </div>
-                  <div className="jobs-table-panel">
-                    <div className="jobs-tools"><div className="search-box table-search"><Search size={18} /><input placeholder="Search estimates, clients, addresses" value={estimateSearch} onChange={(event) => setEstimateSearch(event.target.value)} /></div><button className="outline-button" onClick={() => setEstimateStatusFilter("all")}>All</button></div>
-                    <div className="jobs-table">
-                      <div className="jobs-table-row jobs-table-head"><span>Estimate #</span><span>Client</span><span>Created</span><span>Address</span><span>Status</span><span>Total</span><span>Converted Job</span></div>
-                      {filteredEstimates.map((estimate) => (
-                        <div className="jobs-table-row clickable-row estimate-row" key={estimate.id} role="button" tabIndex={0} onClick={() => setSelectedEstimateId(estimate.id)}>
-                          <strong>{estimate.estimateNumber}</strong>
-                          <span>{customerName(estimate.customer)}</span>
-                          <span>{formatDate(estimate.createdAt)}</span>
-                          <span>{addressLine(estimate.address ?? estimate.customer.addresses?.[0])}</span>
-                          <span className={`status-pill job-status-${estimate.status.toLowerCase()}`}>{statusLabel(estimate.status)} / {estimateWorkflowLabel(estimate.workflowStatus)}</span>
-                          <strong>{money.format(estimateTotal(estimate) / 100)}</strong>
-                          <span>{estimate.convertedJob ? `#${estimate.convertedJob.jobNumber}` : "-"}</span>
-                        </div>
+                  <div className="estimate-index-panel">
+                    <div className="estimate-index-header">
+                      <div>
+                        <h2>Estimates</h2>
+                        <span>{filteredEstimates.length} of {estimates.length} records</span>
+                      </div>
+                      <div className="estimate-index-actions">
+                        <button className="outline-button" type="button"><MoreHorizontal size={16} /> Actions</button>
+                        <button className="primary" type="button" onClick={() => setEstimatePageMode("create")}><Plus size={17} /> Create estimate</button>
+                      </div>
+                    </div>
+                    <div className="estimate-management-toolbar">
+                      <div className="search-box table-search"><Search size={18} /><input placeholder="Search estimates" value={estimateSearch} onChange={(event) => setEstimateSearch(event.target.value)} /></div>
+                      <button className="outline-button" type="button" onClick={() => setEstimateFilterPanelOpen(true)}><Settings size={16} /> Filters{estimateFilterCount ? ` (${estimateFilterCount})` : ""}</button>
+                      <button className="outline-button" type="button" onClick={() => setEstimateColumnDialogOpen(true)}><ListChecks size={16} /> Columns</button>
+                    </div>
+                    <div className="estimate-outcome-tabs">
+                      {[
+                        ["all", "All"],
+                        ["open", "Open"],
+                        ["won", "Won"],
+                        ["lost", "Lost"]
+                      ].map(([value, label]) => (
+                        <button key={value} className={estimateOutcomeFilter === value ? "active" : ""} type="button" onClick={() => setEstimateOutcomeFilter(value as typeof estimateOutcomeFilter)}>{label}</button>
                       ))}
-                      {filteredEstimates.length === 0 && <p className="empty table-empty">No estimates match this search.</p>}
+                    </div>
+                    <div className="estimate-status-chips">
+                      <button className={estimateStatusFilter === "all" ? "selected" : ""} type="button" onClick={() => setEstimateStatusFilter("all")}>All statuses</button>
+                      {(["DRAFT", "SENT", "APPROVED", "DECLINED", "CONVERTED"] as Estimate["status"][]).map((status) => (
+                        <button className={estimateStatusFilter === status ? "selected" : ""} key={status} type="button" onClick={() => setEstimateStatusFilter(status)}>{statusLabel(status)}</button>
+                      ))}
+                    </div>
+                    {estimateActionMessage && <p className="inline-confirm">{estimateActionMessage}</p>}
+                    <div className="estimate-table-wrap">
+                      <table className="estimate-management-table">
+                        <thead>
+                          <tr>
+                            <th><input type="checkbox" aria-label="Select all estimates" /></th>
+                            <th>Estimate #</th>
+                            {visibleEstimateColumns.map((columnId) => <th key={columnId}>{estimateColumnOptions.find((column) => column.id === columnId)?.label}</th>)}
+                            <th>Converted job</th>
+                            <th>Delete</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredEstimates.map((estimate) => (
+                            <tr key={estimate.id}>
+                              <td><input type="checkbox" aria-label={`Select estimate ${estimate.estimateNumber}`} /></td>
+                              <td><button className="table-link" type="button" onClick={() => setSelectedEstimateId(estimate.id)}>{estimate.estimateNumber}</button></td>
+                              {visibleEstimateColumns.map((columnId) => <td key={columnId}>{renderEstimateColumn(estimate, columnId)}</td>)}
+                              <td>{estimate.convertedJob ? <button className="table-link" type="button" onClick={() => { setActiveView("jobs"); setSelectedJobId(estimate.convertedJob?.id ?? ""); }}>#{estimate.convertedJob.jobNumber}</button> : "--"}</td>
+                              <td><button className="icon-button danger" type="button" onClick={() => void deleteEstimate(estimate)} aria-label={`Delete estimate ${estimate.estimateNumber}`}><Trash2 size={16} /></button></td>
+                            </tr>
+                          ))}
+                          {filteredEstimates.length === 0 && <tr><td colSpan={visibleEstimateColumns.length + 4}><p className="empty table-empty">No estimates match this search.</p></td></tr>}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
+                  {estimateColumnDialogOpen && (
+                    <div className="modal-backdrop" role="presentation" onClick={() => setEstimateColumnDialogOpen(false)}>
+                      <div className="estimate-column-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                        <h2>Select columns to view</h2>
+                        <div className="estimate-column-grid">
+                          {estimateColumnOptions.map((column) => (
+                            <label key={column.id} className="check-row">
+                              <input
+                                type="checkbox"
+                                checked={visibleEstimateColumns.includes(column.id)}
+                                onChange={(event) => setVisibleEstimateColumns((current) => event.target.checked ? [...current, column.id] : current.filter((id) => id !== column.id))}
+                              />
+                              {column.label}
+                            </label>
+                          ))}
+                        </div>
+                        <div className="modal-actions">
+                          <button className="text-button" type="button" onClick={() => setVisibleEstimateColumns(defaultEstimateColumns)}>Reset defaults</button>
+                          <button className="primary" type="button" onClick={() => setEstimateColumnDialogOpen(false)}>Done</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {estimateFilterPanelOpen && (
+                    <div className="modal-backdrop estimate-filter-backdrop" role="presentation" onClick={() => setEstimateFilterPanelOpen(false)}>
+                      <aside className="estimate-filter-panel" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                        <header><button className="icon-button" type="button" onClick={() => setEstimateFilterPanelOpen(false)}><X size={18} /></button><h2>Filters</h2></header>
+                        <label>Scheduled date
+                          <div className="two-column-inputs"><input type="date" value={estimateFilters.scheduledFrom} onChange={(event) => updateEstimateFilter("scheduledFrom", event.target.value)} /><input type="date" value={estimateFilters.scheduledTo} onChange={(event) => updateEstimateFilter("scheduledTo", event.target.value)} /></div>
+                        </label>
+                        <label>Created date
+                          <div className="two-column-inputs"><input type="date" value={estimateFilters.createdFrom} onChange={(event) => updateEstimateFilter("createdFrom", event.target.value)} /><input type="date" value={estimateFilters.createdTo} onChange={(event) => updateEstimateFilter("createdTo", event.target.value)} /></div>
+                        </label>
+                        <label>Estimate lead source
+                          <select value={estimateFilters.leadSource} onChange={(event) => updateEstimateFilter("leadSource", event.target.value)}><option value="">Any lead source</option>{crmOptions.leadSources.map((source) => <option key={source} value={source}>{source}</option>)}</select>
+                        </label>
+                        <label>Estimate tags
+                          <select value={estimateFilters.tag} onChange={(event) => updateEstimateFilter("tag", event.target.value)}><option value="">Any tag</option>{crmOptions.tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select>
+                        </label>
+                        <label>Outcome
+                          <select value={estimateOutcomeFilter} onChange={(event) => setEstimateOutcomeFilter(event.target.value as typeof estimateOutcomeFilter)}><option value="all">Any outcome</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select>
+                        </label>
+                        <label>Employee(s)
+                          <select value={estimateFilters.technicianId} onChange={(event) => updateEstimateFilter("technicianId", event.target.value)}><option value="">Any employee</option>{technicians.map((tech) => <option key={tech.id} value={tech.id}>{tech.name}</option>)}</select>
+                        </label>
+                        <label>Customer
+                          <input placeholder="Customer name, email, phone, or address" value={estimateFilters.customer} onChange={(event) => updateEstimateFilter("customer", event.target.value)} />
+                        </label>
+                        <label>Job type
+                          <select value={estimateFilters.jobType} onChange={(event) => updateEstimateFilter("jobType", event.target.value)}><option value="">Any job type</option>{crmOptions.jobTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select>
+                        </label>
+                        <div className="modal-actions">
+                          <button className="text-button" type="button" onClick={() => { setEstimateFilters(blankEstimateFilters); setEstimateOutcomeFilter("all"); setEstimateStatusFilter("all"); }}>Clear filters</button>
+                          <button className="primary" type="button" onClick={() => setEstimateFilterPanelOpen(false)}>Apply</button>
+                        </div>
+                      </aside>
+                    </div>
+                  )}
                 </>
               )}
             </section>

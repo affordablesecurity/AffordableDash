@@ -5926,6 +5926,255 @@ button:disabled {
   grid-template-columns: 110px 1.1fr 1fr 1.7fr 1fr 1fr 1fr;
 }
 
+.estimate-index-panel {
+  background: #ffffff;
+  border: 1px solid #dfe5ef;
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 12px 34px rgba(18, 28, 45, 0.06);
+}
+
+.estimate-index-header,
+.estimate-management-toolbar,
+.estimate-index-actions,
+.estimate-outcome-tabs,
+.estimate-status-chips {
+  display: flex;
+  align-items: center;
+}
+
+.estimate-index-header {
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.estimate-index-header h2,
+.estimate-index-header span {
+  margin: 0;
+}
+
+.estimate-index-header span {
+  display: block;
+  margin-top: 3px;
+  color: #68728a;
+  font-weight: 700;
+}
+
+.estimate-index-actions,
+.estimate-management-toolbar {
+  gap: 10px;
+}
+
+.estimate-management-toolbar {
+  margin-bottom: 14px;
+}
+
+.estimate-management-toolbar .table-search {
+  max-width: 360px;
+}
+
+.estimate-outcome-tabs {
+  gap: 26px;
+  border-bottom: 1px solid #e6e9f1;
+  margin-bottom: 12px;
+}
+
+.estimate-outcome-tabs button {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: #7e8aac;
+  font-weight: 900;
+  padding: 10px 0 12px;
+}
+
+.estimate-outcome-tabs button.active {
+  color: #0b76d1;
+  border-bottom-color: #0b76d1;
+}
+
+.estimate-status-chips {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.estimate-status-chips button {
+  border: 0;
+  border-radius: 999px;
+  background: #eef3f8;
+  color: #5b6578;
+  padding: 7px 11px;
+  font-weight: 900;
+}
+
+.estimate-status-chips button.selected {
+  background: #d8ecff;
+  color: #075fab;
+}
+
+.estimate-table-wrap {
+  overflow: auto;
+  border: 1px solid #e6e9f1;
+  border-radius: 10px;
+}
+
+.estimate-management-table {
+  min-width: 1450px;
+  width: 100%;
+  border-collapse: collapse;
+  color: #272d3d;
+  font-size: 14px;
+}
+
+.estimate-management-table th,
+.estimate-management-table td {
+  border-bottom: 1px solid #e6e9f1;
+  padding: 12px 14px;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.estimate-management-table th {
+  background: #f8fafc;
+  color: #101421;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.estimate-management-table tbody tr:nth-child(even) {
+  background: #fbfcfe;
+}
+
+.estimate-management-table tbody tr:hover {
+  background: #f3f8ff;
+}
+
+.table-link {
+  border: 0;
+  background: transparent;
+  color: #0b76d1;
+  padding: 0;
+  font: inherit;
+  font-weight: 900;
+  text-align: left;
+  cursor: pointer;
+}
+
+.table-tag-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 160px;
+  white-space: normal;
+}
+
+.tag-chip.compact {
+  display: inline-flex;
+  border-radius: 999px;
+  background: #eef3f8;
+  color: #596476;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.estimate-status-approved,
+.estimate-status-converted,
+.estimate-outcome-won {
+  background: #e8f9e8;
+  color: #1f8a35;
+}
+
+.estimate-status-declined,
+.estimate-outcome-lost {
+  background: #ffe8ef;
+  color: #c02f55;
+}
+
+.estimate-status-sent,
+.estimate-outcome-open {
+  background: #d8ecff;
+  color: #075fab;
+}
+
+.estimate-status-draft {
+  background: #eef3f8;
+  color: #596476;
+}
+
+.estimate-column-modal {
+  width: min(680px, 96vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 24px 70px rgba(28, 33, 47, 0.22);
+}
+
+.estimate-column-modal h2 {
+  margin: 0 0 18px;
+}
+
+.estimate-column-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.estimate-filter-backdrop {
+  place-items: stretch end;
+  padding: 0;
+}
+
+.estimate-filter-panel {
+  width: min(390px, 94vw);
+  height: 100vh;
+  overflow-y: auto;
+  background: #ffffff;
+  padding: 22px;
+  box-shadow: -18px 0 50px rgba(16, 20, 33, 0.18);
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.estimate-filter-panel header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.estimate-filter-panel h2 {
+  margin: 0;
+}
+
+.estimate-filter-panel label {
+  display: grid;
+  gap: 8px;
+  color: #272d3d;
+  font-weight: 900;
+}
+
+.estimate-filter-panel input,
+.estimate-filter-panel select {
+  width: 100%;
+  border: 1px solid #d8deea;
+  border-radius: 10px;
+  padding: 11px 12px;
+  font: inherit;
+}
+
+.two-column-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .estimate-tag-editor {
   margin-top: 14px;
 }

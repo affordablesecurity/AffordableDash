@@ -378,6 +378,23 @@ estimatesRouter.patch("/:id", asyncHandler(async (req, res) => {
   res.json({ estimate });
 }));
 
+estimatesRouter.delete("/:id", asyncHandler(async (req, res) => {
+  const locationId = activeLocationId(req);
+  const estimate = await prisma.estimate.findFirst({
+    where: { id: String(req.params.id), locationId },
+    select: { id: true, convertedJobId: true }
+  });
+  if (!estimate) return res.status(404).json({ error: "Estimate not found" });
+  if (estimate.convertedJobId) {
+    return res.status(422).json({ error: "Converted estimates cannot be deleted after they are copied to a job." });
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.estimate.update({ where: { id: estimate.id }, data: { approvedOptionId: null } });
+    await tx.estimate.delete({ where: { id: estimate.id } });
+  });
+  res.status(204).send();
+}));
+
 estimatesRouter.post("/:id/appointments", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
   const input = appointmentSchema.parse(req.body);
