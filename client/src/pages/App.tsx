@@ -91,6 +91,7 @@ type Customer = {
   communicationPrefs?: { sms: boolean; email: boolean; phone: boolean };
   attachments?: string[];
   paymentMethodNote?: string;
+  deletedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
   privateNotes?: CustomerNote[];
@@ -1895,6 +1896,8 @@ export function App() {
   const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
   const [duplicateMergeMessage, setDuplicateMergeMessage] = useState("");
   const [customerImportMessage, setCustomerImportMessage] = useState("");
+  const [restoreCustomerDialogOpen, setRestoreCustomerDialogOpen] = useState(false);
+  const [deletedCustomers, setDeletedCustomers] = useState<Customer[]>([]);
   const customerImportInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [customerProfileTab, setCustomerProfileTab] = useState<"profile" | "leads" | "estimates" | "jobs" | "invoices" | "attachments" | "notes">("profile");
@@ -2952,6 +2955,22 @@ export function App() {
     setError("");
     await api(`/api/customers/${id}`, { method: "DELETE" });
     if (selectedCustomerId === id) setSelectedCustomerId("");
+    await loadDashboard();
+  }
+
+  async function openRestoreCustomersDialog() {
+    setCustomerActionMenuOpen(false);
+    setRestoreCustomerDialogOpen(true);
+    setError("");
+    const result = await api<{ customers: Customer[] }>("/api/customers/deleted/list");
+    setDeletedCustomers(result.customers);
+  }
+
+  async function restoreDeletedCustomer(customerId: string) {
+    setError("");
+    const result = await api<{ customer: Customer }>(`/api/customers/${customerId}/restore`, { method: "POST" });
+    setDeletedCustomers((current) => current.filter((customer) => customer.id !== customerId));
+    setCustomers((current) => [result.customer, ...current.filter((customer) => customer.id !== result.customer.id)]);
     await loadDashboard();
   }
 
@@ -6734,6 +6753,29 @@ export function App() {
           </div>
         )}
 
+        {restoreCustomerDialogOpen && (
+          <div className="modal-backdrop" onClick={() => setRestoreCustomerDialogOpen(false)}>
+            <div className="estimate-column-modal duplicate-customer-modal" onClick={(event) => event.stopPropagation()}>
+              <h2>Restore deleted customers</h2>
+              <p className="muted-copy">Deleted customer profiles stay archived here so they can be brought back with their jobs, invoices, addresses, notes, and messages.</p>
+              <div className="duplicate-group-list">
+                {deletedCustomers.map((customer) => (
+                  <article className="duplicate-customer-row restore-customer-row" key={customer.id}>
+                    <div>
+                      <strong>{customerName(customer)}</strong>
+                      <span>{customer.phone} {customer.email ? `· ${customer.email}` : ""}</span>
+                      <small>Deleted {formatDateTime(customer.deletedAt)} · {addressLine(customer.addresses?.[0])}</small>
+                    </div>
+                    <button className="primary" type="button" onClick={() => void restoreDeletedCustomer(customer.id)}>Restore</button>
+                  </article>
+                ))}
+                {deletedCustomers.length === 0 && <div className="table-empty">No deleted customers to restore.</div>}
+              </div>
+              <div className="dialog-actions"><button className="primary" type="button" onClick={() => setRestoreCustomerDialogOpen(false)}>Done</button></div>
+            </div>
+          </div>
+        )}
+
         {activeView === "messages" && (
           <section className="messages-page">
             <div className="section-actions">
@@ -6963,7 +7005,7 @@ export function App() {
                         <div className="customer-action-menu">
                           <button type="button" onClick={() => { setCustomerActionMenuOpen(false); customerImportInputRef.current?.click(); }}><Upload size={16} /> Import</button>
                           <button type="button" onClick={exportCustomersCsv}><Download size={16} /> Export</button>
-                          <button type="button" onClick={() => setError("Restore deleted needs customer archiving turned on before deleted profiles can be recovered.")}><FolderOpen size={16} /> Restore deleted</button>
+                          <button type="button" onClick={() => void openRestoreCustomersDialog()}><FolderOpen size={16} /> Restore deleted</button>
                           <button type="button" onClick={() => { setDuplicateDialogOpen(true); setCustomerActionMenuOpen(false); }}><Users size={16} /> Manage duplicates</button>
                         </div>
                       )}

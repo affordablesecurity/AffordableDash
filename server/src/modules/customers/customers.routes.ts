@@ -103,6 +103,7 @@ customersRouter.get("/", asyncHandler(async (req, res) => {
   const customers = await prisma.customer.findMany({
     where: {
       locationId,
+      deletedAt: null,
       ...(q ? {
         OR: [
           { firstName: { contains: q, mode: "insensitive" } },
@@ -151,7 +152,7 @@ customersRouter.post("/merge", asyncHandler(async (req, res) => {
   const input = customerMergeSchema.parse(req.body);
   const locationId = activeLocationId(req);
   const ids = uniqueStrings([input.primaryCustomerId, ...input.duplicateCustomerIds]);
-  const customers = await prisma.customer.findMany({ where: { id: { in: ids }, locationId } });
+  const customers = await prisma.customer.findMany({ where: { id: { in: ids }, locationId, deletedAt: null } });
   const primary = customers.find((customer) => customer.id === input.primaryCustomerId);
   const duplicates = customers.filter((customer) => customer.id !== input.primaryCustomerId);
 
@@ -168,7 +169,7 @@ customersRouter.post("/merge", asyncHandler(async (req, res) => {
     await tx.message.updateMany({ where: { customerId: { in: duplicateIds } }, data: { customerId: primary.id } });
     await tx.customerNote.updateMany({ where: { customerId: { in: duplicateIds } }, data: { customerId: primary.id } });
 
-    await tx.customer.deleteMany({ where: { id: { in: duplicateIds }, locationId } });
+    await tx.customer.updateMany({ where: { id: { in: duplicateIds }, locationId }, data: { deletedAt: new Date() } });
 
     return tx.customer.update({
       where: { id: primary.id },
@@ -197,7 +198,7 @@ customersRouter.post("/merge", asyncHandler(async (req, res) => {
 customersRouter.get("/:id", asyncHandler(async (req, res) => {
   const customerId = String(req.params.id);
   const customer = await prisma.customer.findFirst({
-    where: { id: customerId, locationId: activeLocationId(req) },
+    where: { id: customerId, locationId: activeLocationId(req), deletedAt: null },
     include: customerInclude
   });
 
@@ -205,11 +206,29 @@ customersRouter.get("/:id", asyncHandler(async (req, res) => {
   res.json({ customer });
 }));
 
+customersRouter.get("/deleted/list", asyncHandler(async (req, res) => {
+  const customers = await prisma.customer.findMany({
+    where: { locationId: activeLocationId(req), deletedAt: { not: null } },
+    include: customerInclude,
+    orderBy: { deletedAt: "desc" },
+    take: 100
+  });
+  res.json({ customers });
+}));
+
+customersRouter.post("/:id/restore", asyncHandler(async (req, res) => {
+  const customerId = String(req.params.id);
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId: activeLocationId(req), deletedAt: { not: null } } });
+  if (!existing) return res.status(404).json({ error: "Deleted customer not found" });
+  const customer = await prisma.customer.update({ where: { id: existing.id }, data: { deletedAt: null }, include: customerInclude });
+  res.json({ customer });
+}));
+
 customersRouter.patch("/:id", asyncHandler(async (req, res) => {
   const customerId = String(req.params.id);
   const locationId = activeLocationId(req);
   const input = customerUpdateSchema.parse(req.body);
-  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId } });
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId, deletedAt: null } });
   if (!existing) return res.status(404).json({ error: "Customer not found" });
 
   await saveCustomerOptions(locationId, { source: input.source, tags: input.tags });
@@ -240,7 +259,7 @@ customersRouter.post("/:id/addresses", asyncHandler(async (req, res) => {
   const customerId = String(req.params.id);
   const locationId = activeLocationId(req);
   const input = addressSchema.parse(req.body);
-  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId } });
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId, deletedAt: null } });
   if (!existing) return res.status(404).json({ error: "Customer not found" });
 
   await prisma.address.create({ data: { customerId: existing.id, ...input } });
@@ -252,7 +271,7 @@ customersRouter.post("/:id/notes", asyncHandler(async (req, res) => {
   const customerId = String(req.params.id);
   const locationId = activeLocationId(req);
   const input = customerNoteSchema.parse(req.body);
-  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId } });
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId, deletedAt: null } });
   if (!existing) return res.status(404).json({ error: "Customer not found" });
 
   await prisma.customerNote.create({ data: { customerId: existing.id, content: input.content, author: input.author || "Office" } });
@@ -264,7 +283,7 @@ customersRouter.post("/:id/attachments", asyncHandler(async (req, res) => {
   const customerId = String(req.params.id);
   const locationId = activeLocationId(req);
   const input = attachmentSchema.parse(req.body);
-  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId } });
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, locationId, deletedAt: null } });
   if (!existing) return res.status(404).json({ error: "Customer not found" });
 
   const customer = await prisma.customer.update({
@@ -278,15 +297,11 @@ customersRouter.post("/:id/attachments", asyncHandler(async (req, res) => {
 customersRouter.delete("/:id", asyncHandler(async (req, res) => {
   const customerId = String(req.params.id);
   const customer = await prisma.customer.findFirst({
-    where: { id: customerId, locationId: activeLocationId(req) },
-    include: { jobs: true, invoices: true }
+    where: { id: customerId, locationId: activeLocationId(req), deletedAt: null }
   });
 
   if (!customer) return res.status(404).json({ error: "Customer not found" });
-  if (customer.jobs.length || customer.invoices.length) {
-    return res.status(409).json({ error: "Customer has jobs or invoices and cannot be removed yet" });
-  }
 
-  await prisma.customer.delete({ where: { id: customer.id } });
+  await prisma.customer.update({ where: { id: customer.id }, data: { deletedAt: new Date() } });
   res.status(204).send();
 }));
