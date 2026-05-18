@@ -112,10 +112,6 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
   const business = companyName(estimate);
   const customerName = [estimate.customer.firstName, estimate.customer.lastName].filter(Boolean).join(" ") || estimate.customer.companyName || "Customer";
   const address = estimate.address || estimate.customer.addresses[0];
-  const estimateSubtotal = subtotal(estimate);
-  const estimateTax = tax(estimate);
-  const estimateTotal = estimateSubtotal + estimateTax;
-  const deposit = depositDue(estimate, estimateTotal);
   const statusText = estimate.status === "APPROVED" ? "Approved" : estimate.status === "DECLINED" ? "Declined" : "Ready for review";
   const optionCards = estimate.options.length ? estimate.options : [{
     id: "",
@@ -123,6 +119,10 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     description: estimate.description,
     lineItems: estimate.lineItems
   }];
+  const firstOptionSubtotal = subtotal(optionCards[0]);
+  const firstOptionTax = tax(optionCards[0]);
+  const firstOptionTotal = firstOptionSubtotal + firstOptionTax;
+  const firstOptionDeposit = depositDue(estimate, firstOptionTotal);
 
   return `<!doctype html>
 <html lang="en">
@@ -147,6 +147,8 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     .option-card.selected { border-color: #3f3df2; box-shadow: 0 0 0 2px rgba(63,61,242,.15); }
     .option-card h3 { margin: 0; }
     .option-total { font-size: 20px; font-weight: 900; }
+    .option-summary { display: none; }
+    .option-summary.selected { display: block; }
     .status { display: inline-flex; padding: 8px 12px; border-radius: 999px; background: #f0efff; color: #3733ff; font-weight: 800; }
     .actions { display: grid; gap: 14px; }
     .approve-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }
@@ -177,7 +179,7 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
   <main class="shell">
     <div class="brand"><div class="brand-mark">Affordable<span>Security</span></div></div>
     <h1>Review your estimate from ${escapeHtml(business)}</h1>
-    <div class="amount-due">${escapeHtml(cents(estimateTotal))} estimate${deposit > 0 ? ` / ${escapeHtml(cents(deposit))} deposit` : ""}</div>
+    <div class="amount-due" id="selected-total">${escapeHtml(cents(firstOptionTotal))} estimate${firstOptionDeposit > 0 ? ` / ${escapeHtml(cents(firstOptionDeposit))} deposit` : ""}</div>
 
     <section class="card">
       <h2>Choose an option</h2>
@@ -186,7 +188,8 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
           const optionSubtotal = subtotal(option);
           const optionTax = tax(option);
           const optionTotal = optionSubtotal + optionTax;
-          return `<button class="option-card ${index === 0 ? "selected" : ""}" type="button" data-option-id="${escapeHtml(option.id)}">
+          const optionDeposit = depositDue(estimate, optionTotal);
+          return `<button class="option-card ${index === 0 ? "selected" : ""}" type="button" data-option-id="${escapeHtml(option.id)}" data-total-label="${escapeHtml(`${cents(optionTotal)} estimate${optionDeposit > 0 ? ` / ${cents(optionDeposit)} deposit` : ""}`)}" data-deposit-note="${escapeHtml(optionDeposit > 0 ? `Approval requires a ${cents(optionDeposit)} deposit. The payment link can be sent after approval.` : "")}">
             <h3>${escapeHtml(option.title || `Option #${index + 1}`)}</h3>
             <p class="muted">${escapeHtml(option.description || "Review this option and approve it below.")}</p>
             <span class="option-total">${escapeHtml(cents(optionTotal))}</span>
@@ -197,59 +200,68 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     </section>
 
     <section class="card">
+      <h2>Estimate Summary</h2>
+      ${optionCards.map((option, index) => {
+        const optionSubtotal = subtotal(option);
+        const optionTax = tax(option);
+        const optionTotal = optionSubtotal + optionTax;
+        const optionDeposit = depositDue(estimate, optionTotal);
+        return `<div class="paper option-summary ${index === 0 ? "selected" : ""}" data-option-id="${escapeHtml(option.id)}">
+          <div class="head">
+            <div><strong>${escapeHtml(business)}</strong><br /><span class="muted">${escapeHtml([estimate.location.street1, estimate.location.city, estimate.location.state, estimate.location.postalCode].filter(Boolean).join(", "))}</span></div>
+            <div class="meta">
+              <div><span>ESTIMATE</span><b>#${escapeHtml(estimate.estimateNumber)}</b></div>
+              <div><span>OPTION</span><b>${escapeHtml(option.title || `Option #${index + 1}`)}</b></div>
+              <div><span>DATE</span><b>${escapeHtml(estimate.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: estimate.location.timezone || "America/Phoenix" }))}</b></div>
+              <div><span>TOTAL</span><strong>${escapeHtml(cents(optionTotal))}</strong></div>
+            </div>
+          </div>
+          <div class="party-grid">
+            <div><strong>${escapeHtml(customerName)}</strong><br />${escapeHtml([address?.street1, address?.street2, address?.city, address?.state, address?.postalCode].filter(Boolean).join(", "))}<br />${escapeHtml(estimate.customer.phone)}</div>
+            <div><strong>Contact us</strong><br />${escapeHtml(estimate.location.phone || "(928) 580-2775")}<br />service@5802775.com</div>
+          </div>
+          <table>
+            <thead><tr><th>Services</th><th>Qty</th><th>Amount</th></tr></thead>
+            <tbody>${option.lineItems.map((item) => {
+              const quantity = Number(item.quantity || 1);
+              const amount = Math.round(quantity * item.unitPrice);
+              return `<tr><td><strong>${escapeHtml(item.name)}</strong>${item.description ? `<br /><span class="muted">${escapeHtml(item.description)}</span>` : ""}</td><td>${escapeHtml(quantity)}</td><td>${escapeHtml(cents(amount))}</td></tr>`;
+            }).join("") || `<tr><td colspan="3" class="muted">No line items on this option yet.</td></tr>`}</tbody>
+          </table>
+          <div class="totals"><span>Subtotal</span><b>${escapeHtml(cents(optionSubtotal))}</b><span>Tax</span><b>${escapeHtml(cents(optionTax))}</b>${optionDeposit > 0 ? `<span>Deposit due</span><b>${escapeHtml(cents(optionDeposit))}</b>` : ""}<strong>Total</strong><strong>${escapeHtml(cents(optionTotal))}</strong></div>
+        </div>`;
+      }).join("")}
+    </section>
+
+    <section class="card">
       <h2>Estimate status</h2>
       <div class="card-body actions">
         <span class="status">${escapeHtml(statusText)}</span>
         ${estimate.status === "APPROVED" ? `<p class="message">Approved by ${escapeHtml(estimate.approvalName || customerName)}.</p>` : estimate.status === "DECLINED" ? `<p class="message">This estimate has been declined.</p>` : `
           <div class="approve-grid">
             <input id="approval-name" placeholder="Your name" value="${escapeHtml(customerName)}" />
-            <button class="primary" id="approve-button" type="button" disabled>Approve</button>
+            <button class="primary" id="approve-button" type="button" disabled>Approve selected option</button>
             <button class="danger" id="decline-button" type="button">Decline</button>
           </div>
           <div>
-            <p class="muted">Sign below before approving this estimate.</p>
+            <p class="muted">Sign below before approving the selected option.</p>
             <canvas class="signature-pad" id="signature-pad" width="900" height="260"></canvas>
             <div class="signature-actions"><span class="muted">Use your finger, stylus, or mouse.</span><button type="button" id="clear-signature">Clear signature</button></div>
           </div>
-          ${deposit > 0 ? `<p class="muted">Approval requires a ${escapeHtml(cents(deposit))} deposit. The payment link can be sent after approval.</p>` : ""}
+          <p class="muted" id="deposit-note">${firstOptionDeposit > 0 ? `Approval requires a ${escapeHtml(cents(firstOptionDeposit))} deposit. The payment link can be sent after approval.` : ""}</p>
           <p id="action-message" class="message" role="alert"></p>
         `}
       </div>
     </section>
-
-    <section class="card">
-      <h2>Estimate Summary</h2>
-      <div class="paper">
-        <div class="head">
-          <div><strong>${escapeHtml(business)}</strong><br /><span class="muted">${escapeHtml([estimate.location.street1, estimate.location.city, estimate.location.state, estimate.location.postalCode].filter(Boolean).join(", "))}</span></div>
-          <div class="meta">
-            <div><span>ESTIMATE</span><b>#${escapeHtml(estimate.estimateNumber)}</b></div>
-            <div><span>DATE</span><b>${escapeHtml(estimate.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: estimate.location.timezone || "America/Phoenix" }))}</b></div>
-            <div><span>STATUS</span><b>${escapeHtml(estimate.status)}</b></div>
-            <div><span>TOTAL</span><strong>${escapeHtml(cents(estimateTotal))}</strong></div>
-          </div>
-        </div>
-        <div class="party-grid">
-          <div><strong>${escapeHtml(customerName)}</strong><br />${escapeHtml([address?.street1, address?.street2, address?.city, address?.state, address?.postalCode].filter(Boolean).join(", "))}<br />${escapeHtml(estimate.customer.phone)}</div>
-          <div><strong>Contact us</strong><br />${escapeHtml(estimate.location.phone || "(928) 580-2775")}<br />service@5802775.com</div>
-        </div>
-        <table>
-          <thead><tr><th>Services</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
-          <tbody>${estimate.lineItems.map((item) => {
-            const quantity = Number(item.quantity || 1);
-            const amount = Math.round(quantity * item.unitPrice);
-            return `<tr><td><strong>${escapeHtml(item.name)}</strong>${item.description ? `<br /><span class="muted">${escapeHtml(item.description)}</span>` : ""}</td><td>${escapeHtml(quantity)}</td><td>${escapeHtml(cents(item.unitPrice))}</td><td>${escapeHtml(cents(amount))}</td></tr>`;
-          }).join("")}</tbody>
-        </table>
-        <div class="totals"><span>Subtotal</span><b>${escapeHtml(cents(estimateSubtotal))}</b><span>Tax</span><b>${escapeHtml(cents(estimateTax))}</b>${deposit > 0 ? `<span>Deposit due</span><b>${escapeHtml(cents(deposit))}</b>` : ""}<strong>Total</strong><strong>${escapeHtml(cents(estimateTotal))}</strong></div>
-      </div>
-    </section>
   </main>
-  ${estimate.status === "SENT" || estimate.status === "DRAFT" ? `<script>
+  <script>
     const message = document.getElementById("action-message");
     const approveButton = document.getElementById("approve-button");
     const declineButton = document.getElementById("decline-button");
     const optionButtons = Array.from(document.querySelectorAll(".option-card"));
+    const optionSummaries = Array.from(document.querySelectorAll(".option-summary"));
+    const selectedTotal = document.getElementById("selected-total");
+    const depositNote = document.getElementById("deposit-note");
     let selectedOptionId = optionButtons[0]?.dataset.optionId || "";
     const signaturePad = document.getElementById("signature-pad");
     const clearSignature = document.getElementById("clear-signature");
@@ -330,6 +342,11 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
         optionButtons.forEach((item) => item.classList.remove("selected"));
         button.classList.add("selected");
         selectedOptionId = button.dataset.optionId || "";
+        optionSummaries.forEach((summary) => {
+          summary.classList.toggle("selected", (summary.dataset.optionId || "") === selectedOptionId);
+        });
+        if (selectedTotal && button.dataset.totalLabel) selectedTotal.textContent = button.dataset.totalLabel;
+        if (depositNote) depositNote.textContent = button.dataset.depositNote || "";
       });
     });
     resizeSignaturePad();
@@ -347,7 +364,7 @@ function renderEstimatePage(estimate: NonNullable<Awaited<ReturnType<typeof load
     });
     approveButton?.addEventListener("click", () => submitAction("approve"));
     declineButton?.addEventListener("click", () => submitAction("decline"));
-  </script>` : ""}
+  </script>
 </body>
 </html>`;
 }
