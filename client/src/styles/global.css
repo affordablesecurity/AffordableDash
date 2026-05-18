@@ -2581,7 +2581,7 @@ button:disabled {
 
 .schedule-card {
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .schedule-card .panel-header,
@@ -2626,6 +2626,132 @@ button:disabled {
 .schedule-row input,
 .schedule-team-row select {
   width: 100%;
+}
+
+.schedule-row .schedule-picker-pair,
+.event-schedule-row .schedule-picker-pair {
+  grid-column: 2 / 4;
+}
+
+.schedule-picker-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 10px;
+  position: relative;
+}
+
+.schedule-picker-field {
+  position: relative;
+}
+
+.schedule-picker-field > button {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #d8deea;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #272d3d;
+  padding: 8px 10px;
+  font: inherit;
+  text-align: left;
+}
+
+.schedule-picker-field > button.active {
+  border-color: #0b76d1;
+  box-shadow: 0 0 0 2px rgba(11, 118, 209, 0.14);
+}
+
+.schedule-date-popover,
+.schedule-time-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  background: #ffffff;
+  border: 1px solid #d8deea;
+  box-shadow: 0 16px 40px rgba(16, 20, 33, 0.16);
+}
+
+.schedule-date-popover {
+  left: -30px;
+  width: 284px;
+  border-radius: 6px;
+  padding: 14px;
+}
+
+.schedule-date-popover header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.schedule-date-popover header span {
+  display: flex;
+  gap: 10px;
+}
+
+.schedule-date-popover header button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #4d5564;
+}
+
+.schedule-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+}
+
+.schedule-calendar-grid span,
+.schedule-calendar-grid button {
+  min-width: 0;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #272d3d;
+  font-size: 13px;
+}
+
+.schedule-calendar-grid span,
+.schedule-calendar-grid button.muted {
+  color: #8a93a4;
+}
+
+.schedule-calendar-grid button:hover,
+.schedule-calendar-grid button.selected {
+  background: #0b76d1;
+  color: #ffffff;
+}
+
+.schedule-time-popover {
+  right: 0;
+  width: 104px;
+  max-height: 186px;
+  overflow-y: auto;
+  border-radius: 4px;
+  padding: 0;
+}
+
+.schedule-time-popover button {
+  width: 100%;
+  border: 0;
+  background: #ffffff;
+  color: #272d3d;
+  padding: 8px 12px;
+  font: inherit;
+  text-align: left;
+}
+
+.schedule-time-popover button:hover,
+.schedule-time-popover button.selected {
+  background: #dce9f6;
 }
 
 .anytime-row {

@@ -461,6 +461,7 @@ type ApiKey = {
 type View = "dispatch" | "schedule" | "map" | "messages" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "events" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number; minute: number; technicianId?: string } | null;
+type SchedulePickerState = { key: string; mode: "date" | "time" } | null;
 type CrmOptionKind = "leadSource" | "tag" | "jobType" | "jobField" | "checklist" | "servicePlan";
 type SettingsSection = "overview" | "company" | "invoiceSettings" | "stripe" | "messagingSettings" | "tags" | "leadSources" | "jobTypes" | "jobFields" | "checklists" | "servicePlans" | "jobTemplates";
 type CrmOptions = {
@@ -821,6 +822,27 @@ function mergeDateAndTime(current: string, part: "date" | "time", nextValue: str
   const [date, time] = fallback.split("T");
   return part === "date" ? `${nextValue}T${time || "09:00"}` : `${date || toInputDate(new Date())}T${nextValue}`;
 }
+
+function displayScheduleDate(value: string) {
+  const date = formDatePart(value);
+  if (!date) return "";
+  return new Date(`${date}T00:00:00`).toLocaleDateString([], { month: "2-digit", day: "2-digit", year: "numeric" });
+}
+
+function displayScheduleTime(value: string, fallback = "") {
+  const time = formTimePart(value) || fallback;
+  if (!time) return "";
+  const [hourText, minuteText] = time.split(":");
+  const hour = Number(hourText);
+  const suffix = hour >= 12 ? "pm" : "am";
+  return `${hour % 12 || 12}:${minuteText}${suffix}`;
+}
+
+const scheduleTimeOptions = Array.from({ length: 48 }, (_item, index) => {
+  const hour = Math.floor(index / 2);
+  const minute = index % 2 ? 30 : 0;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+});
 
 function blankEventForm(): EventForm {
   const start = new Date();
@@ -1362,6 +1384,8 @@ export function App() {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("week");
   const [scheduleDate, setScheduleDate] = useState(() => new Date());
+  const [schedulePicker, setSchedulePicker] = useState<SchedulePickerState>(null);
+  const [schedulePickerMonth, setSchedulePickerMonth] = useState(() => startOfMonth(new Date()));
   const [slotPrompt, setSlotPrompt] = useState<SlotPrompt>(null);
   const [selectedScheduleJob, setSelectedScheduleJob] = useState<Job | null>(null);
   const [selectedScheduleEstimate, setSelectedScheduleEstimate] = useState<Estimate | null>(null);
@@ -5031,6 +5055,103 @@ export function App() {
     }
   }
 
+  function openSchedulePicker(key: string, mode: "date" | "time", value: string) {
+    const date = formDatePart(value);
+    setSchedulePickerMonth(startOfMonth(date ? new Date(`${date}T00:00:00`) : new Date()));
+    setSchedulePicker({ key, mode });
+  }
+
+  function updateJobScheduleStart(nextValue: string) {
+    setJobForm((current) => {
+      const nextStart = nextValue;
+      const fallbackEnd = new Date(new Date(nextStart).getTime() + 60 * 60 * 1000);
+      return {
+        ...current,
+        scheduledStart: nextStart,
+        scheduledEnd: current.scheduledEnd || toDateTimeLocal(fallbackEnd)
+      };
+    });
+  }
+
+  function updateJobScheduleEnd(nextValue: string) {
+    setJobForm((current) => ({ ...current, scheduledEnd: nextValue }));
+  }
+
+  function renderSchedulePicker(args: {
+    pickerKey: string;
+    value: string;
+    fallbackTime: string;
+    onChange: (nextValue: string) => void;
+  }) {
+    const selectedDate = formDatePart(args.value);
+    const activeDate = schedulePicker?.key === args.pickerKey && schedulePicker.mode === "date";
+    const activeTime = schedulePicker?.key === args.pickerKey && schedulePicker.mode === "time";
+    const monthStart = startOfMonth(schedulePickerMonth);
+    const gridStart = startOfWeek(monthStart);
+    const days = Array.from({ length: 42 }, (_item, index) => addDays(gridStart, index));
+    return (
+      <div className="schedule-picker-pair">
+        <div className="schedule-picker-field">
+          <button type="button" className={activeDate ? "active" : ""} onClick={() => openSchedulePicker(args.pickerKey, "date", args.value)}>
+            {displayScheduleDate(args.value)}
+          </button>
+          {activeDate && (
+            <div className="schedule-date-popover">
+              <header>
+                <strong>{schedulePickerMonth.toLocaleDateString([], { month: "long", year: "numeric" })}</strong>
+                <span>
+                  <button type="button" onClick={() => setSchedulePickerMonth((current) => addMonths(current, -1))} aria-label="Previous month"><ChevronLeft size={18} /></button>
+                  <button type="button" onClick={() => setSchedulePickerMonth((current) => addMonths(current, 1))} aria-label="Next month"><ChevronRight size={18} /></button>
+                </span>
+              </header>
+              <div className="schedule-calendar-grid">
+                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => <span key={day}>{day}</span>)}
+                {days.map((day) => {
+                  const inputDate = toInputDate(day);
+                  return (
+                    <button
+                      type="button"
+                      key={inputDate}
+                      className={`${day.getMonth() !== schedulePickerMonth.getMonth() ? "muted" : ""} ${selectedDate === inputDate ? "selected" : ""}`}
+                      onClick={() => {
+                        args.onChange(mergeDateAndTime(args.value || `${inputDate}T${args.fallbackTime}`, "date", inputDate));
+                        setSchedulePicker(null);
+                      }}
+                    >
+                      {day.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="schedule-picker-field">
+          <button type="button" className={activeTime ? "active" : ""} onClick={() => openSchedulePicker(args.pickerKey, "time", args.value)}>
+            {displayScheduleTime(args.value, args.fallbackTime)}
+          </button>
+          {activeTime && (
+            <div className="schedule-time-popover">
+              {scheduleTimeOptions.map((time) => (
+                <button
+                  type="button"
+                  key={time}
+                  className={(formTimePart(args.value) || args.fallbackTime) === time ? "selected" : ""}
+                  onClick={() => {
+                    args.onChange(mergeDateAndTime(args.value || `${toInputDate(new Date())}T${args.fallbackTime}`, "time", time));
+                    setSchedulePicker(null);
+                  }}
+                >
+                  {displayScheduleTime(`2000-01-01T${time}`)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -5522,13 +5643,21 @@ export function App() {
                   <div className="panel-header"><h2><CalendarDays size={20} /> Schedule</h2></div>
                   <div className="event-schedule-row">
                     <span>From</span>
-                    <input type="date" value={formDatePart(eventForm.scheduledStart)} onChange={(event) => setEventForm((current) => ({ ...current, scheduledStart: mergeDateAndTime(current.scheduledStart, "date", event.target.value) }))} required />
-                    <input type="time" step={900} value={formTimePart(eventForm.scheduledStart)} onChange={(event) => setEventForm((current) => ({ ...current, scheduledStart: mergeDateAndTime(current.scheduledStart, "time", event.target.value) }))} required />
+                    {renderSchedulePicker({
+                      pickerKey: "event-start",
+                      value: eventForm.scheduledStart,
+                      fallbackTime: "09:00",
+                      onChange: (nextValue) => setEventForm((current) => ({ ...current, scheduledStart: nextValue }))
+                    })}
                   </div>
                   <div className="event-schedule-row">
                     <span>To</span>
-                    <input type="date" value={formDatePart(eventForm.scheduledEnd)} onChange={(event) => setEventForm((current) => ({ ...current, scheduledEnd: mergeDateAndTime(current.scheduledEnd, "date", event.target.value) }))} required />
-                    <input type="time" step={900} value={formTimePart(eventForm.scheduledEnd)} onChange={(event) => setEventForm((current) => ({ ...current, scheduledEnd: mergeDateAndTime(current.scheduledEnd, "time", event.target.value) }))} required />
+                    {renderSchedulePicker({
+                      pickerKey: "event-end",
+                      value: eventForm.scheduledEnd,
+                      fallbackTime: "10:00",
+                      onChange: (nextValue) => setEventForm((current) => ({ ...current, scheduledEnd: nextValue }))
+                    })}
                   </div>
                   <p className="timezone-note">Timezone: {activeLocationAccess?.location.timezone ?? "America/Phoenix"}</p>
                   <div className="event-team-row">
@@ -6654,27 +6783,11 @@ export function App() {
                     <div className="schedule-compact">
                       <div className="schedule-row">
                         <span>From</span>
-                        <input type="date" value={jobForm.scheduledStart.slice(0, 10)} onChange={(event) => {
-                          const time = jobForm.scheduledStart.slice(11) || "10:00";
-                          const endDate = jobForm.scheduledEnd.slice(0, 10) || event.target.value;
-                          const endTime = jobForm.scheduledEnd.slice(11) || "11:00";
-                          setJobForm({ ...jobForm, scheduledStart: `${event.target.value}T${time}`, scheduledEnd: `${endDate}T${endTime}` });
-                        }} />
-                        <input type="time" value={jobForm.scheduledStart.slice(11) || "10:00"} onChange={(event) => {
-                          const date = jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
-                          setJobForm({ ...jobForm, scheduledStart: `${date}T${event.target.value}` });
-                        }} />
+                        {renderSchedulePicker({ pickerKey: "job-create-start", value: jobForm.scheduledStart, fallbackTime: "10:00", onChange: updateJobScheduleStart })}
                       </div>
                       <div className="schedule-row">
                         <span>To</span>
-                        <input type="date" value={(jobForm.scheduledEnd || jobForm.scheduledStart).slice(0, 10)} onChange={(event) => {
-                          const time = jobForm.scheduledEnd.slice(11) || "11:00";
-                          setJobForm({ ...jobForm, scheduledEnd: `${event.target.value}T${time}` });
-                        }} />
-                        <input type="time" value={jobForm.scheduledEnd.slice(11) || "11:00"} onChange={(event) => {
-                          const date = jobForm.scheduledEnd.slice(0, 10) || jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
-                          setJobForm({ ...jobForm, scheduledEnd: `${date}T${event.target.value}` });
-                        }} />
+                        {renderSchedulePicker({ pickerKey: "job-create-end", value: jobForm.scheduledEnd || jobForm.scheduledStart, fallbackTime: "11:00", onChange: updateJobScheduleEnd })}
                       </div>
                       <label className="anytime-row"><input type="checkbox" /> Anytime</label>
                       <div className="schedule-team-row">
@@ -6957,27 +7070,11 @@ export function App() {
                     <div className="schedule-compact">
                       <div className="schedule-row">
                         <span>From</span>
-                        <input type="date" value={jobForm.scheduledStart.slice(0, 10)} onChange={(event) => {
-                          const time = jobForm.scheduledStart.slice(11) || "10:00";
-                          const endDate = jobForm.scheduledEnd.slice(0, 10) || event.target.value;
-                          const endTime = jobForm.scheduledEnd.slice(11) || "11:00";
-                          setJobForm({ ...jobForm, scheduledStart: `${event.target.value}T${time}`, scheduledEnd: `${endDate}T${endTime}` });
-                        }} />
-                        <input type="time" value={jobForm.scheduledStart.slice(11) || "10:00"} onChange={(event) => {
-                          const date = jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
-                          setJobForm({ ...jobForm, scheduledStart: `${date}T${event.target.value}` });
-                        }} />
+                        {renderSchedulePicker({ pickerKey: "estimate-create-start", value: jobForm.scheduledStart, fallbackTime: "10:00", onChange: updateJobScheduleStart })}
                       </div>
                       <div className="schedule-row">
                         <span>To</span>
-                        <input type="date" value={(jobForm.scheduledEnd || jobForm.scheduledStart).slice(0, 10)} onChange={(event) => {
-                          const time = jobForm.scheduledEnd.slice(11) || "11:00";
-                          setJobForm({ ...jobForm, scheduledEnd: `${event.target.value}T${time}` });
-                        }} />
-                        <input type="time" value={jobForm.scheduledEnd.slice(11) || "11:00"} onChange={(event) => {
-                          const date = jobForm.scheduledEnd.slice(0, 10) || jobForm.scheduledStart.slice(0, 10) || new Date().toISOString().slice(0, 10);
-                          setJobForm({ ...jobForm, scheduledEnd: `${date}T${event.target.value}` });
-                        }} />
+                        {renderSchedulePicker({ pickerKey: "estimate-create-end", value: jobForm.scheduledEnd || jobForm.scheduledStart, fallbackTime: "11:00", onChange: updateJobScheduleEnd })}
                       </div>
                       <label className="anytime-row"><input type="checkbox" /> Anytime</label>
                       <div className="schedule-team-row">
@@ -9122,18 +9219,20 @@ export function App() {
               </header>
               <div className="appointment-form-grid">
                 <label>Start
-                  <input
-                    type="datetime-local"
-                    value={appointmentForm.scheduledStart}
-                    onChange={(event) => setAppointmentForm((current) => ({ ...current, scheduledStart: event.target.value }))}
-                  />
+                  {renderSchedulePicker({
+                    pickerKey: "job-appointment-start",
+                    value: appointmentForm.scheduledStart,
+                    fallbackTime: "10:00",
+                    onChange: (nextValue) => setAppointmentForm((current) => ({ ...current, scheduledStart: nextValue }))
+                  })}
                 </label>
                 <label>End
-                  <input
-                    type="datetime-local"
-                    value={appointmentForm.scheduledEnd}
-                    onChange={(event) => setAppointmentForm((current) => ({ ...current, scheduledEnd: event.target.value }))}
-                  />
+                  {renderSchedulePicker({
+                    pickerKey: "job-appointment-end",
+                    value: appointmentForm.scheduledEnd,
+                    fallbackTime: "11:00",
+                    onChange: (nextValue) => setAppointmentForm((current) => ({ ...current, scheduledEnd: nextValue }))
+                  })}
                 </label>
               </div>
               <label>Field tech
@@ -9162,18 +9261,20 @@ export function App() {
               </header>
               <div className="appointment-form-grid">
                 <label>Start
-                  <input
-                    type="datetime-local"
-                    value={appointmentForm.scheduledStart}
-                    onChange={(event) => setAppointmentForm((current) => ({ ...current, scheduledStart: event.target.value }))}
-                  />
+                  {renderSchedulePicker({
+                    pickerKey: "estimate-appointment-start",
+                    value: appointmentForm.scheduledStart,
+                    fallbackTime: "10:00",
+                    onChange: (nextValue) => setAppointmentForm((current) => ({ ...current, scheduledStart: nextValue }))
+                  })}
                 </label>
                 <label>End
-                  <input
-                    type="datetime-local"
-                    value={appointmentForm.scheduledEnd}
-                    onChange={(event) => setAppointmentForm((current) => ({ ...current, scheduledEnd: event.target.value }))}
-                  />
+                  {renderSchedulePicker({
+                    pickerKey: "estimate-appointment-end",
+                    value: appointmentForm.scheduledEnd,
+                    fallbackTime: "11:00",
+                    onChange: (nextValue) => setAppointmentForm((current) => ({ ...current, scheduledEnd: nextValue }))
+                  })}
                 </label>
               </div>
               <label>Field tech
