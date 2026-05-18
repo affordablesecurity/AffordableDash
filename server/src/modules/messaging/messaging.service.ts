@@ -332,11 +332,12 @@ export async function sendLocationSms(input: {
   }
 }
 
-function scheduledWindow(start?: Date | null, end?: Date | null) {
+function scheduledWindow(start?: Date | null, end?: Date | null, timezone?: string | null) {
   if (!start) return "soon";
-  const date = start.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Phoenix" });
-  const startTime = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Phoenix" });
-  const endTime = end?.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Phoenix" });
+  const timeZone = timezone || "America/Phoenix";
+  const date = start.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone });
+  const startTime = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone });
+  const endTime = end?.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone });
   return endTime ? `${date} ${startTime} - ${endTime}` : `${date} ${startTime}`;
 }
 
@@ -362,7 +363,7 @@ async function jobContext(locationId: string, jobId: string) {
       jobNumber: String(job.jobNumber),
       jobTitle: job.title,
       technicianName: job.technician?.name ?? "your technician",
-      scheduledWindow: scheduledWindow(job.scheduledStart, job.scheduledEnd),
+      scheduledWindow: scheduledWindow(job.scheduledStart, job.scheduledEnd, job.location.timezone),
       jobTotal: dollars(invoice?.total ?? 0),
       invoiceNumber: invoice ? String(invoice.invoiceNumber) : "",
       invoiceTotal: dollars(invoice?.total ?? 0),
@@ -427,7 +428,7 @@ export async function sendInvoiceTemplateSms(locationId: string, invoiceId: stri
     invoiceTotal: dollars(invoice.total),
     paymentAmount: dollars(invoice.total),
     paymentUrl,
-    scheduledWindow: invoice.job ? scheduledWindow(invoice.job.scheduledStart, invoice.job.scheduledEnd) : ""
+    scheduledWindow: invoice.job ? scheduledWindow(invoice.job.scheduledStart, invoice.job.scheduledEnd, invoice.location.timezone) : ""
   };
   let body = bodyOverride || renderTemplate(settings.templates.invoiceSent, context);
   if (paymentUrl && !body.includes(paymentUrl)) {
@@ -480,7 +481,7 @@ export async function sendPaymentReceiptSms(locationId: string, invoiceId: strin
     invoiceNumber: String(invoice.invoiceNumber),
     invoiceTotal: dollars(invoice.total),
     paymentAmount: dollars(amount ?? invoice.total),
-    scheduledWindow: invoice.job ? scheduledWindow(invoice.job.scheduledStart, invoice.job.scheduledEnd) : ""
+    scheduledWindow: invoice.job ? scheduledWindow(invoice.job.scheduledStart, invoice.job.scheduledEnd, invoice.location.timezone) : ""
   };
   return sendLocationSms({
     locationId,

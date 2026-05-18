@@ -119,10 +119,15 @@ function estimateTotal(input: { lineItems: Array<{ category: string; taxable: bo
   return estimateSubtotal(input) + estimateTax(input);
 }
 
-function appointmentWindow(start: Date, end: Date) {
-  const date = start.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-  const startTime = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  const endTime = end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+function locationTimeZone(timezone?: string | null) {
+  return timezone || "America/Phoenix";
+}
+
+function appointmentWindow(start: Date, end: Date, timezone?: string | null) {
+  const timeZone = locationTimeZone(timezone);
+  const date = start.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone });
+  const startTime = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone });
+  const endTime = end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone });
   return `${date}, ${startTime}-${endTime}`;
 }
 
@@ -154,11 +159,12 @@ async function syncEstimateSchedule(tx: Prisma.TransactionClient, estimateId: st
 async function notifyEstimateAppointment(estimate: {
   locationId: string;
   customerId: string;
+  location: { timezone: string | null };
   customer: { firstName: string; phone: string; communicationPrefs: Prisma.JsonValue };
 }, appointment: { scheduledStart: Date; scheduledEnd: Date; technician?: { name: string } | null }, kind: "scheduled" | "changed" | "omw" | "canceled") {
   const firstName = estimate.customer.firstName || "there";
   const techName = appointment.technician?.name || "Affordable Security";
-  const window = appointmentWindow(appointment.scheduledStart, appointment.scheduledEnd);
+  const window = appointmentWindow(appointment.scheduledStart, appointment.scheduledEnd, estimate.location.timezone);
   const body = kind === "omw"
     ? `${techName} with Affordable Security is on the way for your estimate.`
     : kind === "canceled"
@@ -363,7 +369,7 @@ estimatesRouter.post("/:id/appointments", asyncHandler(async (req, res) => {
   }
   const estimate = await prisma.estimate.findFirst({
     where: { id: String(req.params.id), locationId },
-    include: { customer: true }
+    include: { customer: true, location: true }
   });
   if (!estimate) return res.status(404).json({ error: "Estimate not found" });
 
@@ -398,7 +404,7 @@ estimatesRouter.patch("/:id/appointments/:appointmentId", asyncHandler(async (re
   }
   const estimate = await prisma.estimate.findFirst({
     where: { id: String(req.params.id), locationId },
-    include: { customer: true, appointments: true }
+    include: { customer: true, location: true, appointments: true }
   });
   if (!estimate) return res.status(404).json({ error: "Estimate not found" });
   if (!estimate.appointments.some((appointment) => appointment.id === String(req.params.appointmentId))) {
@@ -430,7 +436,7 @@ estimatesRouter.post("/:id/appointments/:appointmentId/omw", asyncHandler(async 
   const locationId = activeLocationId(req);
   const estimate = await prisma.estimate.findFirst({
     where: { id: String(req.params.id), locationId },
-    include: { customer: true, appointments: { include: { technician: true } } }
+    include: { customer: true, location: true, appointments: { include: { technician: true } } }
   });
   if (!estimate) return res.status(404).json({ error: "Estimate not found" });
   const appointment = estimate.appointments.find((item) => item.id === String(req.params.appointmentId));
@@ -449,7 +455,7 @@ estimatesRouter.post("/:id/appointments/:appointmentId/cancel", asyncHandler(asy
   const locationId = activeLocationId(req);
   const estimate = await prisma.estimate.findFirst({
     where: { id: String(req.params.id), locationId },
-    include: { customer: true, appointments: true }
+    include: { customer: true, location: true, appointments: true }
   });
   if (!estimate) return res.status(404).json({ error: "Estimate not found" });
   if (!estimate.appointments.some((appointment) => appointment.id === String(req.params.appointmentId))) {
