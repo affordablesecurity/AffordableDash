@@ -1233,13 +1233,12 @@ function attachmentImageUrl(attachments?: string[]) {
 
 function googleMapsEmbedUrl(stops: Array<{ location: string; latitude?: number | null; longitude?: number | null }>, fallbackQuery: string) {
   const located = stops.filter((stop) => stop.latitude !== null && stop.latitude !== undefined && stop.longitude !== null && stop.longitude !== undefined);
-  if (located.length >= 2) {
-    const origin = `${located[0].latitude},${located[0].longitude}`;
-    const destination = `${located[located.length - 1].latitude},${located[located.length - 1].longitude}`;
-    const waypoints = located.slice(1, -1).slice(0, 8).map((stop) => `${stop.latitude},${stop.longitude}`).join("|");
-    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}${waypoints ? `&waypoints=${encodeURIComponent(waypoints)}` : ""}&output=embed`;
+  if (located.length) {
+    const latitude = located.reduce((sum, stop) => sum + Number(stop.latitude), 0) / located.length;
+    const longitude = located.reduce((sum, stop) => sum + Number(stop.longitude), 0) / located.length;
+    return `https://maps.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}&z=${located.length > 1 ? "10" : "13"}&output=embed`;
   }
-  const query = located[0] ? `${located[0].latitude},${located[0].longitude}` : stops.find((stop) => stop.location)?.location || fallbackQuery;
+  const query = stops.find((stop) => stop.location)?.location || fallbackQuery;
   return `https://maps.google.com/maps?q=${encodeURIComponent(query)}&z=10&output=embed`;
 }
 
