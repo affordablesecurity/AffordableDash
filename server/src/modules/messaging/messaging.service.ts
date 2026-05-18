@@ -507,6 +507,32 @@ export async function sendPaymentReceiptSms(locationId: string, invoiceId: strin
   });
 }
 
+export async function sendPaymentReceiptEmail(locationId: string, invoiceId: string, to: string, amount?: number) {
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, locationId },
+    include: { customer: true, location: true, job: true }
+  });
+  if (!invoice) return null;
+  const companyName = invoice.location.displayName || invoice.location.name;
+  const body = [
+    `Hi ${invoice.customer.firstName || invoice.customer.companyName || "there"},`,
+    "",
+    `Payment of ${dollars(amount ?? invoice.total)} was received for invoice #${invoice.invoiceNumber}.`,
+    "",
+    `Thank you for choosing ${companyName}.`
+  ].join("\n");
+  return sendEmail({
+    locationId,
+    customerId: invoice.customerId,
+    jobId: invoice.jobId,
+    invoiceId: invoice.id,
+    to,
+    subject: `Payment received for invoice #${invoice.invoiceNumber}`,
+    body,
+    templateKey: "paymentReceivedEmail"
+  });
+}
+
 export async function markInvoiceSent(invoiceId: string) {
   return prisma.invoice.update({
     where: { id: invoiceId },

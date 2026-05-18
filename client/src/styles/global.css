@@ -1998,9 +1998,9 @@ button.stat-card {
 }
 
 .payment-modal {
-  width: min(540px, 100%);
+  width: min(600px, 100%);
   display: grid;
-  gap: 16px;
+  gap: 18px;
   border-radius: 6px;
   background: #ffffff;
   padding: 24px;
@@ -2013,11 +2013,20 @@ button.stat-card {
   gap: 14px;
 }
 
-.payment-modal header h2 {
+.payment-modal header > div {
   flex: 1;
+}
+
+.payment-modal header h2 {
   margin: 0;
   font-size: 28px;
   font-weight: 700;
+}
+
+.payment-modal header p {
+  margin: 6px 0 0;
+  color: #687089;
+  font-weight: 800;
 }
 
 .payment-field-stack,
@@ -2025,6 +2034,10 @@ button.stat-card {
 .manual-payment-entry {
   display: grid;
   gap: 14px;
+}
+
+.payment-field-stack {
+  grid-template-columns: minmax(180px, 0.8fr) 1fr;
 }
 
 .payment-modal label {
@@ -2063,7 +2076,7 @@ button.stat-card {
 }
 
 .payment-tabs button.active {
-  border-color: #2563eb;
+  border-color: #005eb8;
   color: #005eb8;
 }
 
@@ -2096,6 +2109,26 @@ button.stat-card {
 
 .payment-grid .span-2 {
   grid-column: 1 / -1;
+}
+
+.payment-other-options {
+  display: grid;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.payment-other-options .radio-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #202638;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.payment-other-options input {
+  width: 18px;
+  height: 18px;
 }
 
 .payment-notify {

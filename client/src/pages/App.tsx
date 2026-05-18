@@ -393,6 +393,7 @@ type Invoice = {
   customer: Customer;
   job?: Job;
   items?: Array<{ id: string; category?: string; name: string; description?: string; quantity: number | string; unitPrice: number; taxable?: boolean }>;
+  payments?: PaymentRecord[];
 };
 
 type PaymentRecord = {
@@ -983,6 +984,16 @@ function jobInvoiceTotal(job: Job) {
   return invoiceTotal || calculateJobLineSubtotal(job);
 }
 
+function invoicePaidTotal(invoice: Invoice) {
+  return (invoice.payments ?? [])
+    .filter((payment) => payment.status === "SUCCEEDED")
+    .reduce((sum, payment) => sum + payment.amount, 0);
+}
+
+function invoiceAmountDue(invoice: Invoice) {
+  return Math.max(0, invoice.total - invoicePaidTotal(invoice));
+}
+
 function calculateJobLineSubtotal(job: Job) {
   return (job.lineItems ?? []).reduce((sum, item) => sum + Number(item.quantity || "0") * item.unitPrice, 0);
 }
@@ -1502,6 +1513,7 @@ export function App() {
   const [paymentReceiptEmail, setPaymentReceiptEmail] = useState("");
   const [paymentNotifyCustomer, setPaymentNotifyCustomer] = useState(true);
   const [paymentNote, setPaymentNote] = useState("");
+  const [paymentOtherType, setPaymentOtherType] = useState("Homeowner financing");
   const [paymentProcessing, setPaymentProcessing] = useState(false);
   const [paymentBillingForm, setPaymentBillingForm] = useState({
     nameOnCard: "",
@@ -4196,12 +4208,14 @@ export function App() {
 
   async function openInvoicePayment(invoice: Invoice) {
     const address = invoice.customer.addresses?.[0];
+    const amountDue = invoiceAmountDue(invoice) || invoice.total;
     setSelectedInvoiceId(invoice.id);
     setPaymentDialogInvoice(invoice);
-    setPaymentAmount(centsToDollarInput(invoice.total));
+    setPaymentAmount(centsToDollarInput(amountDue));
     setPaymentReceiptEmail(invoice.customer.email || "");
     setPaymentMethod(invoiceSettings.acceptCreditCard ? "credit" : "cash");
     setPaymentNote("");
+    setPaymentOtherType("Homeowner financing");
     setPaymentBillingForm({
       nameOnCard: customerName(invoice.customer),
       street: address?.street1 ?? "",
@@ -4226,7 +4240,13 @@ export function App() {
           setInvoiceActionMessage("Credit card payments are disabled in invoice settings for this location.");
           return;
         }
-        const result = await api<{ url?: string }>(`/api/payments/invoices/${paymentDialogInvoice.id}/checkout-session`, { method: "POST" });
+        const result = await api<{ url?: string }>(`/api/payments/invoices/${paymentDialogInvoice.id}/checkout-session`, {
+          method: "POST",
+          body: JSON.stringify({
+            amount,
+            customerEmail: paymentReceiptEmail
+          })
+        });
         if (result.url) {
           const opened = window.open(result.url, "_blank", "noopener,noreferrer");
           if (!opened) window.location.assign(result.url);
@@ -4244,6 +4264,8 @@ export function App() {
           amount,
           method: paymentMethod,
           note: paymentNote,
+          emailReceipt: paymentReceiptEmail,
+          otherType: paymentMethod === "other" ? paymentOtherType : undefined,
           notifyCustomer: paymentNotifyCustomer
         })
       });
@@ -9663,7 +9685,10 @@ export function App() {
           <div className="modal-backdrop">
             <div className="payment-modal">
               <header>
-                <h2>Payment</h2>
+                <div>
+                  <h2>Payment</h2>
+                  <p>Invoice #{paymentDialogInvoice.invoiceNumber} / {money.format(invoiceAmountDue(paymentDialogInvoice) / 100)} due</p>
+                </div>
                 <button className="icon-button" type="button" onClick={() => setPaymentDialogInvoice(null)} aria-label="Close payment"><X size={20} /></button>
               </header>
               {invoiceActionMessage && <div className="info-banner">{invoiceActionMessage}</div>}
@@ -9692,8 +9717,8 @@ export function App() {
                   <div className="secure-payment-card">
                     <CreditCard size={22} />
                     <div>
-                      <strong>Secure card checkout</strong>
-                      <span>Card number, expiration date, CVC, Apple Pay, and saved-card handling are collected by Stripe in a secure checkout window.</span>
+                      <strong>Secure Stripe card checkout</strong>
+                      <span>Click Charge card to open Stripe's secure payment window for the amount above. Stripe collects the card number, expiration date, CVC, Apple Pay, and Google Pay, then the CRM marks the invoice paid from the Stripe webhook.</span>
                     </div>
                   </div>
                   <div className="payment-grid">
@@ -9719,7 +9744,17 @@ export function App() {
                 </div>
               ) : (
                 <div className="manual-payment-entry">
-                  <label>{paymentMethod === "cash" ? "Cash note" : paymentMethod === "check" ? "Check number or note" : "Payment note"}
+                  {paymentMethod === "other" && (
+                    <div className="payment-other-options">
+                      {["Homeowner financing", "Warranty work", "e-Transfer", "Other credit card processor", "Other payment type"].map((option) => (
+                        <label className="radio-row" key={option}>
+                          <input type="radio" checked={paymentOtherType === option} onChange={() => setPaymentOtherType(option)} />
+                          {option}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <label>{paymentMethod === "cash" ? "Payment note" : paymentMethod === "check" ? "Check number or note" : "Payment note"}
                     <input value={paymentNote} onChange={(event) => setPaymentNote(event.target.value)} placeholder={paymentMethod === "check" ? "Check #, bank, or memo" : "Optional"} />
                   </label>
                   <p className="muted">This records a successful {paymentMethod} payment in the CRM and marks the invoice paid when the recorded payments cover the invoice total.</p>
@@ -9732,7 +9767,7 @@ export function App() {
               <div className="modal-actions">
                 <button className="outline-button" type="button" onClick={() => setPaymentDialogInvoice(null)}>Cancel</button>
                 <button className="primary" type="button" disabled={paymentProcessing || (paymentMethod === "credit" && (!invoiceSettings.acceptCreditCard || !stripeStatus?.connected))} onClick={confirmPayment}>
-                  {paymentProcessing ? "Processing..." : paymentMethod === "credit" && !stripeStatus?.connected ? "Connect Stripe first" : paymentMethod === "credit" ? "Charge card" : `Record ${paymentMethod} payment`}
+                  {paymentProcessing ? "Processing..." : paymentMethod === "credit" && !stripeStatus?.connected ? "Connect Stripe first" : paymentMethod === "credit" ? "Charge card" : `Paid - ${paymentMethod}`}
                 </button>
               </div>
             </div>

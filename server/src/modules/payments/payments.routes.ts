@@ -4,7 +4,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
-import { sendPaymentReceiptSms } from "../messaging/messaging.service.js";
+import { sendPaymentReceiptEmail, sendPaymentReceiptSms } from "../messaging/messaging.service.js";
 import { createInvoiceCheckoutSession, createInvoicePaymentIntent } from "./stripe.service.js";
 
 export const paymentsRouter = Router();
@@ -20,7 +20,15 @@ const manualPaymentSchema = z.object({
   amount: z.number().int().positive(),
   method: z.enum(["cash", "check", "other"]),
   note: z.string().trim().max(500).optional(),
+  emailReceipt: z.string().trim().email().optional().or(z.literal("")),
+  otherType: z.string().trim().max(100).optional(),
   notifyCustomer: z.boolean().default(false)
+});
+
+const checkoutSessionSchema = z.object({
+  amount: z.number().int().positive().optional(),
+  tipAmount: z.number().int().min(0).optional(),
+  customerEmail: z.string().trim().email().optional().or(z.literal(""))
 });
 
 paymentsRouter.post("/invoices/:invoiceId/payment-intent", asyncHandler(async (req, res) => {
@@ -47,8 +55,9 @@ paymentsRouter.post("/invoices/:invoiceId/checkout-session", asyncHandler(async 
   if (!invoice) return res.status(404).json({ error: "Invoice not found" });
   if (invoice.total <= 0) return res.status(422).json({ error: "Invoice total must be greater than zero" });
 
+  const input = checkoutSessionSchema.parse(req.body ?? {});
   const origin = req.header("origin") || `${req.protocol}://${req.get("host")}`;
-  const session = await createInvoiceCheckoutSession(invoice, origin);
+  const session = await createInvoiceCheckoutSession(invoice, origin, input);
   res.json({ url: session.url, checkoutSessionId: session.id });
 }));
 
@@ -62,13 +71,17 @@ paymentsRouter.post("/invoices/:invoiceId/manual", asyncHandler(async (req, res)
   if (!invoice) return res.status(404).json({ error: "Invoice not found" });
 
   const input = manualPaymentSchema.parse(req.body);
+  const providerRef = [
+    input.otherType,
+    input.note
+  ].filter(Boolean).join(" / ") || input.method;
   const payment = await prisma.payment.create({
     data: {
       invoiceId: invoice.id,
       amount: input.amount,
       status: PaymentStatus.SUCCEEDED,
       provider: input.method,
-      providerRef: input.note || input.method,
+      providerRef,
       paidAt: new Date()
     }
   });
@@ -85,7 +98,10 @@ paymentsRouter.post("/invoices/:invoiceId/manual", asyncHandler(async (req, res)
     include: invoiceInclude
   });
   if (input.notifyCustomer && updatedInvoice.status === InvoiceStatus.PAID && invoice.status !== InvoiceStatus.PAID) {
-    await sendPaymentReceiptSms(locationId, updatedInvoice.id, input.amount);
+    await Promise.all([
+      sendPaymentReceiptSms(locationId, updatedInvoice.id, input.amount),
+      input.emailReceipt ? sendPaymentReceiptEmail(locationId, updatedInvoice.id, input.emailReceipt, input.amount) : null
+    ]);
   }
 
   res.status(201).json({ payment, invoice: updatedInvoice });

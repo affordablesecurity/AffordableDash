@@ -379,14 +379,18 @@ webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
       if (status === "SUCCEEDED") {
         const existingInvoice = await prisma.invoice.findUnique({
           where: { id: invoiceId },
-          select: { status: true }
+          select: { status: true, total: true }
+        });
+        const paidTotal = await prisma.payment.aggregate({
+          where: { invoiceId, status: "SUCCEEDED" },
+          _sum: { amount: true }
         });
         const paidInvoice = await prisma.invoice.update({
           where: { id: invoiceId },
-          data: { status: "PAID" },
+          data: { status: (paidTotal._sum.amount ?? 0) >= (existingInvoice?.total ?? intent.amount) ? "PAID" : existingInvoice?.status },
           select: { id: true, locationId: true }
         });
-        if (existingInvoice?.status !== "PAID") {
+        if (existingInvoice?.status !== "PAID" && (paidTotal._sum.amount ?? 0) >= (existingInvoice?.total ?? intent.amount)) {
           await sendPaymentReceiptSms(paidInvoice.locationId, paidInvoice.id, intent.amount);
         }
       }
@@ -398,20 +402,46 @@ webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
     const invoiceId = session.metadata?.invoiceId;
 
     if (invoiceId) {
+      const paymentId = typeof session.payment_intent === "string" ? session.payment_intent : session.id;
+      const amount = session.amount_total ?? Number(session.metadata?.paymentAmount || 0);
+      if (amount > 0) {
+        await prisma.payment.upsert({
+          where: { id: paymentId },
+          update: {
+            status: "SUCCEEDED",
+            amount,
+            paidAt: new Date()
+          },
+          create: {
+            id: paymentId,
+            invoiceId,
+            amount,
+            status: "SUCCEEDED",
+            provider: "stripe",
+            providerRef: session.id,
+            paidAt: new Date()
+          }
+        });
+      }
       const existingInvoice = await prisma.invoice.findUnique({
         where: { id: invoiceId },
-        select: { status: true }
+        select: { status: true, total: true }
       });
+      const paidTotal = await prisma.payment.aggregate({
+        where: { invoiceId, status: "SUCCEEDED" },
+        _sum: { amount: true }
+      });
+      const isPaidInFull = (paidTotal._sum.amount ?? 0) >= (existingInvoice?.total ?? amount);
       const paidInvoice = await prisma.invoice.update({
         where: { id: invoiceId },
         data: {
-          status: "PAID",
+          status: isPaidInFull ? "PAID" : existingInvoice?.status,
           stripePaymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : undefined
         },
         select: { id: true, locationId: true, total: true }
       });
-      if (existingInvoice?.status !== "PAID") {
-        await sendPaymentReceiptSms(paidInvoice.locationId, paidInvoice.id, paidInvoice.total);
+      if (existingInvoice?.status !== "PAID" && isPaidInFull) {
+        await sendPaymentReceiptSms(paidInvoice.locationId, paidInvoice.id, amount);
       }
     }
   }
