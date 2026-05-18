@@ -46,6 +46,7 @@ const estimateSchema = z.object({
   internalNotes: z.string().optional(),
   approvalSignature: z.string().optional(),
   approvalName: z.string().optional(),
+  approvedOptionId: z.string().nullable().optional(),
   depositType: z.enum(["NONE", "PERCENT", "FIXED"]).optional(),
   depositPercent: z.number().int().min(1).max(100).optional(),
   depositAmount: z.number().int().min(1).optional(),
@@ -640,6 +641,15 @@ estimatesRouter.post("/:id/convert-to-job", asyncHandler(async (req, res) => {
   if (estimate.workflowStatus !== "FINISHED" && estimate.status !== EstimateStatus.APPROVED) {
     return res.status(422).json({ error: "Finish the estimate workflow before copying it into a job." });
   }
+  const approvedOption = estimate.approvedOptionId
+    ? estimate.options.find((option) => option.id === estimate.approvedOptionId)
+    : estimate.options.length === 1
+      ? estimate.options[0]
+      : null;
+  if (estimate.options.length > 1 && !approvedOption) {
+    return res.status(422).json({ error: "Choose or approve one estimate option before copying this estimate to a job." });
+  }
+  const sourceLineItems = approvedOption ? approvedOption.lineItems : estimate.lineItems;
 
   const result = await prisma.$transaction(async (tx) => {
     const job = await tx.job.create({
@@ -658,8 +668,8 @@ estimatesRouter.post("/:id/convert-to-job", asyncHandler(async (req, res) => {
         description: estimate.description,
         internalNotes: estimate.internalNotes,
         attachments: estimate.attachments,
-        lineItems: estimate.lineItems.length ? {
-          create: estimate.lineItems.map((item) => ({
+        lineItems: sourceLineItems.length ? {
+          create: sourceLineItems.map((item) => ({
             category: item.category,
             name: item.name,
             description: item.description,
@@ -669,7 +679,7 @@ estimatesRouter.post("/:id/convert-to-job", asyncHandler(async (req, res) => {
             taxable: item.taxable
           }))
         } : undefined,
-        notes: { create: { author: "System", content: `Converted from estimate #${estimate.estimateNumber}.` } }
+        notes: { create: { author: "System", content: `Converted from estimate #${estimate.estimateNumber}${approvedOption ? `, approved option: ${approvedOption.title}.` : "."}` } }
       },
       include: {
         customer: { include: { addresses: true } },

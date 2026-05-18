@@ -386,6 +386,9 @@ publicEstimateRouter.post("/:estimateNumber/approve", asyncHandler(async (req, r
   const estimate = await loadEstimate(estimateNumber);
   if (!estimate) return res.status(404).json({ error: "Estimate not found" });
   if (estimate.status === EstimateStatus.DECLINED) return res.status(409).json({ error: "This estimate was already declined." });
+  if (input.optionId && !estimate.options.some((option) => option.id === input.optionId)) {
+    return res.status(422).json({ error: "Selected estimate option was not found." });
+  }
   await prisma.estimate.update({
     where: { id: estimate.id },
     data: {

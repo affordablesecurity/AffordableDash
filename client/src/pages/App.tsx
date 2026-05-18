@@ -3325,6 +3325,7 @@ export function App() {
 
   async function approveEstimate(estimate: Estimate) {
     const signature = signatureCanvasRef.current?.toDataURL("image/png");
+    const selectedOptionId = activeEstimateOption?.id || estimate.approvedOptionId || estimate.options?.[0]?.id;
     if (!estimate.approvalSignature && !signatureHasInk) {
       setError("Capture the customer signature before approving the estimate.");
       return;
@@ -3332,7 +3333,8 @@ export function App() {
     await updateEstimate(estimate, {
       status: "APPROVED",
       approvalSignature: estimate.approvalSignature || signature,
-      approvalName: signatureName || customerName(estimate.customer)
+      approvalName: signatureName || customerName(estimate.customer),
+      approvedOptionId: selectedOptionId
     });
     setSignatureName("");
     clearSignature();
@@ -3344,7 +3346,9 @@ export function App() {
 
   async function convertEstimateToJob(estimate: Estimate) {
     setError("");
-    const result = await api<{ estimate: Estimate; job: Job }>(`/api/estimates/${estimate.id}/convert-to-job`, { method: "POST" });
+    const result = await api<{ estimate: Estimate; job: Job }>(`/api/estimates/${estimate.id}/convert-to-job`, {
+      method: "POST"
+    });
     setEstimates((current) => current.map((item) => item.id === result.estimate.id ? result.estimate : item));
     setJobs((current) => [result.job, ...current.filter((job) => job.id !== result.job.id)]);
     openJobDetail(result.job);
@@ -7184,10 +7188,18 @@ export function App() {
                           <div className="signature-result">
                             <img src={selectedEstimate.approvalSignature} alt="Customer approval signature" />
                             <span>Approved by {selectedEstimate.approvalName || customerName(selectedEstimate.customer)} on {formatDateTime(selectedEstimate.approvedAt)}</span>
+                            {selectedEstimate.approvedOptionId && <span>Approved option: {selectedEstimateOptions.find((option) => option.id === selectedEstimate.approvedOptionId)?.title ?? "Selected option"}</span>}
                             {selectedEstimate.approvalIpAddress && <span>IP address: {selectedEstimate.approvalIpAddress}</span>}
                           </div>
                         ) : (
                           <>
+                            {selectedEstimateOptions.length > 1 && (
+                              <label>Option to approve
+                                <select value={activeEstimateOption?.id ?? ""} onChange={(event) => setActiveEstimateOptionId(event.target.value)}>
+                                  {selectedEstimateOptions.map((option, index) => <option key={option.id} value={option.id}>{option.title || `Option #${index + 1}`}</option>)}
+                                </select>
+                              </label>
+                            )}
                             <input placeholder="Signer name" value={signatureName} onChange={(event) => setSignatureName(event.target.value)} />
                             <canvas
                               ref={signatureCanvasRef}
