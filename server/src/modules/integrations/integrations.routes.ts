@@ -78,8 +78,11 @@ integrationsRouter.get("/stripe/status", asyncHandler(async (req, res) => {
   }
 
   res.json({
-    configured: Boolean(config.stripe && config.connectClientId),
+    configured: Boolean(config.stripe && config.publishableKey),
     connected: Boolean(config.accountId),
+    paymentsEnabled: Boolean(config.stripe && config.publishableKey),
+    connectConfigured: Boolean(config.stripe && config.connectClientId),
+    directAccount: Boolean(config.stripe && config.publishableKey && !config.accountId),
     accountId: config.accountId,
     activeMode: mode,
     accountMode: mode,
@@ -146,7 +149,7 @@ integrationsRouter.post("/stripe/settings", asyncHandler(async (req, res) => {
 integrationsRouter.post("/stripe/connect", asyncHandler(async (req, res) => {
   const config = await getLocationStripeConfig(activeLocationId(req));
   if (!config.stripe || !config.connectClientId) {
-    return res.status(422).json({ error: "Stripe Connect is not configured" });
+    return res.status(422).json({ error: "Stripe Connect is not configured. You can still take direct payments if the secret and publishable keys are saved." });
   }
 
   const state = jwt.sign({

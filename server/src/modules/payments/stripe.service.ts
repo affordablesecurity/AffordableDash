@@ -137,6 +137,10 @@ export async function getAllStripeWebhookSecrets() {
   return [...new Set(secrets)];
 }
 
+function stripeRequestOptions(accountId?: string | null) {
+  return accountId ? { stripeAccount: accountId } : undefined;
+}
+
 export async function createInvoicePaymentIntent(invoice: {
   id: string;
   total: number;
@@ -146,9 +150,6 @@ export async function createInvoicePaymentIntent(invoice: {
   const config = await getLocationStripeConfig(invoice.locationId);
   if (!config.stripe) {
     throw new Error("Stripe is not configured");
-  }
-  if (!config.accountId) {
-    throw new Error("Stripe is not connected for this location");
   }
 
   return config.stripe.paymentIntents.create({
@@ -162,7 +163,7 @@ export async function createInvoicePaymentIntent(invoice: {
       invoiceTotal: String(invoice.total),
       tipAmount: String(options.tipAmount ?? 0)
     }
-  }, { stripeAccount: config.accountId });
+  }, stripeRequestOptions(config.accountId));
 }
 
 function checkoutQuantity(value: InvoiceCheckoutLine["quantity"]) {
@@ -273,9 +274,6 @@ export async function createInvoiceCheckoutSession(invoice: InvoiceCheckoutInput
   if (!config.stripe) {
     throw new Error("Stripe is not configured");
   }
-  if (!config.accountId) {
-    throw new Error("Stripe is not connected for this location");
-  }
 
   return config.stripe.checkout.sessions.create({
     mode: "payment",
@@ -300,5 +298,5 @@ export async function createInvoiceCheckoutSession(invoice: InvoiceCheckoutInput
     },
     success_url: `${baseUrl}/pay/${invoice.invoiceNumber}/complete?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/pay/${invoice.invoiceNumber}`
-  }, { stripeAccount: config.accountId });
+  }, stripeRequestOptions(config.accountId));
 }

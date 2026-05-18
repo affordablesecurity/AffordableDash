@@ -477,6 +477,9 @@ type CrmOptions = {
 type StripeStatus = {
   configured: boolean;
   connected: boolean;
+  paymentsEnabled?: boolean;
+  connectConfigured?: boolean;
+  directAccount?: boolean;
   accountId?: string;
   activeMode?: "live" | "test";
   accountMode?: "live" | "test" | null;
@@ -4301,6 +4304,10 @@ export function App() {
       if (paymentMethod === "credit") {
         if (!invoiceSettings.acceptCreditCard) {
           setInvoiceActionMessage("Credit card payments are disabled in invoice settings for this location.");
+          return;
+        }
+        if (!stripeStatus?.paymentsEnabled) {
+          setInvoiceActionMessage("Add the Stripe secret key and publishable key in Settings > Stripe before charging cards.");
           return;
         }
         const result = await api<{ url?: string }>(`/api/payments/invoices/${paymentDialogInvoice.id}/checkout-session`, {
@@ -8769,7 +8776,7 @@ export function App() {
                     <div>
                       <span className="breadcrumb">Settings / Stripe Settings</span>
                       <h2>Connect with Stripe</h2>
-                      <p className="muted">Stripe is connected separately for each location. Payments from this location's invoices will use this location's connected Stripe account.</p>
+                      <p className="muted">Stripe can run directly from this location's saved keys, or through Stripe Connect when a Connect client ID is added.</p>
                     </div>
                   </div>
 
@@ -8789,6 +8796,8 @@ export function App() {
                           <span className="status-pill connected">Connected</span>
                           <button className="danger-outline" type="button" onClick={disconnectStripe}>Disconnect</button>
                         </>
+                      ) : stripeStatus.paymentsEnabled ? (
+                        <span className="status-pill connected">Direct payments enabled</span>
                       ) : (
                         <button className="primary" type="button" onClick={connectStripe}>Connect Stripe</button>
                       )}
@@ -8797,16 +8806,20 @@ export function App() {
 
                   <div className="stripe-manage-card">
                     <div>
-                      <h3>{stripeStatus?.connected ? "Stripe account connected" : "Take online payments with Stripe"}</h3>
+                      <h3>{stripeStatus?.connected ? "Stripe account connected" : stripeStatus?.paymentsEnabled ? "Stripe direct payments enabled" : "Take online payments with Stripe"}</h3>
                       <p>{stripeStatus?.connected
                         ? "View your balance, payouts, banking details, and Stripe account settings from Stripe."
-                        : "Connect this location to a Stripe account before sending payable invoices or collecting card payments."}</p>
+                        : stripeStatus?.paymentsEnabled
+                          ? "Card payments will use the saved Stripe keys for this location. Connect is optional for your single account workflow."
+                          : "Add Stripe test or live keys before sending payable invoices or collecting card payments."}</p>
                       {stripeStatus?.accountId && <code>{stripeStatus.accountId}</code>}
                     </div>
                     {stripeStatus?.connected ? (
                       <button className="outline-button" type="button" onClick={manageStripe}>Manage Stripe</button>
+                    ) : stripeStatus?.connectConfigured ? (
+                      <button className="outline-button" type="button" onClick={connectStripe}>Start Connect setup</button>
                     ) : (
-                      <button className="outline-button" type="button" onClick={connectStripe} disabled={!stripeStatus?.configured}>Start setup</button>
+                      <button className="outline-button" type="button" onClick={() => setStripeMessage("Connect setup needs a Connect client ID. Direct payments only need secret and publishable keys.")}>Connect not configured</button>
                     )}
                   </div>
 
@@ -9841,8 +9854,8 @@ export function App() {
                       <input value={paymentBillingForm.state} onChange={(event) => setPaymentBillingForm({ ...paymentBillingForm, state: event.target.value })} />
                     </label>
                   </div>
-                  {!stripeStatus?.connected && (
-                    <div className="info-banner">Connect this location to Stripe before charging cards. Cash, check, and other payments can still be recorded.</div>
+                  {!stripeStatus?.paymentsEnabled && (
+                    <div className="info-banner">Add the Stripe secret key and publishable key in Settings before charging cards. Cash, check, and other payments can still be recorded.</div>
                   )}
                 </div>
               ) : (
@@ -9869,8 +9882,8 @@ export function App() {
               </label>
               <div className="modal-actions">
                 <button className="outline-button" type="button" onClick={() => setPaymentDialogInvoice(null)}>Cancel</button>
-                <button className="primary" type="button" disabled={paymentProcessing || (paymentMethod === "credit" && (!invoiceSettings.acceptCreditCard || !stripeStatus?.connected))} onClick={confirmPayment}>
-                  {paymentProcessing ? "Processing..." : paymentMethod === "credit" && !stripeStatus?.connected ? "Connect Stripe first" : paymentMethod === "credit" ? "Charge card" : `Paid - ${paymentMethod}`}
+                <button className="primary" type="button" disabled={paymentProcessing || (paymentMethod === "credit" && (!invoiceSettings.acceptCreditCard || !stripeStatus?.paymentsEnabled))} onClick={confirmPayment}>
+                  {paymentProcessing ? "Processing..." : paymentMethod === "credit" && !stripeStatus?.paymentsEnabled ? "Add Stripe keys first" : paymentMethod === "credit" ? "Charge card" : `Paid - ${paymentMethod}`}
                 </button>
               </div>
             </div>

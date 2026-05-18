@@ -97,11 +97,15 @@ async function recordPaidStripeInvoice(input: {
 
 async function reconcileStripeReturn(invoice: NonNullable<Awaited<ReturnType<typeof loadInvoice>>>, query: Record<string, unknown>) {
   const config = await getLocationStripeConfig(invoice.locationId);
-  if (!config.stripe || !config.accountId) return false;
+  if (!config.stripe) return false;
 
   const sessionId = queryValue(query.session_id);
   if (sessionId) {
-    const session = await config.stripe.checkout.sessions.retrieve(sessionId, { expand: ["payment_intent"] }, { stripeAccount: config.accountId });
+    const session = await config.stripe.checkout.sessions.retrieve(
+      sessionId,
+      { expand: ["payment_intent"] },
+      config.accountId ? { stripeAccount: config.accountId } : undefined
+    );
     if (session.payment_status !== "paid" || session.metadata?.invoiceId !== invoice.id) return false;
     const paymentIntent = typeof session.payment_intent === "string" ? null : session.payment_intent;
     const paymentId = typeof session.payment_intent === "string" ? session.payment_intent : paymentIntent?.id ?? session.id;
@@ -111,7 +115,11 @@ async function reconcileStripeReturn(invoice: NonNullable<Awaited<ReturnType<typ
 
   const paymentIntentId = queryValue(query.payment_intent);
   if (paymentIntentId) {
-    const intent = await config.stripe.paymentIntents.retrieve(paymentIntentId, {}, { stripeAccount: config.accountId });
+    const intent = await config.stripe.paymentIntents.retrieve(
+      paymentIntentId,
+      {},
+      config.accountId ? { stripeAccount: config.accountId } : undefined
+    );
     const matchesInvoice = intent.metadata.invoiceId === invoice.id || invoice.stripePaymentIntentId === intent.id;
     if (!matchesInvoice || intent.status !== "succeeded") return false;
     return recordPaidStripeInvoice({
