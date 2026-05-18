@@ -908,6 +908,46 @@ textarea {
   font-weight: 800;
 }
 
+.booking-week-toolbar {
+  display: grid;
+  grid-template-columns: 38px 1fr 38px auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e1e5ef;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.booking-week-toolbar > button,
+.booking-week-toolbar div button {
+  border: 1px solid #d8deea;
+  border-radius: 7px;
+  background: #fff;
+  padding: 9px 11px;
+  font-weight: 900;
+}
+
+.booking-week-toolbar > button {
+  display: grid;
+  place-items: center;
+}
+
+.booking-week-toolbar strong {
+  text-align: center;
+}
+
+.booking-week-toolbar div {
+  display: flex;
+  gap: 6px;
+}
+
+.booking-week-toolbar div button.active {
+  border-color: var(--booking-color);
+  background: #eaf2ff;
+  color: var(--booking-color);
+}
+
 .booking-calendar {
   border: 1px solid #e1e5ef;
   border-radius: 8px;

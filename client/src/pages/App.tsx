@@ -1777,6 +1777,8 @@ export function App() {
   const [bookingSettingsMessage, setBookingSettingsMessage] = useState("");
   const [bookingCalendarMonth, setBookingCalendarMonth] = useState(() => startOfMonth(new Date()));
   const [bookingSelectedDate, setBookingSelectedDate] = useState(() => toInputDate(new Date()));
+  const [bookingTimeMode, setBookingTimeMode] = useState<"first" | "all">("first");
+  const [bookingSlotView, setBookingSlotView] = useState<"list" | "month">("list");
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("week");
   const [scheduleDate, setScheduleDate] = useState(() => new Date());
   const [schedulePicker, setSchedulePicker] = useState<SchedulePickerState>(null);
@@ -5857,6 +5859,23 @@ export function App() {
   const bookingServiceAreaZips = bookingData?.settings.serviceAreaZipCodes ?? [];
   const bookingSlotsForSelectedDate = bookingData?.slots.filter((slot) => toInputDate(new Date(slot.start)) === bookingSelectedDate) ?? [];
   const selectedBookingQuestions = selectedBookingService ? (bookingData?.settings.serviceQuestions?.[selectedBookingService.name] ?? bookingData?.settings.serviceQuestions?.[selectedBookingService.category] ?? []) : [];
+  const bookingWeekStart = startOfWeek(new Date(`${bookingSelectedDate}T00:00:00`));
+  const bookingWeekEnd = addDays(bookingWeekStart, 7);
+  const bookingSlotsForWeek = bookingData?.slots.filter((slot) => {
+    const date = new Date(slot.start);
+    return date >= bookingWeekStart && date < bookingWeekEnd;
+  }) ?? [];
+  const bookingFirstAvailableSlots = bookingData?.slots.slice(0, 6) ?? [];
+
+  function bookingSlotLabel(slot: { start: string; end: string }) {
+    return `${new Date(slot.start).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}, ${new Date(slot.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} - ${new Date(slot.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  }
+
+  function selectBookingSlot(slot: { start: string; end: string }) {
+    setBookingSelectedDate(toInputDate(new Date(slot.start)));
+    setBookingCalendarMonth(startOfMonth(new Date(slot.start)));
+    setBookingForm({ ...bookingForm, scheduledStart: slot.start, scheduledEnd: slot.end });
+  }
 
   function parseBookingQuestionsDraft(value: string) {
     const result: Record<string, string[]> = {};
@@ -6014,47 +6033,82 @@ export function App() {
           {bookingStep === "time" && (
             <div className="booking-step">
               <h2>When do you need us?</h2>
-              <div className="booking-tabs"><button className="active" type="button">First Available</button><button type="button">All Appointments</button></div>
+              <div className="booking-tabs">
+                <button className={bookingTimeMode === "first" ? "active" : ""} type="button" onClick={() => setBookingTimeMode("first")}>First Available</button>
+                <button className={bookingTimeMode === "all" ? "active" : ""} type="button" onClick={() => setBookingTimeMode("all")}>All Appointments</button>
+              </div>
               <p className="booking-timezone">Time zone: {bookingData?.location.timezone || "America/Phoenix"}</p>
-              <div className="booking-calendar">
-                <header>
-                  <strong>{bookingCalendarMonth.toLocaleDateString([], { month: "long", year: "numeric" })}</strong>
-                  <span>
-                    <button type="button" onClick={() => setBookingCalendarMonth((current) => addMonths(current, -1))}><ChevronLeft size={18} /></button>
-                    <button type="button" onClick={() => setBookingCalendarMonth((current) => addMonths(current, 1))}><ChevronRight size={18} /></button>
-                  </span>
-                </header>
-                <div className="booking-calendar-grid">
-                  {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => <span key={day}>{day}</span>)}
-                  {monthDays.map((day) => {
-                    const inputDate = toInputDate(day);
-                    const hasSlots = availableDates.has(inputDate);
-                    return (
-                      <button
-                        key={inputDate}
-                        type="button"
-                        disabled={!hasSlots}
-                        className={`${day.getMonth() !== bookingCalendarMonth.getMonth() ? "muted" : ""} ${bookingSelectedDate === inputDate ? "selected" : ""}`}
-                        onClick={() => {
-                          const firstSlot = bookingData?.slots.find((slot) => toInputDate(new Date(slot.start)) === inputDate);
-                          setBookingSelectedDate(inputDate);
-                          if (firstSlot) setBookingForm({ ...bookingForm, scheduledStart: firstSlot.start, scheduledEnd: firstSlot.end });
-                        }}
-                      >
-                        {day.getDate()}
-                      </button>
-                    );
-                  })}
+              {bookingTimeMode === "first" ? (
+                <div className="booking-slot-list">
+                  {bookingFirstAvailableSlots.map((slot) => (
+                    <button key={slot.start} className={bookingForm.scheduledStart === slot.start ? "selected" : ""} type="button" onClick={() => selectBookingSlot(slot)}>
+                      <span /> {bookingSlotLabel(slot)}
+                    </button>
+                  ))}
+                  {!bookingFirstAvailableSlots.length && <p className="booking-empty">No appointment windows are open right now. Please check back later or call us.</p>}
                 </div>
-              </div>
-              <div className="booking-slot-list">
-                {bookingSlotsForSelectedDate.map((slot) => (
-                  <button key={slot.start} className={bookingForm.scheduledStart === slot.start ? "selected" : ""} type="button" onClick={() => setBookingForm({ ...bookingForm, scheduledStart: slot.start, scheduledEnd: slot.end })}>
-                    <span /> {new Date(slot.start).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}, {new Date(slot.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} - {new Date(slot.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                  </button>
-                ))}
-                {!bookingSlotsForSelectedDate.length && <p className="booking-empty">No appointment windows are open for this date. Please choose another day.</p>}
-              </div>
+              ) : (
+                <>
+                  <div className="booking-week-toolbar">
+                    <button type="button" onClick={() => {
+                      const nextDate = toInputDate(addDays(new Date(`${bookingSelectedDate}T00:00:00`), -7));
+                      setBookingSelectedDate(nextDate);
+                      setBookingCalendarMonth(startOfMonth(new Date(`${nextDate}T00:00:00`)));
+                    }}><ChevronLeft size={18} /></button>
+                    <strong>{bookingWeekStart.toLocaleDateString([], { month: "short", day: "numeric" })} - {addDays(bookingWeekEnd, -1).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}</strong>
+                    <button type="button" onClick={() => {
+                      const nextDate = toInputDate(addDays(new Date(`${bookingSelectedDate}T00:00:00`), 7));
+                      setBookingSelectedDate(nextDate);
+                      setBookingCalendarMonth(startOfMonth(new Date(`${nextDate}T00:00:00`)));
+                    }}><ChevronRight size={18} /></button>
+                    <div>
+                      <button className={bookingSlotView === "list" ? "active" : ""} type="button" onClick={() => setBookingSlotView("list")}>List view</button>
+                      <button className={bookingSlotView === "month" ? "active" : ""} type="button" onClick={() => setBookingSlotView("month")}>Month view</button>
+                    </div>
+                  </div>
+                  {bookingSlotView === "month" && (
+                    <div className="booking-calendar">
+                      <header>
+                        <strong>{bookingCalendarMonth.toLocaleDateString([], { month: "long", year: "numeric" })}</strong>
+                        <span>
+                          <button type="button" onClick={() => setBookingCalendarMonth((current) => addMonths(current, -1))}><ChevronLeft size={18} /></button>
+                          <button type="button" onClick={() => setBookingCalendarMonth((current) => addMonths(current, 1))}><ChevronRight size={18} /></button>
+                        </span>
+                      </header>
+                      <div className="booking-calendar-grid">
+                        {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => <span key={day}>{day}</span>)}
+                        {monthDays.map((day) => {
+                          const inputDate = toInputDate(day);
+                          const hasSlots = availableDates.has(inputDate);
+                          return (
+                            <button
+                              key={inputDate}
+                              type="button"
+                              disabled={!hasSlots}
+                              className={`${day.getMonth() !== bookingCalendarMonth.getMonth() ? "muted" : ""} ${bookingSelectedDate === inputDate ? "selected" : ""}`}
+                              onClick={() => {
+                                const firstSlot = bookingData?.slots.find((slot) => toInputDate(new Date(slot.start)) === inputDate);
+                                setBookingSelectedDate(inputDate);
+                                if (firstSlot) selectBookingSlot(firstSlot);
+                              }}
+                            >
+                              {day.getDate()}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  <div className="booking-slot-list">
+                    {(bookingSlotView === "month" ? bookingSlotsForSelectedDate : bookingSlotsForWeek).map((slot) => (
+                      <button key={slot.start} className={bookingForm.scheduledStart === slot.start ? "selected" : ""} type="button" onClick={() => selectBookingSlot(slot)}>
+                        <span /> {bookingSlotLabel(slot)}
+                      </button>
+                    ))}
+                    {!(bookingSlotView === "month" ? bookingSlotsForSelectedDate : bookingSlotsForWeek).length && <p className="booking-empty">No appointment windows are open for this date range. Please choose another week.</p>}
+                  </div>
+                </>
+              )}
               <div className="booking-footer-actions"><button className="outline-button" type="button" onClick={() => setBookingStep("service")}>Back</button><button className="primary" type="button" disabled={!selectedSlotAvailable} onClick={() => setBookingStep("contact")}>Continue Booking</button></div>
             </div>
           )}
@@ -6063,19 +6117,10 @@ export function App() {
               <div className="booking-summary-card"><strong>{selectedBookingService?.name || "Locksmith"}</strong><span>{formatDateTime(bookingForm.scheduledStart)}</span></div>
               <h2>How should we reach you?</h2>
               <div className="booking-contact-grid">
-                <label>{bookingData?.settings.contactFields.firstName || "First Name"}<input required value={bookingForm.firstName} onChange={(event) => setBookingForm({ ...bookingForm, firstName: event.target.value })} /></label>
-                <label>{bookingData?.settings.contactFields.lastName || "Last Name"}<input required value={bookingForm.lastName} onChange={(event) => setBookingForm({ ...bookingForm, lastName: event.target.value })} /></label>
-                <label>{bookingData?.settings.contactFields.phone || "Phone"}<input required value={bookingForm.phone} onChange={(event) => setBookingForm({ ...bookingForm, phone: formatPhoneInput(event.target.value) })} /></label>
-                <label>{bookingData?.settings.contactFields.email || "Email"}<input type="email" value={bookingForm.email} onChange={(event) => setBookingForm({ ...bookingForm, email: event.target.value })} /></label>
-                <label className="span-2">{bookingData?.settings.contactFields.address || "Service address"}{renderAddressAutocomplete({
-                  lookupKey: "public-booking-address",
-                  value: bookingForm.address,
-                  placeholder: "Start typing service address",
-                  publicLookup: true,
-                  onChange: (value) => setBookingForm({ ...bookingForm, address: value }),
-                  onSelect: (place) => setBookingForm({ ...bookingForm, address: place.street1, city: place.city, zipCode: place.postalCode || bookingForm.zipCode })
-                })}</label>
-                <label className="span-2">{bookingData?.settings.contactFields.notes || "Additional notes"}<textarea value={bookingForm.notes} onChange={(event) => setBookingForm({ ...bookingForm, notes: event.target.value })} /></label>
+                <label>{bookingData?.settings.contactFields.firstName || "First Name"}<input required placeholder="John" value={bookingForm.firstName} onChange={(event) => setBookingForm({ ...bookingForm, firstName: event.target.value })} /></label>
+                <label>{bookingData?.settings.contactFields.lastName || "Last Name"}<input required placeholder="Doe" value={bookingForm.lastName} onChange={(event) => setBookingForm({ ...bookingForm, lastName: event.target.value })} /></label>
+                <label>{bookingData?.settings.contactFields.phone || "Phone"}<input required placeholder="(123) 456-7890" value={bookingForm.phone} onChange={(event) => setBookingForm({ ...bookingForm, phone: formatPhoneInput(event.target.value) })} /></label>
+                <label>{bookingData?.settings.contactFields.email || "Email"}<input type="email" placeholder="you@example.com" value={bookingForm.email} onChange={(event) => setBookingForm({ ...bookingForm, email: event.target.value })} /></label>
               </div>
               <label className="check-row"><input type="checkbox" checked={bookingForm.smsConsent} onChange={(event) => setBookingForm({ ...bookingForm, smsConsent: event.target.checked })} /> {bookingData?.settings.contactFields.smsConsent || "Receive text messages about appointment"}</label>
               {bookingSubmitMessage && <p className="muted-copy">{bookingSubmitMessage}</p>}

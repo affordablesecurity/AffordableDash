@@ -6,7 +6,7 @@ import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
 import { sendEmail } from "../messaging/email.service.js";
-import { sendJobTemplateSms } from "../messaging/messaging.service.js";
+import { sendJobTemplateSms, sendLocationSms } from "../messaging/messaging.service.js";
 
 export const bookingRouter = Router();
 export const publicBookingRouter = Router();
@@ -199,15 +199,21 @@ async function availableSlots(locationId: string, settings: ReturnType<typeof se
   const rangeStart = zonedDateToUtc(today.year, today.month, today.day, 0, 0, timeZone);
   const rangeEnd = new Date(rangeStart);
   rangeEnd.setUTCDate(rangeEnd.getUTCDate() + 31);
-  const bookedJobs = await prisma.job.findMany({
+  const [technicians, bookedJobs] = await Promise.all([
+    prisma.technician.findMany({
+      where: { locationId, active: true, fieldTech: true },
+      select: { id: true }
+    }),
+    prisma.job.findMany({
     where: {
       locationId,
       status: { not: JobStatus.CANCELED },
       scheduledStart: { lt: rangeEnd },
       scheduledEnd: { gt: rangeStart }
     },
-    select: { scheduledStart: true, scheduledEnd: true }
-  });
+      select: { scheduledStart: true, scheduledEnd: true, technicianId: true }
+    })
+  ]);
   for (let day = 0; day < 30; day += 1) {
     const base = new Date(rangeStart);
     base.setUTCDate(base.getUTCDate() + day);
@@ -219,20 +225,44 @@ async function availableSlots(locationId: string, settings: ReturnType<typeof se
       const slotEnd = new Date(slotStart);
       slotEnd.setMinutes(slotEnd.getMinutes() + settings.slotWindowMinutes);
       if (slotStart <= now) continue;
-      const overlaps = bookedJobs.some((job) => job.scheduledStart && job.scheduledEnd && slotStart < job.scheduledEnd && slotEnd > job.scheduledStart);
-      if (overlaps) continue;
+      const hasAvailableTech = technicians.length
+        ? technicians.some((tech) => !bookedJobs.some((job) => job.technicianId === tech.id && job.scheduledStart && job.scheduledEnd && slotStart < job.scheduledEnd && slotEnd > job.scheduledStart))
+        : !bookedJobs.some((job) => job.scheduledStart && job.scheduledEnd && slotStart < job.scheduledEnd && slotEnd > job.scheduledStart);
+      if (!hasAvailableTech) continue;
       slots.push({ start: slotStart.toISOString(), end: slotEnd.toISOString() });
     }
   }
   return slots;
 }
 
+async function findAvailableTechnician(locationId: string, scheduledStart: Date, scheduledEnd: Date) {
+  const technicians = await prisma.technician.findMany({
+    where: { locationId, active: true, fieldTech: true },
+    orderBy: [{ createdAt: "asc" }],
+    select: { id: true, name: true, phone: true, email: true }
+  });
+  for (const technician of technicians) {
+    const overlap = await prisma.job.findFirst({
+      where: {
+        locationId,
+        technicianId: technician.id,
+        status: { not: JobStatus.CANCELED },
+        scheduledStart: { lt: scheduledEnd },
+        scheduledEnd: { gt: scheduledStart }
+      },
+      select: { id: true }
+    });
+    if (!overlap) return technician;
+  }
+  return null;
+}
+
 async function slotIsBookable(locationId: string, settings: ReturnType<typeof settingsForLocation>, timeZone: string, scheduledStart: Date, scheduledEnd: Date) {
-  if (!(scheduledStart instanceof Date) || !(scheduledEnd instanceof Date) || Number.isNaN(scheduledStart.getTime()) || Number.isNaN(scheduledEnd.getTime())) return false;
+  if (!(scheduledStart instanceof Date) || !(scheduledEnd instanceof Date) || Number.isNaN(scheduledStart.getTime()) || Number.isNaN(scheduledEnd.getTime())) return { ok: false, technician: null };
   const now = new Date();
-  if (scheduledStart <= now || scheduledEnd <= scheduledStart) return false;
+  if (scheduledStart <= now || scheduledEnd <= scheduledStart) return { ok: false, technician: null };
   const duration = Math.round((scheduledEnd.getTime() - scheduledStart.getTime()) / 60000);
-  if (duration !== settings.slotWindowMinutes) return false;
+  if (duration !== settings.slotWindowMinutes) return { ok: false, technician: null };
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     hour: "numeric",
@@ -242,9 +272,13 @@ async function slotIsBookable(locationId: string, settings: ReturnType<typeof se
   const localHour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
   const localMinute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
   const startMinutes = localHour * 60 + localMinute;
-  if (startMinutes < settings.slotStartHour * 60 || startMinutes + settings.slotWindowMinutes > settings.slotEndHour * 60) return false;
-  if ((startMinutes - settings.slotStartHour * 60) % settings.slotIntervalMinutes !== 0) return false;
-  const overlap = await prisma.job.findFirst({
+  if (startMinutes < settings.slotStartHour * 60 || startMinutes + settings.slotWindowMinutes > settings.slotEndHour * 60) return { ok: false, technician: null };
+  if ((startMinutes - settings.slotStartHour * 60) % settings.slotIntervalMinutes !== 0) return { ok: false, technician: null };
+  const technician = await findAvailableTechnician(locationId, scheduledStart, scheduledEnd);
+  if (technician) return { ok: true, technician };
+  const anyFieldTech = await prisma.technician.findFirst({ where: { locationId, active: true, fieldTech: true }, select: { id: true } });
+  if (anyFieldTech) return { ok: false, technician: null };
+  const locationOverlap = await prisma.job.findFirst({
     where: {
       locationId,
       status: { not: JobStatus.CANCELED },
@@ -253,7 +287,69 @@ async function slotIsBookable(locationId: string, settings: ReturnType<typeof se
     },
     select: { id: true }
   });
-  return !overlap;
+  return { ok: !locationOverlap, technician: null };
+}
+
+function publicBookingWindow(start: Date, end: Date, timezone: string) {
+  return `${start.toLocaleString("en-US", { timeZone: timezone, weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} - ${end.toLocaleTimeString("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit" })}`;
+}
+
+async function notifyBookingTeam(input: {
+  location: NonNullable<Awaited<ReturnType<typeof findBookingLocation>>>;
+  jobId: string;
+  jobNumber: number;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  serviceName: string;
+  scheduledStart: Date;
+  scheduledEnd: Date;
+  technician: Awaited<ReturnType<typeof findAvailableTechnician>>;
+}) {
+  const timeZone = input.location.timezone || "America/Phoenix";
+  const windowText = publicBookingWindow(input.scheduledStart, input.scheduledEnd, timeZone);
+  const companyName = input.location.displayName || input.location.organization.name || input.location.name;
+  const subject = `Appointment scheduled: job #${input.jobNumber}`;
+  const body = `Appointment scheduled for ${companyName}.\n\nJob #${input.jobNumber}\nCustomer: ${input.customerName}\nPhone: ${input.customerPhone}\nService: ${input.serviceName}\nTime: ${windowText}${input.technician ? `\nTechnician: ${input.technician.name}` : ""}`;
+  const memberships = await prisma.userMembership.findMany({
+    where: {
+      organizationId: input.location.organizationId,
+      OR: [{ locationId: input.location.id }, { locationId: null }],
+      role: { in: ["OWNER", "ADMIN", "DISPATCHER"] }
+    },
+    include: { user: true }
+  });
+  const adminEmails = [...new Set(memberships.map((membership) => membership.user.email).filter(Boolean))];
+  await Promise.allSettled(adminEmails.map((email) => sendEmail({
+    locationId: input.location.id,
+    customerId: input.customerId,
+    jobId: input.jobId,
+    to: email,
+    subject,
+    body,
+    templateKey: "onlineBookingAdminScheduled"
+  })));
+  if (input.technician?.email) {
+    await sendEmail({
+      locationId: input.location.id,
+      customerId: input.customerId,
+      jobId: input.jobId,
+      to: input.technician.email,
+      subject,
+      body,
+      templateKey: "onlineBookingTechnicianScheduled"
+    }).catch(() => undefined);
+  }
+  if (input.technician?.phone) {
+    await sendLocationSms({
+      locationId: input.location.id,
+      customerId: input.customerId,
+      jobId: input.jobId,
+      to: input.technician.phone,
+      body: `New appointment #${input.jobNumber}: ${input.customerName}, ${input.serviceName}, ${windowText}.`,
+      templateKey: "onlineBookingTechnicianScheduled"
+    }).catch(() => undefined);
+  }
 }
 
 bookingRouter.get("/settings", asyncHandler(async (req, res) => {
@@ -452,7 +548,8 @@ publicBookingRouter.post("/:locationKey", asyncHandler(async (req, res) => {
   }
   const scheduledStart = new Date(input.scheduledStart);
   const scheduledEnd = new Date(input.scheduledEnd);
-  if (!await slotIsBookable(location.id, settings, location.timezone || "America/Phoenix", scheduledStart, scheduledEnd)) {
+  const bookable = await slotIsBookable(location.id, settings, location.timezone || "America/Phoenix", scheduledStart, scheduledEnd);
+  if (!bookable.ok) {
     return res.status(422).json({ error: "That appointment time is no longer available. Please choose another time." });
   }
   const service = input.serviceId
@@ -499,6 +596,7 @@ publicBookingRouter.post("/:locationKey", asyncHandler(async (req, res) => {
       locationId: location.id,
       customerId: customer.id,
       addressId,
+      technicianId: bookable.technician?.id,
       title: input.serviceName,
       jobType: service?.category?.name || input.serviceName,
       leadSource: source,
@@ -528,8 +626,20 @@ publicBookingRouter.post("/:locationKey", asyncHandler(async (req, res) => {
     update: {}
   });
   await sendJobTemplateSms(location.id, job.id, "appointmentScheduled").catch(() => undefined);
+  await notifyBookingTeam({
+    location,
+    jobId: job.id,
+    jobNumber: job.jobNumber,
+    customerId: customer.id,
+    customerName: `${customer.firstName} ${customer.lastName}`.trim(),
+    customerPhone: customer.phone,
+    serviceName: service?.name || input.serviceName,
+    scheduledStart,
+    scheduledEnd,
+    technician: bookable.technician
+  }).catch(() => undefined);
   if (input.email) {
-    const windowText = `${new Date(input.scheduledStart).toLocaleString("en-US", { timeZone: location.timezone || "America/Phoenix", weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} - ${new Date(input.scheduledEnd).toLocaleTimeString("en-US", { timeZone: location.timezone || "America/Phoenix", hour: "numeric", minute: "2-digit" })}`;
+    const windowText = publicBookingWindow(scheduledStart, scheduledEnd, location.timezone || "America/Phoenix");
     await sendEmail({
       locationId: location.id,
       customerId: customer.id,
