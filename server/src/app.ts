@@ -8,7 +8,7 @@ import { env } from "./config/env.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { requireAuth, requireRoles } from "./middleware/auth.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
-import { publicBookingRouter } from "./modules/booking/public-booking.routes.js";
+import { bookingRouter, publicBookingRouter } from "./modules/booking/public-booking.routes.js";
 import { apiKeysRouter } from "./modules/api-keys/api-keys.routes.js";
 import { customersRouter } from "./modules/customers/customers.routes.js";
 import { estimatesRouter } from "./modules/estimates/estimates.routes.js";
@@ -64,6 +64,7 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/public-booking", publicBookingRouter);
+app.use("/api/booking", requireAuth, bookingRouter);
 app.use("/api/integrations/stripe", stripeOAuthRouter);
 app.use("/api/locations", requireAuth, locationsRouter);
 app.use("/api/location-api-keys", requireAuth, apiKeysRouter);

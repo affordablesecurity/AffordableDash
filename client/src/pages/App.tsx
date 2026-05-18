@@ -518,8 +518,19 @@ type PublicBookingPayload = {
     timezone?: string;
     companyColor?: string;
   };
+  settings: OnlineBookingSettings;
   services: BookingService[];
   slots: Array<{ start: string; end: string }>;
+};
+
+type OnlineBookingSettings = {
+  serviceAreaZipCodes: string[];
+  helpHeading: string;
+  servicePrompt: string;
+  slotStartHour: number;
+  slotEndHour: number;
+  slotWindowMinutes: number;
+  slotIntervalMinutes: number;
 };
 
 type PaymentRecord = {
@@ -1726,6 +1737,19 @@ export function App() {
   const [bookingSubmitMessage, setBookingSubmitMessage] = useState("");
   const [bookingAttributeName, setBookingAttributeName] = useState("Affordable Website");
   const [bookingAttributeCode, setBookingAttributeCode] = useState("website");
+  const [bookingSettings, setBookingSettings] = useState<OnlineBookingSettings>({
+    serviceAreaZipCodes: [],
+    helpHeading: "What do you need help with?",
+    servicePrompt: "Please select your service",
+    slotStartHour: 8,
+    slotEndHour: 18,
+    slotWindowMinutes: 120,
+    slotIntervalMinutes: 120
+  });
+  const [bookingServiceNamesDraft, setBookingServiceNamesDraft] = useState("Vehicle lockout\nLock installation\nBuilding lockout");
+  const [bookingSettingsMessage, setBookingSettingsMessage] = useState("");
+  const [bookingCalendarMonth, setBookingCalendarMonth] = useState(() => startOfMonth(new Date()));
+  const [bookingSelectedDate, setBookingSelectedDate] = useState(() => toInputDate(new Date()));
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("week");
   const [scheduleDate, setScheduleDate] = useState(() => new Date());
   const [schedulePicker, setSchedulePicker] = useState<SchedulePickerState>(null);
@@ -2056,6 +2080,9 @@ export function App() {
     api<PublicBookingPayload>(`/api/public-booking/${encodeURIComponent(publicBookingLocationKey)}`, { skipAuth: true })
       .then((payload) => {
         setBookingData(payload);
+        const firstSlotDate = payload.slots[0]?.start ? toInputDate(new Date(payload.slots[0].start)) : toInputDate(new Date());
+        setBookingSelectedDate(firstSlotDate);
+        setBookingCalendarMonth(startOfMonth(new Date(`${firstSlotDate}T00:00:00`)));
         setBookingForm((current) => ({
           ...current,
           zipCode: current.zipCode || payload.location.postalCode || "",
@@ -2067,6 +2094,16 @@ export function App() {
       })
       .catch((err) => setBookingSubmitMessage(err instanceof Error ? err.message : "Booking page could not be loaded."));
   }, [publicBookingLocationKey]);
+  useEffect(() => {
+    if (!token || publicBookingLocationKey || activeView !== "onlineBooking" || !activeLocationId) return;
+    api<{ settings: OnlineBookingSettings; services: Array<{ name: string; onlineBooking: boolean }> }>("/api/booking/settings")
+      .then((payload) => {
+        setBookingSettings(payload.settings);
+        const selectedServices = payload.services.filter((service) => service.onlineBooking).map((service) => service.name);
+        setBookingServiceNamesDraft((selectedServices.length ? selectedServices : ["Vehicle lockout", "Lock installation", "Building lockout"]).join("\n"));
+      })
+      .catch((err) => setBookingSettingsMessage(err instanceof Error ? err.message : "Could not load online booking settings."));
+  }, [activeLocationId, activeView, publicBookingLocationKey, token]);
   useEffect(() => {
     if (!selectedEstimate) return;
     setEstimateDepositDraft({
@@ -5786,6 +5823,42 @@ export function App() {
   }
 
   const selectedBookingService = bookingData?.services.find((service) => service.id === bookingForm.serviceId) ?? bookingData?.services[0];
+  const bookingServiceAreaZips = bookingData?.settings.serviceAreaZipCodes ?? [];
+  const bookingSlotsForSelectedDate = bookingData?.slots.filter((slot) => toInputDate(new Date(slot.start)) === bookingSelectedDate) ?? [];
+
+  async function saveOnlineBookingSettings() {
+    setBookingSettingsMessage("Saving online booking settings...");
+    try {
+      const payload = await api<{ settings: OnlineBookingSettings; services: Array<{ name: string; onlineBooking: boolean }> }>("/api/booking/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          ...bookingSettings,
+          serviceAreaZipCodes: bookingSettings.serviceAreaZipCodes,
+          serviceNames: bookingServiceNamesDraft.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean)
+        })
+      });
+      setBookingSettings(payload.settings);
+      setBookingServiceNamesDraft(payload.services.filter((service) => service.onlineBooking).map((service) => service.name).join("\n"));
+      setBookingSettingsMessage("Online booking settings saved.");
+    } catch (err) {
+      setBookingSettingsMessage(err instanceof Error ? err.message : "Could not save online booking settings.");
+    }
+  }
+
+  function confirmBookingZip() {
+    const zip = bookingForm.zipCode.replace(/\D/g, "").slice(0, 5);
+    if (zip.length !== 5) {
+      setBookingSubmitMessage("Enter a 5-digit ZIP code.");
+      return;
+    }
+    if (bookingServiceAreaZips.length && !bookingServiceAreaZips.includes(zip)) {
+      setBookingSubmitMessage("We do not currently service that ZIP code. Please call us if you need help outside our normal area.");
+      return;
+    }
+    setBookingSubmitMessage("");
+    setBookingForm({ ...bookingForm, zipCode: zip });
+    setBookingStep("service");
+  }
 
   async function submitPublicBooking(event: FormEvent) {
     event.preventDefault();
@@ -5812,7 +5885,11 @@ export function App() {
 
   function renderPublicBookingPage() {
     const color = bookingData?.location.companyColor || "#2647c7";
-    const slotsByDay = bookingData?.slots.slice(0, 10) ?? [];
+    const monthStart = startOfMonth(bookingCalendarMonth);
+    const monthGridStart = startOfWeek(monthStart);
+    const monthDays = Array.from({ length: 42 }, (_item, index) => addDays(monthGridStart, index));
+    const availableDates = new Set((bookingData?.slots ?? []).map((slot) => toInputDate(new Date(slot.start))));
+    const selectedSlotAvailable = bookingSlotsForSelectedDate.some((slot) => slot.start === bookingForm.scheduledStart && slot.end === bookingForm.scheduledEnd);
     return (
       <main className="public-booking-shell" style={{ "--booking-color": color } as CSSProperties}>
         <section className="public-booking-modal">
@@ -5827,17 +5904,19 @@ export function App() {
             </div>
           )}
           {bookingStep === "zip" && (
-            <form className="booking-step centered" onSubmit={(event) => { event.preventDefault(); setBookingStep("service"); }}>
+            <form className="booking-step centered" onSubmit={(event) => { event.preventDefault(); confirmBookingZip(); }}>
               <MapPin size={74} />
               <h2>Where are you?</h2>
               <p>Enter your zip code so we can check if we provide service in your area.</p>
-              <label>Zip Code<input required value={bookingForm.zipCode} onChange={(event) => setBookingForm({ ...bookingForm, zipCode: event.target.value })} /></label>
+              <label>Zip Code<input required inputMode="numeric" maxLength={5} value={bookingForm.zipCode} onChange={(event) => setBookingForm({ ...bookingForm, zipCode: event.target.value.replace(/\D/g, "").slice(0, 5) })} /></label>
+              {bookingSubmitMessage && <p className="booking-error">{bookingSubmitMessage}</p>}
               <button className="primary" type="submit">Confirm</button>
             </form>
           )}
           {bookingStep === "service" && (
             <div className="booking-step">
-              <h2>What do you need help with?</h2>
+              <h2>{bookingData?.settings.helpHeading || "What do you need help with?"}</h2>
+              <p>{bookingData?.settings.servicePrompt || "Please select your service"}</p>
               <div className="booking-service-grid">
                 {(bookingData?.services.length ? bookingData.services : [{ id: "locksmith", name: "Locksmith", description: "Building lockout", price: 0, category: "Locksmith", itemType: "service", taxable: false }]).map((service) => (
                   <button key={service.id} className={bookingForm.serviceId === service.id ? "selected" : ""} type="button" onClick={() => setBookingForm({ ...bookingForm, serviceId: service.id, serviceName: service.name })}>
@@ -5853,14 +5932,46 @@ export function App() {
               <h2>When do you need us?</h2>
               <div className="booking-tabs"><button className="active" type="button">First Available</button><button type="button">All Appointments</button></div>
               <p className="booking-timezone">Time zone: {bookingData?.location.timezone || "America/Phoenix"}</p>
+              <div className="booking-calendar">
+                <header>
+                  <strong>{bookingCalendarMonth.toLocaleDateString([], { month: "long", year: "numeric" })}</strong>
+                  <span>
+                    <button type="button" onClick={() => setBookingCalendarMonth((current) => addMonths(current, -1))}><ChevronLeft size={18} /></button>
+                    <button type="button" onClick={() => setBookingCalendarMonth((current) => addMonths(current, 1))}><ChevronRight size={18} /></button>
+                  </span>
+                </header>
+                <div className="booking-calendar-grid">
+                  {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => <span key={day}>{day}</span>)}
+                  {monthDays.map((day) => {
+                    const inputDate = toInputDate(day);
+                    const hasSlots = availableDates.has(inputDate);
+                    return (
+                      <button
+                        key={inputDate}
+                        type="button"
+                        disabled={!hasSlots}
+                        className={`${day.getMonth() !== bookingCalendarMonth.getMonth() ? "muted" : ""} ${bookingSelectedDate === inputDate ? "selected" : ""}`}
+                        onClick={() => {
+                          const firstSlot = bookingData?.slots.find((slot) => toInputDate(new Date(slot.start)) === inputDate);
+                          setBookingSelectedDate(inputDate);
+                          if (firstSlot) setBookingForm({ ...bookingForm, scheduledStart: firstSlot.start, scheduledEnd: firstSlot.end });
+                        }}
+                      >
+                        {day.getDate()}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <div className="booking-slot-list">
-                {slotsByDay.map((slot) => (
+                {bookingSlotsForSelectedDate.map((slot) => (
                   <button key={slot.start} className={bookingForm.scheduledStart === slot.start ? "selected" : ""} type="button" onClick={() => setBookingForm({ ...bookingForm, scheduledStart: slot.start, scheduledEnd: slot.end })}>
-                    <span /> {formatDateTime(slot.start)} - {new Date(slot.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                    <span /> {new Date(slot.start).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}, {new Date(slot.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} - {new Date(slot.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
                   </button>
                 ))}
+                {!bookingSlotsForSelectedDate.length && <p className="booking-empty">No appointment windows are open for this date. Please choose another day.</p>}
               </div>
-              <div className="booking-footer-actions"><button className="outline-button" type="button" onClick={() => setBookingStep("service")}>Back</button><button className="primary" type="button" onClick={() => setBookingStep("contact")}>Continue Booking</button></div>
+              <div className="booking-footer-actions"><button className="outline-button" type="button" onClick={() => setBookingStep("service")}>Back</button><button className="primary" type="button" disabled={!selectedSlotAvailable} onClick={() => setBookingStep("contact")}>Continue Booking</button></div>
             </div>
           )}
           {bookingStep === "contact" && (
@@ -7045,14 +7156,46 @@ export function App() {
               })()}
             </section>
             <section className="booking-settings-card">
-              <header><div><h2>Pricing & Payments</h2><p>Services marked “Add to Online Booking” in the Pricebook appear on the public booking page.</p></div><button className="outline-button" type="button" onClick={() => setActiveView("pricebook")}>Edit services</button></header>
-              <div className="setting-toggle-row"><span><strong>Show service prices</strong><small>Display price book amounts to customers during booking.</small></span><input type="checkbox" disabled /></div>
-              <div className="setting-toggle-row"><span><strong>No payment required</strong><small>The first version creates the job appointment; deposits can be added next.</small></span><input type="checkbox" checked readOnly /></div>
+              <header><div><h2>Service area and public wording</h2><p>These settings control the first two screens customers see before choosing an appointment.</p></div><button className="primary" type="button" onClick={() => void saveOnlineBookingSettings()}>Save settings</button></header>
+              <div className="booking-settings-grid">
+                <label>
+                  Service ZIP codes
+                  <textarea rows={3} value={bookingSettings.serviceAreaZipCodes.join(", ")} onChange={(event) => setBookingSettings({ ...bookingSettings, serviceAreaZipCodes: event.target.value.split(/[\s,]+/).map((zip) => zip.replace(/\D/g, "").slice(0, 5)).filter(Boolean) })} placeholder="85365, 85364, 85367" />
+                  <small>Customers cannot confirm booking unless their ZIP is listed here.</small>
+                </label>
+                <label>
+                  Help heading
+                  <input value={bookingSettings.helpHeading} onChange={(event) => setBookingSettings({ ...bookingSettings, helpHeading: event.target.value })} />
+                  <small>Example: What do you need help with?</small>
+                </label>
+                <label>
+                  Service prompt
+                  <input value={bookingSettings.servicePrompt} onChange={(event) => setBookingSettings({ ...bookingSettings, servicePrompt: event.target.value })} />
+                  <small>Example: Please select your service</small>
+                </label>
+                <label>
+                  Public services
+                  <textarea rows={6} value={bookingServiceNamesDraft} onChange={(event) => setBookingServiceNamesDraft(event.target.value)} placeholder={"Vehicle lockout\nLock installation\nBuilding lockout"} />
+                  <small>One service per line. Matching pricebook items are reused; new names become online-booking services.</small>
+                </label>
+              </div>
             </section>
             <section className="booking-settings-card">
-              <header><div><h2>Booking Flow</h2><p>Customers enter service area, select a service, choose a time slot, and enter contact details.</p></div></header>
-              <div className="setting-toggle-row"><span><strong>Allow multiple services</strong><small>Coming later. Current flow books one service per appointment.</small></span><input type="checkbox" disabled /></div>
-              <div className="setting-toggle-row"><span><strong>Match existing customers</strong><small>Phone and email are matched to prevent duplicate customer profiles.</small></span><input type="checkbox" checked readOnly /></div>
+              <header><div><h2>Appointment availability</h2><p>Customers choose from open windows that are not already booked on your CRM calendar.</p></div></header>
+              <div className="booking-availability-grid">
+                <label>Start hour<select value={bookingSettings.slotStartHour} onChange={(event) => setBookingSettings({ ...bookingSettings, slotStartHour: Number(event.target.value) })}>{Array.from({ length: 24 }, (_item, hour) => <option key={hour} value={hour}>{formatHour(hour, 0)}</option>)}</select></label>
+                <label>End hour<select value={bookingSettings.slotEndHour} onChange={(event) => setBookingSettings({ ...bookingSettings, slotEndHour: Number(event.target.value) })}>{Array.from({ length: 24 }, (_item, index) => index + 1).map((hour) => <option key={hour} value={hour}>{hour === 24 ? "12:00 AM" : formatHour(hour, 0)}</option>)}</select></label>
+                <label>Appointment window<select value={bookingSettings.slotWindowMinutes} onChange={(event) => setBookingSettings({ ...bookingSettings, slotWindowMinutes: Number(event.target.value) })}><option value={60}>1 hour</option><option value={90}>1.5 hours</option><option value={120}>2 hours</option><option value={180}>3 hours</option></select></label>
+                <label>Offer every<select value={bookingSettings.slotIntervalMinutes} onChange={(event) => setBookingSettings({ ...bookingSettings, slotIntervalMinutes: Number(event.target.value) })}><option value={60}>1 hour</option><option value={120}>2 hours</option><option value={180}>3 hours</option></select></label>
+              </div>
+              <div className="booking-flow-preview">
+                <span><MapPin size={17} /> ZIP check</span>
+                <span><Wrench size={17} /> Service choice</span>
+                <span><CalendarDays size={17} /> Available slot</span>
+                <span><UserPlus size={17} /> Contact details</span>
+                <span><MessageSquareText size={17} /> SMS and email</span>
+              </div>
+              {bookingSettingsMessage && <p className="inline-confirm">{bookingSettingsMessage}</p>}
             </section>
             <section className="booking-settings-card">
               <header><div><h2>Tracking attribute</h2><p>Add a tracking attribute to your booking page so reports can show where jobs came from.</p></div></header>

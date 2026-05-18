@@ -116,8 +116,24 @@ model Location {
   servicePlanTemplates ServicePlanTemplate[]
   priceBookCategories PriceBookCategory[]
   priceBookItems      PriceBookItem[]
+  onlineBookingSettings OnlineBookingSettings?
 
   @@unique([organizationId, slug])
+}
+
+model OnlineBookingSettings {
+  id                  String   @id @default(cuid())
+  locationId          String   @unique
+  serviceAreaZipCodes String[] @default([])
+  helpHeading         String   @default("What do you need help with?")
+  servicePrompt       String   @default("Please select your service")
+  slotStartHour       Int      @default(8)
+  slotEndHour         Int      @default(18)
+  slotWindowMinutes   Int      @default(120)
+  slotIntervalMinutes Int      @default(120)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  location            Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
 }
 
 model LocationApiKey {
