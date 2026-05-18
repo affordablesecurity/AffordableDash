@@ -396,6 +396,49 @@ type Invoice = {
   payments?: PaymentRecord[];
 };
 
+type InvoiceColumnId =
+  | "amountDue"
+  | "attachments"
+  | "billingAddress"
+  | "createdBy"
+  | "createdDate"
+  | "dueDate"
+  | "email"
+  | "employee"
+  | "invoiceAmount"
+  | "invoiceStatus"
+  | "jobNumber"
+  | "lastSentBy"
+  | "latestEmailRecipient"
+  | "latestSendDate"
+  | "latestSendMethod"
+  | "latestSmsRecipient"
+  | "nextReminderDate"
+  | "paymentDate"
+  | "paymentMethod"
+  | "paymentNotes"
+  | "phone"
+  | "serviceAddress"
+  | "serviceAddressCity"
+  | "serviceAddressState"
+  | "serviceAddressStreet"
+  | "serviceAddressZip";
+
+type InvoiceFilters = {
+  createdFrom: string;
+  createdTo: string;
+  dueFrom: string;
+  dueTo: string;
+  sentFrom: string;
+  sentTo: string;
+  paymentFrom: string;
+  paymentTo: string;
+  amountMin: string;
+  amountMax: string;
+  paymentMethod: string;
+  customer: string;
+};
+
 type PaymentRecord = {
   id: string;
   invoiceId: string;
@@ -1144,6 +1187,52 @@ const defaultEstimateColumns: EstimateColumnId[] = [
   "location"
 ];
 
+const invoiceColumnOptions: Array<{ id: InvoiceColumnId; label: string }> = [
+  { id: "amountDue", label: "Amount due" },
+  { id: "attachments", label: "Attachments" },
+  { id: "billingAddress", label: "Billing address" },
+  { id: "createdBy", label: "Created by" },
+  { id: "createdDate", label: "Created date" },
+  { id: "dueDate", label: "Due date" },
+  { id: "email", label: "Email" },
+  { id: "employee", label: "Employee" },
+  { id: "invoiceAmount", label: "Invoice amount" },
+  { id: "invoiceStatus", label: "Invoice status" },
+  { id: "jobNumber", label: "Job #" },
+  { id: "lastSentBy", label: "Last sent by" },
+  { id: "latestEmailRecipient", label: "Latest email recipient" },
+  { id: "latestSendDate", label: "Latest send date" },
+  { id: "latestSendMethod", label: "Latest send method" },
+  { id: "latestSmsRecipient", label: "Latest SMS recipient" },
+  { id: "nextReminderDate", label: "Next reminder date" },
+  { id: "paymentDate", label: "Payment date" },
+  { id: "paymentMethod", label: "Payment method" },
+  { id: "paymentNotes", label: "Payment notes" },
+  { id: "phone", label: "Phone" },
+  { id: "serviceAddress", label: "Service address" },
+  { id: "serviceAddressCity", label: "Service address city" },
+  { id: "serviceAddressState", label: "Service address state" },
+  { id: "serviceAddressStreet", label: "Service address street" },
+  { id: "serviceAddressZip", label: "Service address zip code" }
+];
+
+const defaultInvoiceColumns: InvoiceColumnId[] = ["invoiceStatus", "amountDue", "dueDate", "latestSendDate", "jobNumber"];
+
+const blankInvoiceFilters: InvoiceFilters = {
+  createdFrom: "",
+  createdTo: "",
+  dueFrom: "",
+  dueTo: "",
+  sentFrom: "",
+  sentTo: "",
+  paymentFrom: "",
+  paymentTo: "",
+  amountMin: "",
+  amountMax: "",
+  paymentMethod: "",
+  customer: ""
+};
+
 const blankEstimateFilters: EstimateFilters = {
   createdFrom: "",
   createdTo: "",
@@ -1692,6 +1781,12 @@ export function App() {
   const [estimateFilterPanelOpen, setEstimateFilterPanelOpen] = useState(false);
   const [estimateColumnDialogOpen, setEstimateColumnDialogOpen] = useState(false);
   const [visibleEstimateColumns, setVisibleEstimateColumns] = useState<EstimateColumnId[]>(defaultEstimateColumns);
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<"all" | "DRAFT" | "SENT" | "PAID" | "VOID">("all");
+  const [invoiceFilters, setInvoiceFilters] = useState<InvoiceFilters>(blankInvoiceFilters);
+  const [invoiceFilterPanelOpen, setInvoiceFilterPanelOpen] = useState(false);
+  const [invoiceColumnDialogOpen, setInvoiceColumnDialogOpen] = useState(false);
+  const [visibleInvoiceColumns, setVisibleInvoiceColumns] = useState<InvoiceColumnId[]>(defaultInvoiceColumns);
   const [signatureName, setSignatureName] = useState("");
   const [signatureHasInk, setSignatureHasInk] = useState(false);
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1964,6 +2059,59 @@ export function App() {
       return matchesStatus && matchesOutcome && matchesFilters && matchesQuery;
     });
   }, [estimateFilters, estimateOutcomeFilter, estimateSearch, estimateStatusFilter, estimates]);
+  const invoiceMessages = useMemo(() => {
+    const grouped = new globalThis.Map<string, CrmMessage[]>();
+    messages.forEach((message) => {
+      if (!message.invoiceId) return;
+      grouped.set(message.invoiceId, [...(grouped.get(message.invoiceId) ?? []), message]);
+    });
+    grouped.forEach((items, invoiceId) => {
+      grouped.set(invoiceId, items.sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()));
+    });
+    return grouped;
+  }, [messages]);
+  const filteredInvoices = useMemo(() => {
+    const query = invoiceSearch.trim().toLowerCase();
+    const amountMin = currencyToCents(invoiceFilters.amountMin);
+    const amountMax = currencyToCents(invoiceFilters.amountMax);
+    return invoices.filter((invoice) => {
+      const sends = invoiceMessages.get(invoice.id) ?? [];
+      const latestSend = sends.find((message) => message.direction === "OUTBOUND" && (message.templateKey?.includes("invoice") || message.invoiceId === invoice.id));
+      const latestPayment = (invoice.payments ?? [])
+        .filter((payment) => payment.status === "SUCCEEDED")
+        .sort((left, right) => new Date(right.paidAt ?? right.createdAt).getTime() - new Date(left.paidAt ?? left.createdAt).getTime())[0];
+      const due = invoiceAmountDue(invoice);
+      const matchesStatus = invoiceStatusFilter === "all" || invoice.status === invoiceStatusFilter;
+      const matchesFilters = matchesDateRange(invoice.createdAt, invoiceFilters.createdFrom, invoiceFilters.createdTo)
+        && matchesDateRange(invoice.dueAt, invoiceFilters.dueFrom, invoiceFilters.dueTo)
+        && matchesDateRange(latestSend?.createdAt, invoiceFilters.sentFrom, invoiceFilters.sentTo)
+        && matchesDateRange(latestPayment?.paidAt ?? latestPayment?.createdAt, invoiceFilters.paymentFrom, invoiceFilters.paymentTo)
+        && (!invoiceFilters.amountMin || due >= amountMin)
+        && (!invoiceFilters.amountMax || due <= amountMax)
+        && (!invoiceFilters.paymentMethod || latestPayment?.provider === invoiceFilters.paymentMethod)
+        && (!invoiceFilters.customer || [
+          customerName(invoice.customer),
+          invoice.customer.email ?? "",
+          invoice.customer.phone,
+          invoiceCustomerAddress(invoice.customer),
+          addressLine(invoice.job?.address)
+        ].some((value) => value.toLowerCase().includes(invoiceFilters.customer.toLowerCase())));
+      const matchesQuery = !query || [
+        String(invoice.invoiceNumber),
+        invoice.status,
+        customerName(invoice.customer),
+        invoice.customer.phone,
+        invoice.customer.email ?? "",
+        invoiceCustomerAddress(invoice.customer),
+        addressLine(invoice.job?.address),
+        invoice.job?.jobNumber ? String(invoice.job.jobNumber) : "",
+        invoice.job?.technician?.name ?? "",
+        latestPayment?.provider ?? "",
+        latestPayment?.providerRef ?? ""
+      ].some((value) => value.toLowerCase().includes(query));
+      return matchesStatus && matchesFilters && matchesQuery;
+    });
+  }, [invoiceFilters, invoiceMessages, invoiceSearch, invoiceStatusFilter, invoices]);
   const filteredCustomers = useMemo(() => {
     const query = customerSearch.trim().toLowerCase();
     if (!query) return customers;
@@ -5241,9 +5389,92 @@ export function App() {
   const estimateFilterCount = Object.values(estimateFilters).filter(Boolean).length
     + (estimateOutcomeFilter === "all" ? 0 : 1)
     + (estimateStatusFilter === "all" ? 0 : 1);
+  const invoiceFilterCount = Object.values(invoiceFilters).filter(Boolean).length
+    + (invoiceStatusFilter === "all" ? 0 : 1);
 
   function updateEstimateFilter<K extends keyof EstimateFilters>(key: K, value: EstimateFilters[K]) {
     setEstimateFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateInvoiceFilter<K extends keyof InvoiceFilters>(key: K, value: InvoiceFilters[K]) {
+    setInvoiceFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function invoiceLatestSend(invoice: Invoice) {
+    return (invoiceMessages.get(invoice.id) ?? []).find((message: CrmMessage) => message.direction === "OUTBOUND");
+  }
+
+  function invoiceLatestPayment(invoice: Invoice) {
+    return (invoice.payments ?? [])
+      .filter((payment) => payment.status === "SUCCEEDED")
+      .sort((left, right) => new Date(right.paidAt ?? right.createdAt).getTime() - new Date(left.paidAt ?? left.createdAt).getTime())[0];
+  }
+
+  function invoiceStatusChip(invoice: Invoice) {
+    const status = invoice.status === "DRAFT" ? "OPEN" : invoice.status;
+    return <span className={`status-pill invoice-status-${status.toLowerCase()}`}>{statusLabel(status)}</span>;
+  }
+
+  function renderInvoiceColumn(invoice: Invoice, columnId: InvoiceColumnId) {
+    const latestSend = invoiceLatestSend(invoice);
+    const latestPayment = invoiceLatestPayment(invoice);
+    const serviceAddress = invoice.job?.address ?? invoice.customer.addresses?.[0];
+    switch (columnId) {
+      case "amountDue":
+        return money.format(invoiceAmountDue(invoice) / 100);
+      case "attachments":
+        return "0";
+      case "billingAddress":
+        return invoiceCustomerAddress(invoice.customer) || "--";
+      case "createdBy":
+        return "CRM";
+      case "createdDate":
+        return formatDateTime(invoice.createdAt);
+      case "dueDate":
+        return invoice.dueAt ? formatDateTime(invoice.dueAt) : "--";
+      case "email":
+        return invoice.customer.email || "--";
+      case "employee":
+        return invoice.job?.technician?.name || "--";
+      case "invoiceAmount":
+        return money.format(invoice.total / 100);
+      case "invoiceStatus":
+        return invoiceStatusChip(invoice);
+      case "jobNumber":
+        return invoice.job?.jobNumber ? `#${invoice.job.jobNumber}` : "--";
+      case "lastSentBy":
+        return latestSend ? "CRM" : "--";
+      case "latestEmailRecipient":
+        return latestSend?.channel === "email" ? latestSend.toNumber : "--";
+      case "latestSendDate":
+        return latestSend ? formatDateTime(latestSend.createdAt) : <button className="table-link" type="button" onClick={() => openInvoiceSendDialog(invoice)}><Send size={14} /> Send invoice</button>;
+      case "latestSendMethod":
+        return latestSend?.channel ? statusLabel(latestSend.channel) : "--";
+      case "latestSmsRecipient":
+        return latestSend?.channel === "sms" ? latestSend.toNumber : "--";
+      case "nextReminderDate":
+        return invoice.status === "PAID" ? "--" : "Not scheduled";
+      case "paymentDate":
+        return latestPayment ? formatDateTime(latestPayment.paidAt ?? latestPayment.createdAt) : "--";
+      case "paymentMethod":
+        return latestPayment ? statusLabel(latestPayment.provider) : "--";
+      case "paymentNotes":
+        return latestPayment?.providerRef || "--";
+      case "phone":
+        return invoice.customer.phone || "--";
+      case "serviceAddress":
+        return addressLine(serviceAddress) || "--";
+      case "serviceAddressCity":
+        return serviceAddress?.city || "--";
+      case "serviceAddressState":
+        return serviceAddress?.state || "--";
+      case "serviceAddressStreet":
+        return [serviceAddress?.street1, serviceAddress?.street2].filter(Boolean).join(" ") || "--";
+      case "serviceAddressZip":
+        return serviceAddress?.postalCode || "--";
+      default:
+        return "--";
+    }
   }
 
   function renderEstimateColumn(estimate: Estimate, columnId: EstimateColumnId) {
@@ -9892,50 +10123,152 @@ export function App() {
 
         {activeView === "invoices" && (
           selectedInvoice ? renderInvoiceSendPage(selectedInvoice) : (
-            <div className="content-grid">
-              <section className="panel">
-                  <div className="panel-header"><h2>Create Invoice</h2><CreditCard size={18} /></div>
-                  <form className="record-form" onSubmit={createInvoice}>
-                    <select value={invoiceForm.customerId} onChange={(event) => setInvoiceForm({ ...invoiceForm, customerId: event.target.value })} required>
-                      <option value="">Select customer</option>
-                      {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.firstName} {customer.lastName}</option>)}
-                    </select>
-                    <select value={invoiceForm.jobId} onChange={(event) => setInvoiceForm({ ...invoiceForm, jobId: event.target.value })}>
-                      <option value="">No job attached</option>
-                      {jobs.filter((job) => !invoiceForm.customerId || job.customer.id === invoiceForm.customerId).map((job) => <option key={job.id} value={job.id}>#{job.jobNumber} {job.title}</option>)}
-                    </select>
-                    <input placeholder="Line item" value={invoiceForm.itemName} onChange={(event) => setInvoiceForm({ ...invoiceForm, itemName: event.target.value })} required />
-                    <input placeholder="Quantity" value={invoiceForm.quantity} onChange={(event) => setInvoiceForm({ ...invoiceForm, quantity: event.target.value })} required />
-                    <input placeholder="Unit price, dollars" value={invoiceForm.unitPrice} onChange={(event) => setInvoiceForm({ ...invoiceForm, unitPrice: event.target.value })} required />
-                    <input placeholder="Tax, dollars" value={invoiceForm.tax} onChange={(event) => setInvoiceForm({ ...invoiceForm, tax: event.target.value })} />
-                    <button className="primary" type="submit">Create invoice</button>
-                  </form>
-              </section>
-              <section className="panel wide">
-                <div className="panel-header"><h2>Invoices</h2><CreditCard size={18} /></div>
-                <div className="table-list">
-                  {invoices.map((invoice) => (
-                    <article key={invoice.id} className="clickable-row" onClick={() => setSelectedInvoiceId(invoice.id)}>
-                      <div>
-                        <strong>Invoice #{invoice.invoiceNumber}</strong>
-                        <span>{invoice.customer.firstName} {invoice.customer.lastName} / {money.format(invoice.total / 100)} / {invoice.status}</span>
-                      </div>
-                      <button
-                        className="icon-button danger"
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          deleteInvoice(invoice);
-                        }}
-                        aria-label={`Delete invoice ${invoice.invoiceNumber}`}
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </article>
-                  ))}
-                  {invoices.length === 0 && <p className="empty">No invoices yet.</p>}
+            <div className="estimate-index-panel invoice-index-panel">
+              <div className="estimate-index-header">
+                <div>
+                  <h2>Invoices</h2>
+                  <span>{filteredInvoices.length} of {invoices.length} records</span>
                 </div>
-              </section>
+                <div className="estimate-index-actions">
+                  <button className="outline-button" type="button"><MoreHorizontal size={16} /> Actions</button>
+                  <button className="primary" type="button" onClick={() => setInvoiceColumnDialogOpen(true)}><Settings size={17} /> Columns</button>
+                </div>
+              </div>
+              <div className="info-banner invoice-info-banner">
+                Use this list view to filter, sort, and track your invoices, using quick views such as Past due to find invoices requiring action.
+              </div>
+              <details className="invoice-create-details">
+                <summary><Plus size={16} /> Create invoice</summary>
+                <form className="record-form invoice-create-form" onSubmit={createInvoice}>
+                  <select value={invoiceForm.customerId} onChange={(event) => setInvoiceForm({ ...invoiceForm, customerId: event.target.value })} required>
+                    <option value="">Select customer</option>
+                    {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.firstName} {customer.lastName}</option>)}
+                  </select>
+                  <select value={invoiceForm.jobId} onChange={(event) => setInvoiceForm({ ...invoiceForm, jobId: event.target.value })}>
+                    <option value="">No job attached</option>
+                    {jobs.filter((job) => !invoiceForm.customerId || job.customer.id === invoiceForm.customerId).map((job) => <option key={job.id} value={job.id}>#{job.jobNumber} {job.title}</option>)}
+                  </select>
+                  <input placeholder="Line item" value={invoiceForm.itemName} onChange={(event) => setInvoiceForm({ ...invoiceForm, itemName: event.target.value })} required />
+                  <input placeholder="Quantity" value={invoiceForm.quantity} onChange={(event) => setInvoiceForm({ ...invoiceForm, quantity: event.target.value })} required />
+                  <input placeholder="Unit price, dollars" value={invoiceForm.unitPrice} onChange={(event) => setInvoiceForm({ ...invoiceForm, unitPrice: event.target.value })} required />
+                  <input placeholder="Tax, dollars" value={invoiceForm.tax} onChange={(event) => setInvoiceForm({ ...invoiceForm, tax: event.target.value })} />
+                  <button className="primary" type="submit">Create invoice</button>
+                </form>
+              </details>
+              <div className="estimate-management-toolbar">
+                <div className="search-box table-search"><Search size={18} /><input placeholder="Search invoices" value={invoiceSearch} onChange={(event) => setInvoiceSearch(event.target.value)} /></div>
+                <button className="outline-button" type="button" onClick={() => setInvoiceFilterPanelOpen(true)}><Settings size={16} /> Filters{invoiceFilterCount ? ` (${invoiceFilterCount})` : ""}</button>
+                <button className="outline-button" type="button" onClick={() => setInvoiceColumnDialogOpen(true)}><ListChecks size={16} /> Columns</button>
+              </div>
+              <div className="estimate-outcome-tabs">
+                {[
+                  ["all", "All"],
+                  ["DRAFT", "Unsent"],
+                  ["SENT", "Due"],
+                  ["PAID", "Paid"]
+                ].map(([value, label]) => (
+                  <button key={value} className={invoiceStatusFilter === value ? "active" : ""} type="button" onClick={() => setInvoiceStatusFilter(value as typeof invoiceStatusFilter)}>{label}</button>
+                ))}
+              </div>
+              <div className="estimate-status-chips">
+                <button className={invoiceStatusFilter === "all" ? "selected" : ""} type="button" onClick={() => setInvoiceStatusFilter("all")}>All statuses</button>
+                {(["DRAFT", "SENT", "PAID", "VOID"] as const).map((status) => (
+                  <button className={invoiceStatusFilter === status ? "selected" : ""} key={status} type="button" onClick={() => setInvoiceStatusFilter(status)}>{statusLabel(status === "DRAFT" ? "OPEN" : status)}</button>
+                ))}
+              </div>
+              {invoiceActionMessage && <p className="inline-confirm">{invoiceActionMessage}</p>}
+              <div className="estimate-table-wrap invoice-table-wrap">
+                <table className="estimate-management-table invoice-management-table">
+                  <thead>
+                    <tr>
+                      <th><input type="checkbox" aria-label="Select all invoices" /></th>
+                      <th>Invoice #</th>
+                      <th>Customer name</th>
+                      {visibleInvoiceColumns.map((columnId) => <th key={columnId}>{invoiceColumnOptions.find((column) => column.id === columnId)?.label}</th>)}
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredInvoices.map((invoice) => (
+                      <tr key={invoice.id}>
+                        <td><input type="checkbox" aria-label={`Select invoice ${invoice.invoiceNumber}`} /></td>
+                        <td><button className="table-link" type="button" onClick={() => setSelectedInvoiceId(invoice.id)}>{invoice.invoiceNumber}</button></td>
+                        <td><button className="table-link" type="button" onClick={() => setSelectedInvoiceId(invoice.id)}>{customerName(invoice.customer)}</button></td>
+                        {visibleInvoiceColumns.map((columnId) => <td key={columnId}>{renderInvoiceColumn(invoice, columnId)}</td>)}
+                        <td>
+                          <div className="table-action-row">
+                            <button className="table-link" type="button" disabled={invoice.status === "PAID"} onClick={() => openInvoicePayment(invoice)}><CreditCard size={14} /> Pay</button>
+                            <button className="icon-button danger" type="button" onClick={() => void deleteInvoice(invoice)} aria-label={`Delete invoice ${invoice.invoiceNumber}`}><Trash2 size={16} /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredInvoices.length === 0 && <tr><td colSpan={visibleInvoiceColumns.length + 4}><p className="empty table-empty">No invoices match this search.</p></td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              {invoiceColumnDialogOpen && (
+                <div className="modal-backdrop" role="presentation" onClick={() => setInvoiceColumnDialogOpen(false)}>
+                  <div className="estimate-column-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                    <h2>Select columns to view</h2>
+                    <div className="estimate-column-grid">
+                      {invoiceColumnOptions.map((column) => (
+                        <label key={column.id} className="check-row">
+                          <input
+                            type="checkbox"
+                            checked={visibleInvoiceColumns.includes(column.id)}
+                            onChange={(event) => setVisibleInvoiceColumns((current) => event.target.checked ? [...current, column.id] : current.filter((id) => id !== column.id))}
+                          />
+                          {column.label}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="modal-actions">
+                      <button className="text-button" type="button" onClick={() => setVisibleInvoiceColumns([])}>Deselect all</button>
+                      <button className="primary" type="button" onClick={() => setInvoiceColumnDialogOpen(false)}>Done</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {invoiceFilterPanelOpen && (
+                <div className="modal-backdrop estimate-filter-backdrop" role="presentation" onClick={() => setInvoiceFilterPanelOpen(false)}>
+                  <aside className="estimate-filter-panel" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                    <header><button className="icon-button" type="button" onClick={() => setInvoiceFilterPanelOpen(false)}><X size={18} /></button><h2>Filters</h2></header>
+                    <label>Invoice status
+                      <select value={invoiceStatusFilter} onChange={(event) => setInvoiceStatusFilter(event.target.value as typeof invoiceStatusFilter)}>
+                        <option value="all">Select</option><option value="DRAFT">Open</option><option value="SENT">Pending</option><option value="PAID">Paid</option><option value="VOID">Void</option>
+                      </select>
+                    </label>
+                    <label>Invoice created date
+                      <div className="two-column-inputs"><input type="date" value={invoiceFilters.createdFrom} onChange={(event) => updateInvoiceFilter("createdFrom", event.target.value)} /><input type="date" value={invoiceFilters.createdTo} onChange={(event) => updateInvoiceFilter("createdTo", event.target.value)} /></div>
+                    </label>
+                    <label>Invoice due date
+                      <div className="two-column-inputs"><input type="date" value={invoiceFilters.dueFrom} onChange={(event) => updateInvoiceFilter("dueFrom", event.target.value)} /><input type="date" value={invoiceFilters.dueTo} onChange={(event) => updateInvoiceFilter("dueTo", event.target.value)} /></div>
+                    </label>
+                    <label>Latest send date
+                      <div className="two-column-inputs"><input type="date" value={invoiceFilters.sentFrom} onChange={(event) => updateInvoiceFilter("sentFrom", event.target.value)} /><input type="date" value={invoiceFilters.sentTo} onChange={(event) => updateInvoiceFilter("sentTo", event.target.value)} /></div>
+                    </label>
+                    <label>Invoice amount
+                      <div className="two-column-inputs"><input placeholder="Min" value={invoiceFilters.amountMin} onChange={(event) => updateInvoiceFilter("amountMin", event.target.value)} /><input placeholder="Max" value={invoiceFilters.amountMax} onChange={(event) => updateInvoiceFilter("amountMax", event.target.value)} /></div>
+                    </label>
+                    <label>Payment date
+                      <div className="two-column-inputs"><input type="date" value={invoiceFilters.paymentFrom} onChange={(event) => updateInvoiceFilter("paymentFrom", event.target.value)} /><input type="date" value={invoiceFilters.paymentTo} onChange={(event) => updateInvoiceFilter("paymentTo", event.target.value)} /></div>
+                    </label>
+                    <label>Payment method
+                      <select value={invoiceFilters.paymentMethod} onChange={(event) => updateInvoiceFilter("paymentMethod", event.target.value)}>
+                        <option value="">Select</option><option value="stripe">Stripe</option><option value="cash">Cash</option><option value="check">Check</option><option value="other">Other</option>
+                      </select>
+                    </label>
+                    <label>Customer
+                      <input placeholder="Customer name, email, phone, or address" value={invoiceFilters.customer} onChange={(event) => updateInvoiceFilter("customer", event.target.value)} />
+                    </label>
+                    <div className="modal-actions">
+                      <button className="text-button" type="button" onClick={() => { setInvoiceFilters(blankInvoiceFilters); setInvoiceStatusFilter("all"); }}>Clear filters</button>
+                      <button className="primary" type="button" onClick={() => setInvoiceFilterPanelOpen(false)}>Apply</button>
+                    </div>
+                  </aside>
+                </div>
+              )}
             </div>
           )
         )}
