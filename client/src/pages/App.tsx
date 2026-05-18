@@ -5206,59 +5206,31 @@ export function App() {
     const companyWebsite = activeLocationAccess?.location.website || "https://www.affordablesecurity1.com";
     const companyAddress = [activeLocationAccess?.location.street1, activeLocationAccess?.location.city, activeLocationAccess?.location.state, activeLocationAccess?.location.postalCode].filter(Boolean).join(", ");
     const customerAddress = invoiceCustomerAddress(invoice.customer) || (invoice.job?.address ? [invoice.job.address.street1, invoice.job.address.city, invoice.job.address.state, invoice.job.address.postalCode].filter(Boolean).join(", ") : "");
+    const serviceAddress = invoice.job?.address ? [invoice.job.address.street1, invoice.job.address.street2, invoice.job.address.city, invoice.job.address.state, invoice.job.address.postalCode].filter(Boolean).join(", ") : customerAddress;
     const serviceDate = invoice.job?.scheduledStart ?? invoice.createdAt;
     const invoiceMessage = invoiceSettings.invoiceMessage || activeLocationAccess?.location.termsOfService || "Thank you for choosing Affordable Security Locksmith and Alarm. We stand behind our work with a 6-month warranty. If you experience any issues related to the service provided, please contact us for assistance. Your satisfaction is our priority!";
+    const amountDue = invoiceAmountDue(invoice);
+    const paidPayments = (invoice.payments ?? []).filter((payment) => payment.status === "SUCCEEDED");
 
     return (
       <div className="invoice-send-page">
         <header className="invoice-send-topbar">
-          <button className="icon-button" type="button" onClick={() => setSelectedInvoiceId("")} aria-label="Close invoice"><X size={22} /></button>
-          <h1>Send invoice</h1>
+          <button className="icon-button" type="button" onClick={() => setSelectedInvoiceId("")} aria-label="Back to invoices"><ChevronLeft size={24} /></button>
+          <div className="invoice-title-block">
+            <h1>Invoice #{invoice.invoiceNumber}</h1>
+            {invoice.job && (
+              <button className="table-link" type="button" onClick={() => { setSelectedInvoiceId(""); setActiveView("jobs"); setSelectedJobId(invoice.job?.id ?? ""); }}>
+                Job #{invoice.job.jobNumber}
+              </button>
+            )}
+          </div>
           <div className="invoice-top-actions">
-            <button className="icon-button danger" type="button" onClick={() => deleteInvoice(invoice)} aria-label="Delete invoice"><Trash2 size={20} /></button>
             <button className="icon-button" type="button" onClick={() => window.print()} aria-label="Print invoice"><Printer size={20} /></button>
             <button className="icon-button" type="button" onClick={() => setError("PDF download is not connected yet. Use Print for now, or connect PDF generation before using downloads.")} aria-label="Download invoice"><Download size={20} /></button>
             <button className="primary" type="button" onClick={() => openInvoiceSendDialog(invoice)}>Send</button>
           </div>
         </header>
         <div className="invoice-send-body">
-          <aside className="invoice-settings-rail">
-            <section>
-              <div className="panel-header"><h2>Details</h2><Pencil size={18} /></div>
-              <dl className="invoice-detail-list">
-                <dt>Invoice #</dt><dd>{invoice.invoiceNumber}</dd>
-                <dt>Invoice date</dt><dd>{formatDate(invoice.createdAt)}</dd>
-                <dt>Invoice due</dt><dd>{invoiceSettings.defaultTermsType === "uponReceipt" ? "Upon receipt" : `Net ${invoiceSettings.defaultTermsDays}`}</dd>
-                <dt>Amount due</dt><dd className="amount">{money.format(invoice.total / 100)}</dd>
-              </dl>
-            </section>
-            {invoiceSettings.includeImages && (
-              <section>
-                <div className="panel-header"><h2>Attachments</h2><Pencil size={18} /></div>
-                <p className="muted">invoice-{invoice.invoiceNumber}.pdf</p>
-              </section>
-            )}
-            {invoiceSettings.showSummaryOfWork && (
-              <section>
-                <div className="panel-header"><h2>Invoice message</h2><Pencil size={18} /></div>
-                <p>{invoiceMessage}</p>
-              </section>
-            )}
-            <section>
-              <h2>Payment options</h2>
-              <label><input type="checkbox" checked={invoiceSettings.acceptCreditCard} readOnly /> Accept credit card</label>
-              <label><input type="checkbox" checked={invoiceSettings.saveCardOnFile} readOnly /> Customer can save card on file</label>
-              <label><input type="checkbox" checked={invoiceSettings.acceptAch} readOnly /> Accept ACH</label>
-            </section>
-            <section>
-              <h2>Job and invoice</h2>
-              <label><input type="checkbox" checked={invoiceSettings.showJobNumber} readOnly /> Job number</label>
-              <label><input type="checkbox" checked={invoiceSettings.showInvoiceNumber} readOnly /> Invoice number</label>
-              <label><input type="checkbox" checked={invoiceSettings.showServiceDate} readOnly /> Service date</label>
-              <label><input type="checkbox" checked={invoiceSettings.showInvoiceDate} readOnly /> Invoice date</label>
-              <label><input type="checkbox" checked={invoiceSettings.showSummaryOfWork} readOnly /> Summary of work</label>
-            </section>
-          </aside>
           <section className="invoice-preview-paper">
             <div className="invoice-preview-head">
               <div>
@@ -5271,7 +5243,7 @@ export function App() {
                 {invoiceSettings.showServiceDate && <><dt>Service date</dt><dd>{formatDate(serviceDate)}</dd></>}
                 {invoiceSettings.showInvoiceDate && <><dt>Invoice date</dt><dd>{formatDate(invoice.createdAt)}</dd></>}
                 <dt>Payment terms</dt><dd>{invoiceSettings.defaultTermsType === "uponReceipt" ? "Upon receipt" : `Net ${invoiceSettings.defaultTermsDays}`}</dd>
-                <dt>Amount due</dt><dd>{money.format(invoice.total / 100)}</dd>
+                <dt>Amount due</dt><dd>{money.format(amountDue / 100)}</dd>
               </dl>
             </div>
             <div className="invoice-parties">
@@ -5282,6 +5254,7 @@ export function App() {
                 <span>{invoice.customer.phone}</span>
               </div>
               <div>
+                {serviceAddress && <><strong className="invoice-side-label">Service address</strong><span>{serviceAddress}</span></>}
                 <strong>Contact us</strong>
                 <span>{companyAddress}</span>
                 <span>{companyPhone}</span>
@@ -5322,8 +5295,21 @@ export function App() {
               <span>Subtotal</span><strong>{money.format(subtotal / 100)}</strong>
               <span>Total tax</span><strong>{money.format(tax / 100)}</strong>
               <span>Job total</span><strong>{money.format(invoice.total / 100)}</strong>
-              <span>Amount due</span><strong>{money.format(invoice.total / 100)}</strong>
+              <span>Amount due</span><strong>{money.format(amountDue / 100)}</strong>
             </div>
+            {paidPayments.length > 0 && (
+              <section className="invoice-payment-history">
+                <h3>Payment History</h3>
+                {paidPayments.map((payment) => (
+                  <div key={payment.id}>
+                    <span>{formatDate(payment.paidAt ?? payment.createdAt)}</span>
+                    <span>{new Date(payment.paidAt ?? payment.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                    <span>{statusLabel(payment.provider)}</span>
+                    <strong>{money.format(payment.amount / 100)}</strong>
+                  </div>
+                ))}
+              </section>
+            )}
             <footer>
               {invoiceSettings.showSummaryOfWork && <p>{invoiceMessage}</p>}
               <div><span>{companyName}</span><span>{companyWebsite}</span></div>
