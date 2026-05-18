@@ -1152,6 +1152,16 @@ type PlaceAddress = {
   longitude?: number;
 };
 
+const timezoneOptions = [
+  "America/Phoenix",
+  "America/Los_Angeles",
+  "America/Denver",
+  "America/Chicago",
+  "America/New_York",
+  "America/Anchorage",
+  "Pacific/Honolulu"
+];
+
 function placeToAddressPatch(place: PlaceAddress) {
   return {
     street1: place.street1,
@@ -3491,6 +3501,16 @@ export function App() {
       : employee.locationAccess?.length
         ? employee.locationAccess.map((location) => locationDisplayName(location)).join(", ")
         : employee.userId ? "Current location" : "Roster only";
+  }
+
+  function locationFieldsFromPlace(place: PlaceAddress) {
+    return {
+      street1: place.street1,
+      street2: place.street2 ?? "",
+      city: place.city,
+      state: place.state,
+      postalCode: place.postalCode
+    };
   }
 
   function addStaffToLocation(locationId: string, type: EmployeeModalType = "employee") {
@@ -10020,10 +10040,17 @@ export function App() {
                   <input value={locationCreateForm.slug} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, slug: event.target.value })} placeholder="san-diego" />
                 </label>
                 <label>Company Phone
-                  <input value={locationCreateForm.phone} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, phone: event.target.value })} />
+                  <input value={locationCreateForm.phone} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, phone: formatPhoneInput(event.target.value) })} placeholder="928-580-2775" />
                 </label>
                 <label>Street Address
-                  <input value={locationCreateForm.street1} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, street1: event.target.value })} required />
+                  {renderAddressAutocomplete({
+                    lookupKey: "location-create",
+                    value: locationCreateForm.street1,
+                    placeholder: "Start typing the service address",
+                    required: true,
+                    onChange: (value) => setLocationCreateForm({ ...locationCreateForm, street1: value }),
+                    onSelect: (place) => setLocationCreateForm((current) => ({ ...current, ...locationFieldsFromPlace(place) }))
+                  })}
                 </label>
                 <label>Unit / Suite
                   <input value={locationCreateForm.street2} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, street2: event.target.value })} />
@@ -10038,9 +10065,12 @@ export function App() {
                   <input value={locationCreateForm.postalCode} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, postalCode: event.target.value })} required />
                 </label>
                 <label>Timezone
-                  <input value={locationCreateForm.timezone} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, timezone: event.target.value })} required />
+                  <input list="timezone-options" value={locationCreateForm.timezone} onChange={(event) => setLocationCreateForm({ ...locationCreateForm, timezone: event.target.value })} placeholder="America/Los_Angeles" required />
                 </label>
               </div>
+              <datalist id="timezone-options">
+                {timezoneOptions.map((timezone) => <option key={timezone} value={timezone} />)}
+              </datalist>
               <div className="modal-actions">
                 <button className="outline-button" type="button" onClick={() => setLocationCreateOpen(false)}>Cancel</button>
                 <button className="primary" type="submit">Create location</button>
@@ -10177,7 +10207,7 @@ export function App() {
                   <input type="password" value={employeeForm.password} onChange={(event) => setEmployeeForm({ ...employeeForm, password: event.target.value })} placeholder={employeeEditingId ? "Leave blank to keep password" : "8+ chars to create login"} required={employeeModal === "owner" && !employeeEditingId} />
                 </label>
                 <label>Phone Number
-                  <input value={employeeForm.phone} onChange={(event) => setEmployeeForm({ ...employeeForm, phone: event.target.value })} required />
+                  <input value={employeeForm.phone} onChange={(event) => setEmployeeForm({ ...employeeForm, phone: formatPhoneInput(event.target.value) })} placeholder="928-580-2775" required />
                 </label>
                 <label>Type
                   <select value={employeeModal === "owner" && !employeeEditingId ? "employee" : employeeForm.employmentType} disabled={employeeModal === "owner" && !employeeEditingId} onChange={(event) => setEmployeeForm({ ...employeeForm, employmentType: event.target.value as "employee" | "subcontractor" })}>
@@ -10289,10 +10319,27 @@ export function App() {
                       <input value={employeeForm.locationSlug} onChange={(event) => setEmployeeForm({ ...employeeForm, locationSlug: event.target.value })} placeholder="san-diego" />
                     </label>
                     <label>Company Phone
-                      <input value={employeeForm.locationPhone} onChange={(event) => setEmployeeForm({ ...employeeForm, locationPhone: event.target.value })} />
+                      <input value={employeeForm.locationPhone} onChange={(event) => setEmployeeForm({ ...employeeForm, locationPhone: formatPhoneInput(event.target.value) })} placeholder="928-580-2775" />
                     </label>
                     <label>Street Address
-                      <input value={employeeForm.locationStreet1} onChange={(event) => setEmployeeForm({ ...employeeForm, locationStreet1: event.target.value })} required />
+                      {renderAddressAutocomplete({
+                        lookupKey: "owner-location-create",
+                        value: employeeForm.locationStreet1,
+                        placeholder: "Start typing the service address",
+                        required: true,
+                        onChange: (value) => setEmployeeForm({ ...employeeForm, locationStreet1: value }),
+                        onSelect: (place) => {
+                          const fields = locationFieldsFromPlace(place);
+                          setEmployeeForm((current) => ({
+                            ...current,
+                            locationStreet1: fields.street1,
+                            locationStreet2: fields.street2,
+                            locationCity: fields.city,
+                            locationState: fields.state,
+                            locationPostalCode: fields.postalCode
+                          }));
+                        }
+                      })}
                     </label>
                     <label>Unit / Suite
                       <input value={employeeForm.locationStreet2} onChange={(event) => setEmployeeForm({ ...employeeForm, locationStreet2: event.target.value })} />
@@ -10305,6 +10352,9 @@ export function App() {
                     </label>
                     <label>ZIP
                       <input value={employeeForm.locationPostalCode} onChange={(event) => setEmployeeForm({ ...employeeForm, locationPostalCode: event.target.value })} required />
+                    </label>
+                    <label>Timezone
+                      <input list="timezone-options" value={employeeForm.locationTimezone} onChange={(event) => setEmployeeForm({ ...employeeForm, locationTimezone: event.target.value })} placeholder="America/Los_Angeles" required />
                     </label>
                   </div>
                 </>
@@ -11014,7 +11064,7 @@ export function App() {
                         <input value={companySettingsForm.companyName} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, companyName: event.target.value })} required />
                       </label>
                       <label>Phone Number
-                        <input value={companySettingsForm.phone} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, phone: event.target.value })} />
+                        <input value={companySettingsForm.phone} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, phone: formatPhoneInput(event.target.value) })} placeholder="928-580-2775" />
                       </label>
                       <label>Company Website
                         <input value={companySettingsForm.website} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, website: event.target.value })} />
@@ -11028,13 +11078,7 @@ export function App() {
                         </select>
                       </label>
                       <label className="span-2">Time Zone
-                        <select value={companySettingsForm.timezone} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, timezone: event.target.value })}>
-                          <option value="America/Phoenix">(UTC-7) America/Phoenix</option>
-                          <option value="America/Los_Angeles">(UTC-8) America/Los Angeles</option>
-                          <option value="America/Denver">(UTC-7) America/Denver</option>
-                          <option value="America/Chicago">(UTC-6) America/Chicago</option>
-                          <option value="America/New_York">(UTC-5) America/New York</option>
-                        </select>
+                        <input list="timezone-options" value={companySettingsForm.timezone} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, timezone: event.target.value })} placeholder="America/Los_Angeles" />
                       </label>
                       <label className="span-2">Company Description
                         <textarea value={companySettingsForm.description} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, description: event.target.value })} placeholder="Professional locksmith services..." />
@@ -11057,7 +11101,13 @@ export function App() {
                       <span>Map preview placeholder</span>
                     </div>
                     <label>Street Address
-                      <input value={companySettingsForm.street1} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, street1: event.target.value })} />
+                      {renderAddressAutocomplete({
+                        lookupKey: "company-settings-address",
+                        value: companySettingsForm.street1,
+                        placeholder: "Start typing the company address",
+                        onChange: (value) => setCompanySettingsForm({ ...companySettingsForm, street1: value }),
+                        onSelect: (place) => setCompanySettingsForm((current) => ({ ...current, ...locationFieldsFromPlace(place) }))
+                      })}
                     </label>
                     <label>Unit #
                       <input value={companySettingsForm.street2} onChange={(event) => setCompanySettingsForm({ ...companySettingsForm, street2: event.target.value })} />
