@@ -1618,7 +1618,7 @@ export function App() {
     scheduledEnd: "",
     description: "",
     internalNotes: "",
-    leadSource: "Unknown",
+    leadSource: "",
     tags: "",
     depositType: "NONE" as "NONE" | "PERCENT" | "FIXED",
     depositPercent: "50",
@@ -2732,7 +2732,25 @@ export function App() {
     const cleanName = name.trim();
     if (!cleanName) return;
     setJobForm((current) => ({ ...current, leadSource: cleanName }));
+    setLeadSourceFocused(false);
     await saveJobOption("leadSource", cleanName);
+  }
+
+  function openCreateEstimate(customer?: Customer) {
+    setSelectedEstimateId("");
+    setEstimatePageMode("create");
+    setLeadSourceFocused(false);
+    setJobForm((current) => ({
+      ...current,
+      customerId: customer?.id ?? current.customerId,
+      addressId: customer?.addresses?.[0]?.id ?? current.addressId,
+      leadSource: ""
+    }));
+    if (customer) {
+      setCreateClientInline(false);
+      setJobClientSearch(`${customer.firstName} ${customer.lastName} / ${customer.phone}`);
+      setJobAddressSearch(customer.addresses?.[0] ? addressLine(customer.addresses[0]) : "");
+    }
   }
 
   function selectJobCustomer(customer: Customer) {
@@ -3127,7 +3145,7 @@ export function App() {
       scheduledEnd: "",
       description: "",
       internalNotes: "",
-      leadSource: "Unknown",
+      leadSource: "",
       tags: "",
       depositType: "NONE",
       depositPercent: "50",
@@ -3244,7 +3262,7 @@ export function App() {
       scheduledEnd: "",
       description: "",
       internalNotes: "",
-      leadSource: "Unknown",
+      leadSource: "",
       tags: "",
       depositType: "NONE",
       depositPercent: "50",
@@ -5073,7 +5091,7 @@ export function App() {
               <button onClick={() => { setAddMenuOpen(false); setActiveView("employees"); openEmployeeModal("employee"); }}><UserPlus size={16} /> Employee</button>
               <button onClick={() => { setActiveView("jobs"); setJobPageMode("create"); setAddMenuOpen(false); }}><Wrench size={16} /> Job</button>
               <button onClick={() => { setActiveView("invoices"); setAddMenuOpen(false); }}><ReceiptText size={16} /> Invoice</button>
-              <button onClick={() => { setActiveView("estimates"); setEstimatePageMode("create"); setSelectedEstimateId(""); setAddMenuOpen(false); }}><FileText size={16} /> Estimate</button>
+              <button onClick={() => { setActiveView("estimates"); openCreateEstimate(); setAddMenuOpen(false); }}><FileText size={16} /> Estimate</button>
               <button onClick={() => { openEventEditor(); setAddMenuOpen(false); }}><CalendarDays size={16} /> Event</button>
             </div>
           </div>
@@ -5901,7 +5919,7 @@ export function App() {
                   </div>
                   <div className="customer-profile-actions">
                     <button className="outline-button" onClick={() => { setActiveView("jobs"); setJobPageMode("create"); selectJobCustomer(selectedCustomer); }}><Plus size={17} /> Job</button>
-                    <button className="outline-button" onClick={() => { setActiveView("estimates"); setEstimatePageMode("create"); setSelectedEstimateId(""); selectJobCustomer(selectedCustomer); }}><Plus size={17} /> Estimate</button>
+                    <button className="outline-button" onClick={() => { setActiveView("estimates"); openCreateEstimate(selectedCustomer); }}><Plus size={17} /> Estimate</button>
                     <button className="outline-button"><Plus size={17} /> Lead</button>
                     <button className="text-button" onClick={() => removeCustomer(selectedCustomer.id)}><Trash2 size={16} /> Remove</button>
                   </div>
@@ -7183,7 +7201,7 @@ export function App() {
                 <div className="breadcrumb"><FileText size={17} /> {selectedEstimate ? `Estimates / #${selectedEstimate.estimateNumber}` : "Estimates"}</div>
                 <div className="action-buttons">
                   {selectedEstimate && <button className="outline-button" type="button" onClick={() => setSelectedEstimateId("")}>All Estimates</button>}
-                  <button className="primary" onClick={() => { setSelectedEstimateId(""); setEstimatePageMode("create"); }}><Plus size={18} /> Create Estimate</button>
+                  <button className="primary" onClick={() => openCreateEstimate()}><Plus size={18} /> Create Estimate</button>
                 </div>
               </div>
 
@@ -7524,7 +7542,7 @@ export function App() {
                       </div>
                       <div className="estimate-index-actions">
                         <button className="outline-button" type="button"><MoreHorizontal size={16} /> Actions</button>
-                        <button className="primary" type="button" onClick={() => setEstimatePageMode("create")}><Plus size={17} /> Create estimate</button>
+                        <button className="primary" type="button" onClick={() => openCreateEstimate()}><Plus size={17} /> Create estimate</button>
                       </div>
                     </div>
                     <div className="estimate-management-toolbar">
