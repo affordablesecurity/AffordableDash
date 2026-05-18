@@ -1,9 +1,11 @@
 import bcrypt from "bcryptjs";
+import { randomBytes } from "crypto";
 import { Router } from "express";
 import { z } from "zod";
 import type { Prisma, Technician as TechnicianRecord } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
+import { sendEmail } from "../messaging/email.service.js";
 import { asyncHandler } from "../../utils/async-handler.js";
 
 export const techniciansRouter = Router();
@@ -112,14 +114,19 @@ async function canManageOrganizationLocations(user: { id: string; role: string; 
 
 async function enrichTechnicians<T extends { userId: string | null; locationId: string }>(technicians: T[], organizationId: string) {
   const userIds = [...new Set(technicians.map((technician) => technician.userId).filter(Boolean) as string[])];
-  const [memberships, orgLocations] = await Promise.all([
+  const [memberships, orgLocations, users] = await Promise.all([
     userIds.length ? prisma.userMembership.findMany({
       where: { organizationId, userId: { in: userIds } },
       include: { location: { select: { id: true, name: true, displayName: true } } },
       orderBy: { createdAt: "asc" }
     }) : Promise.resolve([]),
-    organizationLocations(organizationId)
+    organizationLocations(organizationId),
+    userIds.length ? prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, username: true }
+    }) : Promise.resolve([])
   ]);
+  const usernameByUserId = new Map(users.map((user) => [user.id, user.username]));
 
   return technicians.map((technician) => {
     const userMemberships = memberships.filter((membership) => membership.userId === technician.userId);
@@ -127,7 +134,7 @@ async function enrichTechnicians<T extends { userId: string | null; locationId: 
     const locationAccess = allLocations
       ? orgLocations
       : userMemberships.map((membership) => membership.location).filter((location): location is LocationSummary => Boolean(location));
-    return { ...technician, allLocations, locationAccess };
+    return { ...technician, username: technician.userId ? usernameByUserId.get(technician.userId) : undefined, allLocations, locationAccess };
   });
 }
 
@@ -182,6 +189,9 @@ techniciansRouter.post("/", asyncHandler(async (req, res) => {
   const input = technicianSchema.parse(req.body);
   let locationId = activeLocationId(req);
   const canManageAllLocations = await canManageOrganizationLocations(req.user!);
+  if (input.role === "ADMIN" && !canManageAllLocations) {
+    return res.status(403).json({ error: "Only super admins can create another super admin" });
+  }
   if (input.newLocation?.name && !canManageAllLocations) {
     return res.status(403).json({ error: "Only organization owners and super admins can create locations" });
   }
@@ -307,6 +317,9 @@ techniciansRouter.patch("/:id", asyncHandler(async (req, res) => {
   }
   const input = technicianSchema.partial().parse(req.body);
   const canManageAllLocations = await canManageOrganizationLocations(req.user!);
+  if (input.role === "ADMIN" && !canManageAllLocations) {
+    return res.status(403).json({ error: "Only super admins can assign the super admin role" });
+  }
   const existing = await prisma.technician.findFirst({ where: { id: String(req.params.id), locationId: activeLocationId(req) } });
   if (!existing) return res.status(404).json({ error: "Employee not found" });
   const { username: _username, password: _password, newLocation: _newLocation, locationIds, allLocations, ...technicianInput } = input;
@@ -381,4 +394,42 @@ techniciansRouter.patch("/:id", asyncHandler(async (req, res) => {
   }
   const [enriched] = await enrichTechnicians([technician], req.user!.organizationId);
   res.json({ technician: enriched });
+}));
+
+techniciansRouter.post("/:id/password-reset", asyncHandler(async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user!.role)) {
+    return res.status(403).json({ error: "Only owners and admins can send password resets" });
+  }
+  const technician = await prisma.technician.findFirst({ where: { id: String(req.params.id), locationId: activeLocationId(req) } });
+  if (!technician) return res.status(404).json({ error: "Employee not found" });
+  if (!technician.userId || !technician.email) {
+    return res.status(400).json({ error: "This employee does not have a portal login email" });
+  }
+  const user = await prisma.user.findUnique({ where: { id: technician.userId } });
+  if (!user) return res.status(404).json({ error: "Portal user not found" });
+
+  const temporaryPassword = `Temp-${randomBytes(6).toString("base64url")}1!`;
+  const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+
+  const delivery = await sendEmail({
+    locationId: activeLocationId(req),
+    to: technician.email,
+    subject: "Your Affordable Security CRM password reset",
+    body: [
+      `Hi ${technician.name},`,
+      "",
+      "Your Affordable Security CRM login was reset.",
+      `Username: ${user.username}`,
+      `Temporary password: ${temporaryPassword}`,
+      "",
+      "Sign in with this temporary password. An admin can send another reset if you need a new one."
+    ].join("\n"),
+    templateKey: "employeePasswordReset"
+  });
+  if (delivery.status !== "SENT") {
+    return res.status(502).json({ error: delivery.error || "Password reset email could not be sent" });
+  }
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash, active: true } });
+
+  res.json({ ok: true, username: user.username });
 }));

@@ -125,6 +125,7 @@ type CustomerNote = {
 type Technician = {
   id: string;
   userId?: string;
+  username?: string;
   name: string;
   email?: string;
   phone: string;
@@ -1677,11 +1678,11 @@ const rolePresets: Record<EmployeeModalType, {
     permissions: ["jobs:write", "jobs:delete", "payments:read", "customers:contact", "messages:write", "customers:write", "company:write", "booking:write", "schedule:full", "invoices:message", "home:data", "margins:read", "pricebook:write", "employees:write", "reports:read"]
   },
   admin: {
-    title: "Add Admin Role",
+    title: "Add Super Admin",
     role: "ADMIN",
     employmentType: "employee",
     fieldTech: false,
-    allLocations: false,
+    allLocations: true,
     permissions: ["jobs:write", "jobs:delete", "payments:read", "customers:contact", "messages:write", "customers:write", "company:write", "booking:write", "schedule:full", "invoices:message", "home:data", "margins:read", "pricebook:write", "employees:write", "reports:read"]
   },
   employee: {
@@ -1936,6 +1937,7 @@ export function App() {
   const [jobSearch, setJobSearch] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState("all");
   const [employeeSearch, setEmployeeSearch] = useState("");
+  const [employeeActionMessage, setEmployeeActionMessage] = useState("");
   const [employeeModal, setEmployeeModal] = useState<EmployeeModalType | null>(null);
   const [employeeEditingId, setEmployeeEditingId] = useState("");
   const [employeeForm, setEmployeeForm] = useState({
@@ -3255,7 +3257,7 @@ export function App() {
       color: "#2563eb",
       active: true,
       locationIds: activeLocationId ? [activeLocationId] : [],
-      allLocations: preset.allLocations,
+      allLocations: preset.allLocations && canUseMainLocation,
       locationDisplayName: "",
       locationName: "",
       locationSlug: "",
@@ -3272,6 +3274,7 @@ export function App() {
   }
 
   function applyEmployeeRolePreset(type: EmployeeModalType) {
+    if (type === "admin" && !canUseMainLocation) return;
     const preset = rolePresets[type];
     setEmployeeForm((current) => ({
       ...current,
@@ -3291,7 +3294,7 @@ export function App() {
     setEmployeeForm({
       name: employee.name,
       email: employee.email ?? "",
-      username: "",
+      username: employee.username ?? "",
       password: "",
       phone: employee.phone,
       employmentType: employee.employmentType,
@@ -3380,6 +3383,17 @@ export function App() {
       body: JSON.stringify({ active })
     });
     setTechnicians((current) => current.map((item) => item.id === employee.id ? result.technician : item));
+  }
+
+  async function sendEmployeePasswordReset(employee: Technician) {
+    setError("");
+    setEmployeeActionMessage("");
+    try {
+      const result = await api<{ ok: boolean; username: string }>(`/api/technicians/${employee.id}/password-reset`, { method: "POST" });
+      setEmployeeActionMessage(`Password reset email sent to ${employee.email}. Username: ${result.username}`);
+    } catch (err) {
+      handleApiError(err, "Unable to send password reset");
+    }
   }
 
   async function revokeApiKey(id: string) {
@@ -9852,7 +9866,7 @@ export function App() {
               <div className="breadcrumb"><UserPlus size={17} /> Employees</div>
               {canManageEmployees && (
                 <div className="action-buttons">
-                  <button className="outline-button" type="button" onClick={() => openEmployeeModal("admin")}><Plus size={17} /> Add Admin Role</button>
+                  {canUseMainLocation && <button className="outline-button" type="button" onClick={() => openEmployeeModal("admin")}><Plus size={17} /> Add Super Admin</button>}
                   {canUseMainLocation && <button className="outline-button" type="button" onClick={() => openEmployeeModal("owner")}><Plus size={17} /> Create Owner + Location</button>}
                   <button className="outline-button" type="button" onClick={() => openEmployeeModal("contractor")}><Plus size={17} /> Create Contractor</button>
                   <button className="outline-button" type="button" onClick={() => openEmployeeModal("fieldTech")}><Plus size={17} /> Create Field Tech</button>
@@ -9863,6 +9877,7 @@ export function App() {
             </div>
 
             <div className="employees-panel">
+              {employeeActionMessage && <div className="success-banner">{employeeActionMessage}</div>}
               <div className="jobs-tools">
                 <div className="search-box table-search">
                   <Search size={18} />
@@ -9910,6 +9925,7 @@ export function App() {
                           <button className="text-button" onClick={() => updateEmployeeAccess(employee, !employee.active)}>
                             {employee.active ? "Revoke" : "Restore"}
                           </button>
+                          {employee.userId && employee.email && <button className="text-button" onClick={() => sendEmployeePasswordReset(employee)}>Send reset email</button>}
                         </>
                       ) : <span>-</span>}
                     </div>
@@ -9926,10 +9942,10 @@ export function App() {
             <form className="employee-modal record-form" onSubmit={saveEmployee} onClick={(event) => event.stopPropagation()}>
               <h2>{employeeEditingId ? "Edit Profile" : rolePresets[employeeModal].title}</h2>
               <section className="employee-role-picker" aria-label="Employee role">
-                <button type="button" className={employeeForm.role === "ADMIN" ? "selected" : ""} onClick={() => applyEmployeeRolePreset("admin")}>
+                <button type="button" className={employeeForm.role === "ADMIN" ? "selected" : ""} disabled={!canUseMainLocation} onClick={() => applyEmployeeRolePreset("admin")}>
                   <CheckCircle2 size={22} />
-                  <strong>Admin</strong>
-                  <small>Full permissions inside assigned location access.</small>
+                  <strong>Super admin</strong>
+                  <small>Full permissions across every location and MAIN reporting.</small>
                 </button>
                 <button type="button" className={employeeForm.role === "INSIDE_SALES" && !employeeForm.fieldTech ? "selected" : ""} onClick={() => applyEmployeeRolePreset("officeStaff")}>
                   <Laptop size={22} />
@@ -9950,7 +9966,7 @@ export function App() {
                   <input type="email" value={employeeForm.email} onChange={(event) => setEmployeeForm({ ...employeeForm, email: event.target.value })} required={employeeModal === "owner"} />
                 </label>
                 <label>Username
-                  <input value={employeeForm.username} onChange={(event) => setEmployeeForm({ ...employeeForm, username: event.target.value })} placeholder="optional, defaults from email" />
+                  <input value={employeeForm.username} onChange={(event) => setEmployeeForm({ ...employeeForm, username: event.target.value })} placeholder="optional, defaults from email" disabled={Boolean(employeeEditingId && employeeForm.username)} />
                 </label>
                 <label>Temporary Password
                   <input type="password" value={employeeForm.password} onChange={(event) => setEmployeeForm({ ...employeeForm, password: event.target.value })} placeholder={employeeEditingId ? "Leave blank to keep password" : "8+ chars to create login"} required={employeeModal === "owner" && !employeeEditingId} />
@@ -9972,8 +9988,8 @@ export function App() {
                       setEmployeeForm({ ...employeeForm, role, fieldTech: role === "OUTSIDE_FIELD_TECH", allLocations: employeeForm.allLocations && canUseMainLocation && ["OWNER", "ADMIN"].includes(role) });
                     }}
                   >
-                    <option value="OWNER">Owner</option>
-                    <option value="ADMIN">Admin</option>
+                    <option value="OWNER">Location Owner</option>
+                    <option value="ADMIN" disabled={!canUseMainLocation}>Super Admin</option>
                     <option value="INSIDE_SALES">Inside Sales</option>
                     <option value="OUTSIDE_FIELD_TECH">Outside Field Tech</option>
                   </select>
