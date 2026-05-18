@@ -731,6 +731,14 @@ textarea {
   font-weight: 900;
 }
 
+.booking-header-image {
+  width: 58px;
+  height: 58px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
 .public-booking-hero {
   min-height: 150px;
   display: flex;
@@ -755,6 +763,12 @@ textarea {
   border-radius: 12px 12px 22px 22px;
   background: rgba(255, 255, 255, 0.84);
   clip-path: polygon(50% 0, 100% 37%, 88% 37%, 88% 100%, 14% 100%, 14% 37%, 0 37%);
+}
+
+.booking-hero-image {
+  width: min(180px, 38%);
+  max-height: 120px;
+  object-fit: contain;
 }
 
 .booking-summary-row {
@@ -837,6 +851,40 @@ textarea {
   color: #68728a;
   font-style: normal;
   font-weight: 900;
+}
+
+.booking-followup-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #e1e5ef;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.booking-followup-panel h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.booking-followup-panel div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.booking-followup-panel button {
+  border: 1px solid #d8deea;
+  border-radius: 999px;
+  background: #fff;
+  padding: 9px 12px;
+  font-weight: 900;
+}
+
+.booking-followup-panel button.selected {
+  border-color: var(--booking-color);
+  background: #eaf2ff;
+  color: var(--booking-color);
 }
 
 .booking-tabs {
@@ -1094,9 +1142,47 @@ textarea {
   background: #fff;
 }
 
+.booking-settings-grid .span-2 {
+  grid-column: 1 / -1;
+}
+
 .booking-settings-grid small {
   color: #68728a;
   font-weight: 700;
+}
+
+.booking-chip-input {
+  display: grid;
+  gap: 10px;
+}
+
+.booking-chip-input > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid #d8deea;
+  border-radius: 8px;
+  padding: 8px;
+  background: #f8fafc;
+}
+
+.booking-chip-input > div span {
+  align-self: center;
+  color: #68728a;
+  font-weight: 700;
+}
+
+.booking-chip-input button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #b8d8ff;
+  border-radius: 999px;
+  background: #e9f4ff;
+  color: #0b76d1;
+  padding: 6px 9px;
+  font-weight: 900;
 }
 
 .booking-settings-grid textarea {
@@ -1122,6 +1208,40 @@ textarea {
   color: #172033;
   text-align: center;
   font-weight: 900;
+}
+
+.booking-flow-preview label,
+.booking-contact-label-grid label {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e1e5ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+  color: #172033;
+  font-weight: 900;
+}
+
+.booking-flow-preview label {
+  justify-items: center;
+  text-align: center;
+}
+
+.booking-flow-preview label input,
+.booking-contact-label-grid input {
+  width: 100%;
+  border: 1px solid #d8deea;
+  border-radius: 7px;
+  padding: 9px;
+  font: inherit;
+  background: #fff;
+}
+
+.booking-contact-label-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0 18px 18px;
 }
 
 .booking-tracking-list button {

@@ -127,6 +127,11 @@ model OnlineBookingSettings {
   serviceAreaZipCodes String[] @default([])
   helpHeading         String   @default("What do you need help with?")
   servicePrompt       String   @default("Please select your service")
+  headerImageUrl      String?
+  heroImageUrl        String?
+  contactFields       Json?
+  flowSteps           Json?
+  serviceQuestions    Json?
   slotStartHour       Int      @default(8)
   slotEndHour         Int      @default(18)
   slotWindowMinutes   Int      @default(120)

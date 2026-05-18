@@ -527,6 +527,11 @@ type OnlineBookingSettings = {
   serviceAreaZipCodes: string[];
   helpHeading: string;
   servicePrompt: string;
+  headerImageUrl?: string;
+  heroImageUrl?: string;
+  contactFields: Record<string, string>;
+  flowSteps: Record<string, string>;
+  serviceQuestions: Record<string, string[]>;
   slotStartHour: number;
   slotEndHour: number;
   slotWindowMinutes: number;
@@ -1732,6 +1737,7 @@ export function App() {
     address: "",
     city: "",
     notes: "",
+    serviceFollowUps: [] as string[],
     smsConsent: true
   });
   const [bookingSubmitMessage, setBookingSubmitMessage] = useState("");
@@ -1741,12 +1747,33 @@ export function App() {
     serviceAreaZipCodes: [],
     helpHeading: "What do you need help with?",
     servicePrompt: "Please select your service",
+    headerImageUrl: "",
+    heroImageUrl: "",
+    contactFields: {
+      firstName: "First Name",
+      lastName: "Last Name",
+      phone: "Phone",
+      email: "Email",
+      address: "Service address",
+      notes: "Additional notes",
+      smsConsent: "Receive text messages about appointment"
+    },
+    flowSteps: {
+      zip: "ZIP check",
+      service: "Service choice",
+      time: "Available slot",
+      contact: "Contact details",
+      notification: "SMS and email"
+    },
+    serviceQuestions: {},
     slotStartHour: 8,
     slotEndHour: 18,
     slotWindowMinutes: 120,
     slotIntervalMinutes: 120
   });
   const [bookingServiceNamesDraft, setBookingServiceNamesDraft] = useState("Vehicle lockout\nLock installation\nBuilding lockout");
+  const [bookingZipDraft, setBookingZipDraft] = useState("");
+  const [bookingQuestionsDraft, setBookingQuestionsDraft] = useState("Locksmith Service: Change my locks, Lockout, Rekey");
   const [bookingSettingsMessage, setBookingSettingsMessage] = useState("");
   const [bookingCalendarMonth, setBookingCalendarMonth] = useState(() => startOfMonth(new Date()));
   const [bookingSelectedDate, setBookingSelectedDate] = useState(() => toInputDate(new Date()));
@@ -2101,6 +2128,7 @@ export function App() {
         setBookingSettings(payload.settings);
         const selectedServices = payload.services.filter((service) => service.onlineBooking).map((service) => service.name);
         setBookingServiceNamesDraft((selectedServices.length ? selectedServices : ["Vehicle lockout", "Lock installation", "Building lockout"]).join("\n"));
+        setBookingQuestionsDraft(Object.entries(payload.settings.serviceQuestions ?? {}).map(([service, choices]) => `${service}: ${choices.join(", ")}`).join("\n"));
       })
       .catch((err) => setBookingSettingsMessage(err instanceof Error ? err.message : "Could not load online booking settings."));
   }, [activeLocationId, activeView, publicBookingLocationKey, token]);
@@ -2152,7 +2180,7 @@ export function App() {
     setAddressSuggestions((current) => ({ ...current, [key]: [] }));
   }
 
-  async function loadAddressSuggestions(key: string, input: string) {
+  async function loadAddressSuggestions(key: string, input: string, publicLookup = false) {
     const trimmed = input.trim();
     if (trimmed.length < 3) {
       clearAddressSuggestions(key);
@@ -2161,7 +2189,8 @@ export function App() {
 
     setAddressLoadingKey(key);
     try {
-      const result = await api<{ suggestions: AddressSuggestion[] }>(`/api/places/autocomplete?input=${encodeURIComponent(trimmed)}`);
+      const path = publicLookup ? "/api/public-booking/places/autocomplete" : "/api/places/autocomplete";
+      const result = await api<{ suggestions: AddressSuggestion[] }>(`${path}?input=${encodeURIComponent(trimmed)}`, publicLookup ? { skipAuth: true } : undefined);
       setAddressSuggestions((current) => ({ ...current, [key]: result.suggestions }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Address lookup failed.");
@@ -2170,10 +2199,11 @@ export function App() {
     }
   }
 
-  async function selectAddressSuggestion(key: string, placeId: string, apply: (place: PlaceAddress) => void) {
+  async function selectAddressSuggestion(key: string, placeId: string, apply: (place: PlaceAddress) => void, publicLookup = false) {
     setAddressLoadingKey(key);
     try {
-      const result = await api<{ address: PlaceAddress }>(`/api/places/details?placeId=${encodeURIComponent(placeId)}`);
+      const path = publicLookup ? "/api/public-booking/places/details" : "/api/places/details";
+      const result = await api<{ address: PlaceAddress }>(`${path}?placeId=${encodeURIComponent(placeId)}`, publicLookup ? { skipAuth: true } : undefined);
       apply(result.address);
       clearAddressSuggestions(key);
     } catch (err) {
@@ -2189,6 +2219,7 @@ export function App() {
     placeholder: string;
     required?: boolean;
     className?: string;
+    publicLookup?: boolean;
     onChange: (value: string) => void;
     onSelect: (place: PlaceAddress) => void;
   }) {
@@ -2203,7 +2234,7 @@ export function App() {
           onChange={(event) => {
             const next = event.target.value;
             args.onChange(next);
-            void loadAddressSuggestions(args.lookupKey, next);
+            void loadAddressSuggestions(args.lookupKey, next, args.publicLookup);
           }}
           onBlur={() => window.setTimeout(() => clearAddressSuggestions(args.lookupKey), 150)}
         />
@@ -2214,7 +2245,7 @@ export function App() {
                 type="button"
                 key={suggestion.placeId}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => void selectAddressSuggestion(args.lookupKey, suggestion.placeId, args.onSelect)}
+                onClick={() => void selectAddressSuggestion(args.lookupKey, suggestion.placeId, args.onSelect, args.publicLookup)}
               >
                 <strong>{suggestion.mainText ?? suggestion.description}</strong>
                 <span>{suggestion.secondaryText ?? suggestion.description}</span>
@@ -5825,6 +5856,35 @@ export function App() {
   const selectedBookingService = bookingData?.services.find((service) => service.id === bookingForm.serviceId) ?? bookingData?.services[0];
   const bookingServiceAreaZips = bookingData?.settings.serviceAreaZipCodes ?? [];
   const bookingSlotsForSelectedDate = bookingData?.slots.filter((slot) => toInputDate(new Date(slot.start)) === bookingSelectedDate) ?? [];
+  const selectedBookingQuestions = selectedBookingService ? (bookingData?.settings.serviceQuestions?.[selectedBookingService.name] ?? bookingData?.settings.serviceQuestions?.[selectedBookingService.category] ?? []) : [];
+
+  function parseBookingQuestionsDraft(value: string) {
+    const result: Record<string, string[]> = {};
+    value.split(/\r?\n/).forEach((line) => {
+      const [serviceName, choicesText] = line.split(":");
+      const choices = choicesText?.split(",").map((choice) => choice.trim()).filter(Boolean) ?? [];
+      if (serviceName?.trim() && choices.length) result[serviceName.trim()] = choices;
+    });
+    return result;
+  }
+
+  function addBookingZip() {
+    const zip = bookingZipDraft.replace(/\D/g, "").slice(0, 5);
+    if (zip.length !== 5) return;
+    setBookingSettings((current) => ({ ...current, serviceAreaZipCodes: [...new Set([...current.serviceAreaZipCodes, zip])] }));
+    setBookingZipDraft("");
+  }
+
+  function removeBookingZip(zip: string) {
+    setBookingSettings((current) => ({ ...current, serviceAreaZipCodes: current.serviceAreaZipCodes.filter((item) => item !== zip) }));
+  }
+
+  function readBookingImage(file: File | undefined, key: "headerImageUrl" | "heroImageUrl") {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setBookingSettings((current) => ({ ...current, [key]: reader.result as string }));
+    reader.readAsDataURL(file);
+  }
 
   async function saveOnlineBookingSettings() {
     setBookingSettingsMessage("Saving online booking settings...");
@@ -5834,6 +5894,7 @@ export function App() {
         body: JSON.stringify({
           ...bookingSettings,
           serviceAreaZipCodes: bookingSettings.serviceAreaZipCodes,
+          serviceQuestions: parseBookingQuestionsDraft(bookingQuestionsDraft),
           serviceNames: bookingServiceNamesDraft.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean)
         })
       });
@@ -5894,10 +5955,10 @@ export function App() {
       <main className="public-booking-shell" style={{ "--booking-color": color } as CSSProperties}>
         <section className="public-booking-modal">
           <header className="public-booking-header">
-            <div className="booking-logo-mark">{bookingData?.location.name?.slice(0, 1) || "A"}</div>
+            {bookingData?.settings.headerImageUrl ? <img className="booking-header-image" src={bookingData.settings.headerImageUrl} alt="" /> : <div className="booking-logo-mark">{bookingData?.location.name?.slice(0, 1) || "A"}</div>}
             <div><strong>{bookingData?.location.name || "Affordable Security"}</strong><span>Online Booking Form</span></div>
           </header>
-          <div className="public-booking-hero"><h1>Let's Get You Scheduled</h1><div className="booking-house-shape" /></div>
+          <div className="public-booking-hero"><h1>Let's Get You Scheduled</h1>{bookingData?.settings.heroImageUrl ? <img className="booking-hero-image" src={bookingData.settings.heroImageUrl} alt="" /> : <div className="booking-house-shape" />}</div>
           {bookingStep !== "zip" && (
             <div className="booking-summary-row">
               <MapPin size={16} /> {bookingForm.city || bookingData?.location.city || "Service area"}, {bookingData?.location.state || "AZ"} {bookingForm.zipCode}
@@ -5919,11 +5980,34 @@ export function App() {
               <p>{bookingData?.settings.servicePrompt || "Please select your service"}</p>
               <div className="booking-service-grid">
                 {(bookingData?.services.length ? bookingData.services : [{ id: "locksmith", name: "Locksmith", description: "Building lockout", price: 0, category: "Locksmith", itemType: "service", taxable: false }]).map((service) => (
-                  <button key={service.id} className={bookingForm.serviceId === service.id ? "selected" : ""} type="button" onClick={() => setBookingForm({ ...bookingForm, serviceId: service.id, serviceName: service.name })}>
+                  <button key={service.id} className={bookingForm.serviceId === service.id ? "selected" : ""} type="button" onClick={() => setBookingForm({ ...bookingForm, serviceId: service.id, serviceName: service.name, serviceFollowUps: [] })}>
                     <Wrench size={20} /><strong>{service.name}</strong>{service.description && <span>{service.description}</span>}{service.price > 0 && <em>{money.format(service.price / 100)}</em>}
                   </button>
                 ))}
               </div>
+              {selectedBookingQuestions.length > 0 && (
+                <div className="booking-followup-panel">
+                  <h3>What brings you to Affordable Security?</h3>
+                  <div>
+                    {selectedBookingQuestions.map((question) => {
+                      const selected = bookingForm.serviceFollowUps.includes(question);
+                      return (
+                        <button
+                          key={question}
+                          className={selected ? "selected" : ""}
+                          type="button"
+                          onClick={() => setBookingForm((current) => ({
+                            ...current,
+                            serviceFollowUps: selected ? current.serviceFollowUps.filter((item) => item !== question) : [...current.serviceFollowUps, question]
+                          }))}
+                        >
+                          {question}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="booking-footer-actions"><button className="outline-button" type="button" onClick={() => setBookingStep("zip")}>Back</button><button className="primary" type="button" onClick={() => setBookingStep("time")}>Continue Booking</button></div>
             </div>
           )}
@@ -5979,14 +6063,21 @@ export function App() {
               <div className="booking-summary-card"><strong>{selectedBookingService?.name || "Locksmith"}</strong><span>{formatDateTime(bookingForm.scheduledStart)}</span></div>
               <h2>How should we reach you?</h2>
               <div className="booking-contact-grid">
-                <label>First Name<input required value={bookingForm.firstName} onChange={(event) => setBookingForm({ ...bookingForm, firstName: event.target.value })} /></label>
-                <label>Last Name<input required value={bookingForm.lastName} onChange={(event) => setBookingForm({ ...bookingForm, lastName: event.target.value })} /></label>
-                <label>Phone<input required value={bookingForm.phone} onChange={(event) => setBookingForm({ ...bookingForm, phone: formatPhoneInput(event.target.value) })} /></label>
-                <label>Email<input type="email" value={bookingForm.email} onChange={(event) => setBookingForm({ ...bookingForm, email: event.target.value })} /></label>
-                <label className="span-2">Service address<input value={bookingForm.address} onChange={(event) => setBookingForm({ ...bookingForm, address: event.target.value })} /></label>
-                <label className="span-2">Notes<textarea value={bookingForm.notes} onChange={(event) => setBookingForm({ ...bookingForm, notes: event.target.value })} /></label>
+                <label>{bookingData?.settings.contactFields.firstName || "First Name"}<input required value={bookingForm.firstName} onChange={(event) => setBookingForm({ ...bookingForm, firstName: event.target.value })} /></label>
+                <label>{bookingData?.settings.contactFields.lastName || "Last Name"}<input required value={bookingForm.lastName} onChange={(event) => setBookingForm({ ...bookingForm, lastName: event.target.value })} /></label>
+                <label>{bookingData?.settings.contactFields.phone || "Phone"}<input required value={bookingForm.phone} onChange={(event) => setBookingForm({ ...bookingForm, phone: formatPhoneInput(event.target.value) })} /></label>
+                <label>{bookingData?.settings.contactFields.email || "Email"}<input type="email" value={bookingForm.email} onChange={(event) => setBookingForm({ ...bookingForm, email: event.target.value })} /></label>
+                <label className="span-2">{bookingData?.settings.contactFields.address || "Service address"}{renderAddressAutocomplete({
+                  lookupKey: "public-booking-address",
+                  value: bookingForm.address,
+                  placeholder: "Start typing service address",
+                  publicLookup: true,
+                  onChange: (value) => setBookingForm({ ...bookingForm, address: value }),
+                  onSelect: (place) => setBookingForm({ ...bookingForm, address: place.street1, city: place.city, zipCode: place.postalCode || bookingForm.zipCode })
+                })}</label>
+                <label className="span-2">{bookingData?.settings.contactFields.notes || "Additional notes"}<textarea value={bookingForm.notes} onChange={(event) => setBookingForm({ ...bookingForm, notes: event.target.value })} /></label>
               </div>
-              <label className="check-row"><input type="checkbox" checked={bookingForm.smsConsent} onChange={(event) => setBookingForm({ ...bookingForm, smsConsent: event.target.checked })} /> Receive text messages about appointment</label>
+              <label className="check-row"><input type="checkbox" checked={bookingForm.smsConsent} onChange={(event) => setBookingForm({ ...bookingForm, smsConsent: event.target.checked })} /> {bookingData?.settings.contactFields.smsConsent || "Receive text messages about appointment"}</label>
               {bookingSubmitMessage && <p className="muted-copy">{bookingSubmitMessage}</p>}
               <div className="booking-footer-actions"><button className="outline-button" type="button" onClick={() => setBookingStep("time")}>Back</button><button className="primary" type="submit">Book appointment</button></div>
             </form>
@@ -7160,7 +7251,25 @@ export function App() {
               <div className="booking-settings-grid">
                 <label>
                   Service ZIP codes
-                  <textarea rows={3} value={bookingSettings.serviceAreaZipCodes.join(", ")} onChange={(event) => setBookingSettings({ ...bookingSettings, serviceAreaZipCodes: event.target.value.split(/[\s,]+/).map((zip) => zip.replace(/\D/g, "").slice(0, 5)).filter(Boolean) })} placeholder="85365, 85364, 85367" />
+                  <div className="booking-chip-input">
+                    <div>
+                      {bookingSettings.serviceAreaZipCodes.map((zip) => <button key={zip} type="button" onClick={() => removeBookingZip(zip)}>{zip}<X size={13} /></button>)}
+                      {!bookingSettings.serviceAreaZipCodes.length && <span>No ZIP codes added yet</span>}
+                    </div>
+                    <input
+                      inputMode="numeric"
+                      maxLength={5}
+                      value={bookingZipDraft}
+                      onChange={(event) => setBookingZipDraft(event.target.value.replace(/\D/g, "").slice(0, 5))}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addBookingZip();
+                        }
+                      }}
+                      placeholder="Type ZIP and press Enter"
+                    />
+                  </div>
                   <small>Customers cannot confirm booking unless their ZIP is listed here.</small>
                 </label>
                 <label>
@@ -7178,6 +7287,23 @@ export function App() {
                   <textarea rows={6} value={bookingServiceNamesDraft} onChange={(event) => setBookingServiceNamesDraft(event.target.value)} placeholder={"Vehicle lockout\nLock installation\nBuilding lockout"} />
                   <small>One service per line. Matching pricebook items are reused; new names become online-booking services.</small>
                 </label>
+                <label>
+                  Top logo image
+                  <input value={bookingSettings.headerImageUrl ?? ""} onChange={(event) => setBookingSettings({ ...bookingSettings, headerImageUrl: event.target.value })} placeholder="Image URL or upload below" />
+                  <input type="file" accept="image/*" onChange={(event) => readBookingImage(event.currentTarget.files?.[0], "headerImageUrl")} />
+                  <small>Add the small logo/man image shown at the top of the booking form.</small>
+                </label>
+                <label>
+                  Hero image
+                  <input value={bookingSettings.heroImageUrl ?? ""} onChange={(event) => setBookingSettings({ ...bookingSettings, heroImageUrl: event.target.value })} placeholder="Image URL or upload below" />
+                  <input type="file" accept="image/*" onChange={(event) => readBookingImage(event.currentTarget.files?.[0], "heroImageUrl")} />
+                  <small>Add the larger image shown in the blue header area.</small>
+                </label>
+                <label className="span-2">
+                  Service follow-up buttons
+                  <textarea rows={5} value={bookingQuestionsDraft} onChange={(event) => setBookingQuestionsDraft(event.target.value)} placeholder={"Locksmith Service: Change my locks, Lockout, Rekey\nVehicle lockout: Keys locked inside, Key broke, Trunk lockout"} />
+                  <small>Use one line per service. Format: Service name: button one, button two, button three.</small>
+                </label>
               </div>
             </section>
             <section className="booking-settings-card">
@@ -7189,11 +7315,31 @@ export function App() {
                 <label>Offer every<select value={bookingSettings.slotIntervalMinutes} onChange={(event) => setBookingSettings({ ...bookingSettings, slotIntervalMinutes: Number(event.target.value) })}><option value={60}>1 hour</option><option value={120}>2 hours</option><option value={180}>3 hours</option></select></label>
               </div>
               <div className="booking-flow-preview">
-                <span><MapPin size={17} /> ZIP check</span>
-                <span><Wrench size={17} /> Service choice</span>
-                <span><CalendarDays size={17} /> Available slot</span>
-                <span><UserPlus size={17} /> Contact details</span>
-                <span><MessageSquareText size={17} /> SMS and email</span>
+                {[
+                  ["zip", MapPin],
+                  ["service", Wrench],
+                  ["time", CalendarDays],
+                  ["contact", UserPlus],
+                  ["notification", MessageSquareText]
+                ].map(([key, Icon]) => (
+                  <label key={String(key)}>
+                    <Icon size={17} />
+                    <input value={bookingSettings.flowSteps[String(key)] ?? ""} onChange={(event) => setBookingSettings({ ...bookingSettings, flowSteps: { ...bookingSettings.flowSteps, [String(key)]: event.target.value } })} />
+                  </label>
+                ))}
+              </div>
+              <div className="booking-contact-label-grid">
+                {[
+                  ["firstName", "First name label"],
+                  ["lastName", "Last name label"],
+                  ["phone", "Phone label"],
+                  ["email", "Email label"],
+                  ["address", "Address label"],
+                  ["notes", "Notes label"],
+                  ["smsConsent", "SMS consent label"]
+                ].map(([key, label]) => (
+                  <label key={key}>{label}<input value={bookingSettings.contactFields[key] ?? ""} onChange={(event) => setBookingSettings({ ...bookingSettings, contactFields: { ...bookingSettings.contactFields, [key]: event.target.value } })} /></label>
+                ))}
               </div>
               {bookingSettingsMessage && <p className="inline-confirm">{bookingSettingsMessage}</p>}
             </section>

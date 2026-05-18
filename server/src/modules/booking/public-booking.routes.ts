@@ -1,6 +1,7 @@
 import { JobStatus, type Location, type OnlineBookingSettings } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
@@ -14,6 +15,25 @@ const defaultOnlineBookingSettings = {
   serviceAreaZipCodes: [] as string[],
   helpHeading: "What do you need help with?",
   servicePrompt: "Please select your service",
+  headerImageUrl: "",
+  heroImageUrl: "",
+  contactFields: {
+    firstName: "First Name",
+    lastName: "Last Name",
+    phone: "Phone",
+    email: "Email",
+    address: "Service address",
+    notes: "Additional notes",
+    smsConsent: "Receive text messages about appointment"
+  },
+  flowSteps: {
+    zip: "ZIP check",
+    service: "Service choice",
+    time: "Available slot",
+    contact: "Contact details",
+    notification: "SMS and email"
+  },
+  serviceQuestions: {} as Record<string, string[]>,
   slotStartHour: 8,
   slotEndHour: 18,
   slotWindowMinutes: 120,
@@ -24,6 +44,11 @@ const settingsSchema = z.object({
   serviceAreaZipCodes: z.array(z.string()).default([]),
   helpHeading: z.string().trim().min(1).max(120).default(defaultOnlineBookingSettings.helpHeading),
   servicePrompt: z.string().trim().min(1).max(120).default(defaultOnlineBookingSettings.servicePrompt),
+  headerImageUrl: z.string().trim().max(200000).optional().or(z.literal("")),
+  heroImageUrl: z.string().trim().max(200000).optional().or(z.literal("")),
+  contactFields: z.record(z.string()).default(defaultOnlineBookingSettings.contactFields),
+  flowSteps: z.record(z.string()).default(defaultOnlineBookingSettings.flowSteps),
+  serviceQuestions: z.record(z.array(z.string())).default({}),
   slotStartHour: z.number().int().min(0).max(23).default(8),
   slotEndHour: z.number().int().min(1).max(24).default(18),
   slotWindowMinutes: z.number().int().min(30).max(480).default(120),
@@ -45,9 +70,32 @@ const bookingRequestSchema = z.object({
   address: z.string().optional(),
   city: z.string().optional(),
   notes: z.string().optional(),
+  serviceFollowUps: z.array(z.string()).default([]),
   trackingAttribute: z.string().optional(),
   sourceLabel: z.string().optional()
 });
+
+type GoogleAddressComponent = { long_name: string; short_name: string; types: string[] };
+type GoogleAutocompleteResponse = {
+  status: string;
+  error_message?: string;
+  predictions?: Array<{
+    place_id: string;
+    description: string;
+    structured_formatting?: { main_text?: string; secondary_text?: string };
+  }>;
+};
+type GooglePlaceDetailsResponse = {
+  status: string;
+  error_message?: string;
+  result?: {
+    place_id: string;
+    formatted_address?: string;
+    name?: string;
+    address_components?: GoogleAddressComponent[];
+    geometry?: { location?: { lat: number; lng: number } };
+  };
+};
 
 function normalizeZip(value?: string | null) {
   return (value ?? "").replace(/\D/g, "").slice(0, 5);
@@ -59,6 +107,39 @@ function cleanZipList(values: string[]) {
 
 function cleanServiceNames(values: string[]) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, 24);
+}
+
+function cleanServiceQuestions(input: Record<string, string[]>) {
+  return Object.fromEntries(Object.entries(input)
+    .map(([key, values]) => [key.trim(), [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, 12)])
+    .filter(([key, values]) => key && (values as string[]).length)) as Record<string, string[]>;
+}
+
+function component(components: GoogleAddressComponent[] = [], type: string, field: "long_name" | "short_name" = "long_name") {
+  return components.find((item) => item.types.includes(type))?.[field] ?? "";
+}
+
+function normalizePlace(result: NonNullable<GooglePlaceDetailsResponse["result"]>) {
+  const components = result.address_components ?? [];
+  const streetNumber = component(components, "street_number");
+  const route = component(components, "route");
+  const subpremise = component(components, "subpremise");
+  const city = component(components, "locality") || component(components, "postal_town") || component(components, "administrative_area_level_2");
+  const state = component(components, "administrative_area_level_1", "short_name");
+  const postalCode = component(components, "postal_code");
+  const street1 = [streetNumber, route].filter(Boolean).join(" ") || result.name || result.formatted_address || "";
+
+  return {
+    placeId: result.place_id,
+    formattedAddress: result.formatted_address ?? street1,
+    street1,
+    street2: subpremise,
+    city,
+    state,
+    postalCode,
+    latitude: result.geometry?.location?.lat,
+    longitude: result.geometry?.location?.lng
+  };
 }
 
 async function findBookingLocation(key: string) {
@@ -74,6 +155,11 @@ function settingsForLocation(location: (Location & { onlineBookingSettings?: Onl
   return {
     ...defaultOnlineBookingSettings,
     ...configured,
+    headerImageUrl: configured?.headerImageUrl ?? "",
+    heroImageUrl: configured?.heroImageUrl ?? "",
+    contactFields: { ...defaultOnlineBookingSettings.contactFields, ...((configured?.contactFields && typeof configured.contactFields === "object" && !Array.isArray(configured.contactFields)) ? configured.contactFields as Record<string, string> : {}) },
+    flowSteps: { ...defaultOnlineBookingSettings.flowSteps, ...((configured?.flowSteps && typeof configured.flowSteps === "object" && !Array.isArray(configured.flowSteps)) ? configured.flowSteps as Record<string, string> : {}) },
+    serviceQuestions: cleanServiceQuestions((configured?.serviceQuestions && typeof configured.serviceQuestions === "object" && !Array.isArray(configured.serviceQuestions)) ? configured.serviceQuestions as Record<string, string[]> : {}),
     serviceAreaZipCodes: configured?.serviceAreaZipCodes.length ? cleanZipList(configured.serviceAreaZipCodes) : defaultZips
   };
 }
@@ -141,6 +227,35 @@ async function availableSlots(locationId: string, settings: ReturnType<typeof se
   return slots;
 }
 
+async function slotIsBookable(locationId: string, settings: ReturnType<typeof settingsForLocation>, timeZone: string, scheduledStart: Date, scheduledEnd: Date) {
+  if (!(scheduledStart instanceof Date) || !(scheduledEnd instanceof Date) || Number.isNaN(scheduledStart.getTime()) || Number.isNaN(scheduledEnd.getTime())) return false;
+  const now = new Date();
+  if (scheduledStart <= now || scheduledEnd <= scheduledStart) return false;
+  const duration = Math.round((scheduledEnd.getTime() - scheduledStart.getTime()) / 60000);
+  if (duration !== settings.slotWindowMinutes) return false;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false
+  }).formatToParts(scheduledStart);
+  const localHour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const localMinute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+  const startMinutes = localHour * 60 + localMinute;
+  if (startMinutes < settings.slotStartHour * 60 || startMinutes + settings.slotWindowMinutes > settings.slotEndHour * 60) return false;
+  if ((startMinutes - settings.slotStartHour * 60) % settings.slotIntervalMinutes !== 0) return false;
+  const overlap = await prisma.job.findFirst({
+    where: {
+      locationId,
+      status: { not: JobStatus.CANCELED },
+      scheduledStart: { lt: scheduledEnd },
+      scheduledEnd: { gt: scheduledStart }
+    },
+    select: { id: true }
+  });
+  return !overlap;
+}
+
 bookingRouter.get("/settings", asyncHandler(async (req, res) => {
   const location = await prisma.location.findUnique({
     where: { id: activeLocationId(req) },
@@ -175,6 +290,11 @@ bookingRouter.patch("/settings", asyncHandler(async (req, res) => {
       serviceAreaZipCodes: cleanZipList(input.serviceAreaZipCodes),
       helpHeading: input.helpHeading,
       servicePrompt: input.servicePrompt,
+      headerImageUrl: input.headerImageUrl || null,
+      heroImageUrl: input.heroImageUrl || null,
+      contactFields: input.contactFields,
+      flowSteps: input.flowSteps,
+      serviceQuestions: cleanServiceQuestions(input.serviceQuestions),
       slotStartHour: input.slotStartHour,
       slotEndHour: input.slotEndHour,
       slotWindowMinutes: input.slotWindowMinutes,
@@ -184,6 +304,11 @@ bookingRouter.patch("/settings", asyncHandler(async (req, res) => {
       serviceAreaZipCodes: cleanZipList(input.serviceAreaZipCodes),
       helpHeading: input.helpHeading,
       servicePrompt: input.servicePrompt,
+      headerImageUrl: input.headerImageUrl || null,
+      heroImageUrl: input.heroImageUrl || null,
+      contactFields: input.contactFields,
+      flowSteps: input.flowSteps,
+      serviceQuestions: cleanServiceQuestions(input.serviceQuestions),
       slotStartHour: input.slotStartHour,
       slotEndHour: input.slotEndHour,
       slotWindowMinutes: input.slotWindowMinutes,
@@ -217,6 +342,64 @@ bookingRouter.patch("/settings", asyncHandler(async (req, res) => {
       onlineBooking: service.onlineBooking
     }))
   });
+}));
+
+publicBookingRouter.get("/places/autocomplete", asyncHandler(async (req, res) => {
+  const input = typeof req.query.input === "string" ? req.query.input.trim() : "";
+  if (input.length < 3) {
+    res.json({ suggestions: [] });
+    return;
+  }
+
+  if (!env.GOOGLE_MAPS_API_KEY) {
+    res.status(503).json({ error: "Google Maps is not configured. Add GOOGLE_MAPS_API_KEY in Render." });
+    return;
+  }
+
+  const url = new URL("https://maps.googleapis.com/maps/api/place/autocomplete/json");
+  url.searchParams.set("input", input);
+  url.searchParams.set("types", "address");
+  url.searchParams.set("components", "country:us");
+  url.searchParams.set("key", env.GOOGLE_MAPS_API_KEY);
+
+  const response = await fetch(url);
+  if (!response.ok) return res.status(502).json({ error: "Google Places request failed." });
+  const data = await response.json() as GoogleAutocompleteResponse;
+  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+    return res.status(502).json({ error: data.error_message ?? `Google Places returned ${data.status}.` });
+  }
+
+  res.json({
+    suggestions: (data.predictions ?? []).map((prediction) => ({
+      placeId: prediction.place_id,
+      description: prediction.description,
+      mainText: prediction.structured_formatting?.main_text,
+      secondaryText: prediction.structured_formatting?.secondary_text
+    }))
+  });
+}));
+
+publicBookingRouter.get("/places/details", asyncHandler(async (req, res) => {
+  const placeId = typeof req.query.placeId === "string" ? req.query.placeId.trim() : "";
+  if (!placeId) return res.status(400).json({ error: "placeId is required." });
+  if (!env.GOOGLE_MAPS_API_KEY) {
+    res.status(503).json({ error: "Google Maps is not configured. Add GOOGLE_MAPS_API_KEY in Render." });
+    return;
+  }
+
+  const url = new URL("https://maps.googleapis.com/maps/api/place/details/json");
+  url.searchParams.set("place_id", placeId);
+  url.searchParams.set("fields", "place_id,formatted_address,name,address_component,geometry");
+  url.searchParams.set("key", env.GOOGLE_MAPS_API_KEY);
+
+  const response = await fetch(url);
+  if (!response.ok) return res.status(502).json({ error: "Google Place Details request failed." });
+  const data = await response.json() as GooglePlaceDetailsResponse;
+  if (data.status !== "OK" || !data.result) {
+    return res.status(502).json({ error: data.error_message ?? `Google Place Details returned ${data.status}.` });
+  }
+
+  res.json({ address: normalizePlace(data.result) });
 }));
 
 publicBookingRouter.get("/:locationKey", asyncHandler(async (req, res) => {
@@ -267,8 +450,9 @@ publicBookingRouter.post("/:locationKey", asyncHandler(async (req, res) => {
   if (!zip || !settings.serviceAreaZipCodes.includes(zip)) {
     return res.status(422).json({ error: "We do not currently service that ZIP code. Please call us if you need help outside the listed service area." });
   }
-  const slots = await availableSlots(location.id, settings, location.timezone || "America/Phoenix");
-  if (!slots.some((slot) => slot.start === input.scheduledStart && slot.end === input.scheduledEnd)) {
+  const scheduledStart = new Date(input.scheduledStart);
+  const scheduledEnd = new Date(input.scheduledEnd);
+  if (!await slotIsBookable(location.id, settings, location.timezone || "America/Phoenix", scheduledStart, scheduledEnd)) {
     return res.status(422).json({ error: "That appointment time is no longer available. Please choose another time." });
   }
   const service = input.serviceId
@@ -322,7 +506,7 @@ publicBookingRouter.post("/:locationKey", asyncHandler(async (req, res) => {
       status: JobStatus.SCHEDULED,
       scheduledStart: new Date(input.scheduledStart),
       scheduledEnd: new Date(input.scheduledEnd),
-      description: input.notes,
+      description: [input.notes, input.serviceFollowUps.length ? `Selected needs: ${input.serviceFollowUps.join(", ")}` : ""].filter(Boolean).join("\n\n"),
       internalNotes: `Booked online${input.trackingAttribute ? ` via ${input.trackingAttribute}` : ""}. Zip: ${zip}.`,
       lineItems: {
         create: [{
