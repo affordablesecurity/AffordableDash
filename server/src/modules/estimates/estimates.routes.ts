@@ -104,6 +104,21 @@ function cents(value: number) {
   return `$${(value / 100).toFixed(2)}`;
 }
 
+function validSmsPhone(value?: string | null) {
+  const digits = (value || "").replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+  if (digits.length === 10) return digits;
+  return "";
+}
+
+function estimateSmsRecipient(inputTo: string | undefined, customerPhone: string) {
+  const candidates = [
+    ...(inputTo ?? "").split(","),
+    customerPhone
+  ];
+  return candidates.map(validSmsPhone).find(Boolean) || inputTo || customerPhone;
+}
+
 function estimateSubtotal(input: { lineItems: Array<{ quantity: unknown; unitPrice: number }> }) {
   return input.lineItems.reduce((sum, item) => sum + Math.round(Number(item.quantity || 0) * item.unitPrice), 0);
 }
@@ -564,11 +579,11 @@ estimatesRouter.post("/:id/send", asyncHandler(async (req, res) => {
   const wantsText = input.method === "text" || input.method === "both";
 
   if (wantsText) {
-    const to = input.method === "text" ? input.to : input.to?.split(",").map((part) => part.trim()).find((part) => /\d/.test(part));
+    const to = estimateSmsRecipient(input.to, estimate.customer.phone);
     deliveries.push(await sendLocationSms({
       locationId,
       customerId: estimate.customerId,
-      to: to || estimate.customer.phone,
+      to,
       body: defaultTextBody,
       templateKey: "estimateSent",
       customer: estimate.customer
