@@ -3356,6 +3356,7 @@ export function App() {
   async function saveEmployee(event: FormEvent) {
     event.preventDefault();
     setError("");
+    const creatingOwnerLocation = employeeModal === "owner" && !employeeEditingId;
     const permissions = [
       ...employeeForm.permissions.filter((permission) => !permission.startsWith("mfa:")),
       ...(employeeForm.loginCodeMethod === "none" ? [] : [`mfa:${employeeForm.loginCodeMethod}`])
@@ -3366,15 +3367,15 @@ export function App() {
       username: employeeForm.username || undefined,
       password: employeeForm.password || undefined,
       phone: employeeForm.phone,
-      employmentType: employeeForm.employmentType,
-      role: employeeForm.role,
-      fieldTech: employeeForm.fieldTech,
+      employmentType: creatingOwnerLocation ? "employee" : employeeForm.employmentType,
+      role: creatingOwnerLocation ? "OWNER" : employeeForm.role,
+      fieldTech: creatingOwnerLocation ? false : employeeForm.fieldTech,
       permissions,
       color: employeeForm.color,
       active: employeeForm.active,
-      locationIds: employeeForm.allLocations ? undefined : employeeForm.locationIds,
-      allLocations: employeeForm.allLocations,
-      newLocation: employeeModal === "owner" && !employeeEditingId ? {
+      locationIds: creatingOwnerLocation ? undefined : employeeForm.allLocations ? undefined : employeeForm.locationIds,
+      allLocations: creatingOwnerLocation ? false : employeeForm.allLocations,
+      newLocation: creatingOwnerLocation ? {
         name: employeeForm.locationName,
         displayName: employeeForm.locationDisplayName || undefined,
         slug: employeeForm.locationSlug || undefined,
@@ -9982,23 +9983,33 @@ export function App() {
           <div className="modal-backdrop" onClick={() => setEmployeeModal(null)}>
             <form className="employee-modal record-form" onSubmit={saveEmployee} onClick={(event) => event.stopPropagation()}>
               <h2>{employeeEditingId ? "Edit Profile" : rolePresets[employeeModal].title}</h2>
-              <section className="employee-role-picker" aria-label="Employee role">
-                <button type="button" className={employeeForm.role === "ADMIN" ? "selected" : ""} disabled={!canUseMainLocation} onClick={() => applyEmployeeRolePreset("admin")}>
-                  <CheckCircle2 size={22} />
-                  <strong>Super admin</strong>
-                  <small>Full permissions across every location and MAIN reporting.</small>
-                </button>
-                <button type="button" className={employeeForm.role === "INSIDE_SALES" && !employeeForm.fieldTech ? "selected" : ""} onClick={() => applyEmployeeRolePreset("officeStaff")}>
-                  <Laptop size={22} />
-                  <strong>Office staff</strong>
-                  <small>Limited web portal access for dispatch and office work.</small>
-                </button>
-                <button type="button" className={employeeForm.role === "OUTSIDE_FIELD_TECH" ? "selected" : ""} onClick={() => applyEmployeeRolePreset("fieldTech")}>
-                  <Smartphone size={22} />
-                  <strong>Field tech</strong>
-                  <small>Limited field access for jobs, schedule, and payments.</small>
-                </button>
-              </section>
+              {employeeModal === "owner" && !employeeEditingId ? (
+                <section className="owner-location-flow-card">
+                  <CheckCircle2 size={24} />
+                  <span>
+                    <strong>Location owner for a new location</strong>
+                    <small>This creates the new location first, then gives this owner access to that new location only.</small>
+                  </span>
+                </section>
+              ) : (
+                <section className="employee-role-picker" aria-label="Employee role">
+                  <button type="button" className={employeeForm.role === "ADMIN" ? "selected" : ""} disabled={!canUseMainLocation} onClick={() => applyEmployeeRolePreset("admin")}>
+                    <CheckCircle2 size={22} />
+                    <strong>Super admin</strong>
+                    <small>Full permissions across every location and MAIN reporting.</small>
+                  </button>
+                  <button type="button" className={employeeForm.role === "INSIDE_SALES" && !employeeForm.fieldTech ? "selected" : ""} onClick={() => applyEmployeeRolePreset("officeStaff")}>
+                    <Laptop size={22} />
+                    <strong>Office staff</strong>
+                    <small>Limited web portal access for dispatch and office work.</small>
+                  </button>
+                  <button type="button" className={employeeForm.role === "OUTSIDE_FIELD_TECH" ? "selected" : ""} onClick={() => applyEmployeeRolePreset("fieldTech")}>
+                    <Smartphone size={22} />
+                    <strong>Field tech</strong>
+                    <small>Limited field access for jobs, schedule, and payments.</small>
+                  </button>
+                </section>
+              )}
               <div className="employee-form-grid">
                 <label>Name
                   <input value={employeeForm.name} onChange={(event) => setEmployeeForm({ ...employeeForm, name: event.target.value })} required />
@@ -10016,14 +10027,15 @@ export function App() {
                   <input value={employeeForm.phone} onChange={(event) => setEmployeeForm({ ...employeeForm, phone: event.target.value })} required />
                 </label>
                 <label>Type
-                  <select value={employeeForm.employmentType} onChange={(event) => setEmployeeForm({ ...employeeForm, employmentType: event.target.value as "employee" | "subcontractor" })}>
+                  <select value={employeeModal === "owner" && !employeeEditingId ? "employee" : employeeForm.employmentType} disabled={employeeModal === "owner" && !employeeEditingId} onChange={(event) => setEmployeeForm({ ...employeeForm, employmentType: event.target.value as "employee" | "subcontractor" })}>
                     <option value="employee">Employee</option>
                     <option value="subcontractor">Subcontractor</option>
                   </select>
                 </label>
                 <label>Role
                   <select
-                    value={employeeForm.role}
+                    value={employeeModal === "owner" && !employeeEditingId ? "OWNER" : employeeForm.role}
+                    disabled={employeeModal === "owner" && !employeeEditingId}
                     onChange={(event) => {
                       const role = event.target.value as Technician["role"];
                       setEmployeeForm({ ...employeeForm, role, fieldTech: role === "OUTSIDE_FIELD_TECH", allLocations: employeeForm.allLocations && canUseMainLocation && ["OWNER", "ADMIN"].includes(role) });
@@ -10039,38 +10051,45 @@ export function App() {
                   <input type="color" value={employeeForm.color} onChange={(event) => setEmployeeForm({ ...employeeForm, color: event.target.value })} />
                 </label>
               </div>
-              <section className="location-access-panel">
-                <strong>Location Access</strong>
-                <label className="check-row">
-                  <input
-                    type="checkbox"
-                    checked={employeeForm.allLocations}
-                    disabled={!canUseMainLocation || !["OWNER", "ADMIN"].includes(employeeForm.role)}
-                    onChange={(event) => setEmployeeForm({ ...employeeForm, allLocations: event.target.checked })}
-                  />
-                  All current and future locations
-                </label>
-                {!employeeForm.allLocations && (
-                  <div className="location-access-list">
-                    {locations.map((item) => (
-                      <label key={item.location.id} className="location-access-option">
-                        <input
-                          type="checkbox"
-                          checked={employeeForm.locationIds.includes(item.location.id)}
-                          onChange={(event) => {
-                            const nextLocationIds = event.target.checked
-                              ? [...employeeForm.locationIds, item.location.id]
-                              : employeeForm.locationIds.filter((id) => id !== item.location.id);
-                            setEmployeeForm({ ...employeeForm, locationIds: nextLocationIds });
-                          }}
-                        />
-                        {locationDisplayName(item.location)}
-                      </label>
-                    ))}
-                  </div>
-                )}
-                <p>Super admins can use all locations. Staff can be limited to only the locations checked here.</p>
-              </section>
+              {employeeModal === "owner" && !employeeEditingId ? (
+                <section className="location-access-panel">
+                  <strong>Location Access</strong>
+                  <p>This owner will be assigned to the new location below. No existing location needs to be checked.</p>
+                </section>
+              ) : (
+                <section className="location-access-panel">
+                  <strong>Location Access</strong>
+                  <label className="check-row">
+                    <input
+                      type="checkbox"
+                      checked={employeeForm.allLocations}
+                      disabled={!canUseMainLocation || !["OWNER", "ADMIN"].includes(employeeForm.role)}
+                      onChange={(event) => setEmployeeForm({ ...employeeForm, allLocations: event.target.checked })}
+                    />
+                    All current and future locations
+                  </label>
+                  {!employeeForm.allLocations && (
+                    <div className="location-access-list">
+                      {locations.map((item) => (
+                        <label key={item.location.id} className="location-access-option">
+                          <input
+                            type="checkbox"
+                            checked={employeeForm.locationIds.includes(item.location.id)}
+                            onChange={(event) => {
+                              const nextLocationIds = event.target.checked
+                                ? [...employeeForm.locationIds, item.location.id]
+                                : employeeForm.locationIds.filter((id) => id !== item.location.id);
+                              setEmployeeForm({ ...employeeForm, locationIds: nextLocationIds });
+                            }}
+                          />
+                          {locationDisplayName(item.location)}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <p>Super admins can use all locations. Staff can be limited to only the locations checked here.</p>
+                </section>
+              )}
               <section className="location-access-panel">
                 <strong>Permissions</strong>
                 <div className="employee-permission-grid">
@@ -10120,19 +10139,19 @@ export function App() {
                       <input value={employeeForm.locationPhone} onChange={(event) => setEmployeeForm({ ...employeeForm, locationPhone: event.target.value })} />
                     </label>
                     <label>Street Address
-                      <input value={employeeForm.locationStreet1} onChange={(event) => setEmployeeForm({ ...employeeForm, locationStreet1: event.target.value })} />
+                      <input value={employeeForm.locationStreet1} onChange={(event) => setEmployeeForm({ ...employeeForm, locationStreet1: event.target.value })} required />
                     </label>
                     <label>Unit / Suite
                       <input value={employeeForm.locationStreet2} onChange={(event) => setEmployeeForm({ ...employeeForm, locationStreet2: event.target.value })} />
                     </label>
                     <label>City
-                      <input value={employeeForm.locationCity} onChange={(event) => setEmployeeForm({ ...employeeForm, locationCity: event.target.value })} />
+                      <input value={employeeForm.locationCity} onChange={(event) => setEmployeeForm({ ...employeeForm, locationCity: event.target.value })} required />
                     </label>
                     <label>State
-                      <input value={employeeForm.locationState} onChange={(event) => setEmployeeForm({ ...employeeForm, locationState: event.target.value })} />
+                      <input value={employeeForm.locationState} onChange={(event) => setEmployeeForm({ ...employeeForm, locationState: event.target.value })} required />
                     </label>
                     <label>ZIP
-                      <input value={employeeForm.locationPostalCode} onChange={(event) => setEmployeeForm({ ...employeeForm, locationPostalCode: event.target.value })} />
+                      <input value={employeeForm.locationPostalCode} onChange={(event) => setEmployeeForm({ ...employeeForm, locationPostalCode: event.target.value })} required />
                     </label>
                   </div>
                 </>

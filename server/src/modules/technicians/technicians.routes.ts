@@ -195,6 +195,9 @@ techniciansRouter.post("/", asyncHandler(async (req, res) => {
   if (input.newLocation?.name && !canManageAllLocations) {
     return res.status(403).json({ error: "Only organization owners and super admins can create locations" });
   }
+  if (input.newLocation?.name && input.role !== "OWNER") {
+    return res.status(400).json({ error: "New location creation must use the location owner role" });
+  }
   let targetLocationIds = Array.from(new Set(input.locationIds?.length ? input.locationIds : [locationId]));
   if (!canManageAllLocations) {
     targetLocationIds = [locationId];

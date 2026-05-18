@@ -5127,6 +5127,31 @@ button:disabled {
   line-height: 1.35;
 }
 
+.owner-location-flow-card {
+  border: 1px solid #99f6e4;
+  border-radius: 12px;
+  background: #f0fdfa;
+  color: #0f766e;
+  padding: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.owner-location-flow-card span {
+  display: grid;
+  gap: 4px;
+}
+
+.owner-location-flow-card strong {
+  color: #134e4a;
+}
+
+.owner-location-flow-card small {
+  color: #0f766e;
+  line-height: 1.4;
+}
+
 .employee-permission-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
