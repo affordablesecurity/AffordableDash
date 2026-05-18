@@ -656,7 +656,7 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "map" | "messages" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "payments" | "reports" | "pricebook" | "servicePlans" | "events" | "onlineBooking" | "settings" | "api";
+type View = "dispatch" | "schedule" | "map" | "messages" | "customers" | "jobs" | "estimates" | "employees" | "locations" | "invoices" | "payments" | "reports" | "pricebook" | "servicePlans" | "events" | "onlineBooking" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number; minute: number; technicianId?: string } | null;
 type SchedulePickerState = { key: string; mode: "date" | "time" } | null;
@@ -898,6 +898,7 @@ const viewPathMap: Record<View, string> = {
   jobs: "/jobs",
   estimates: "/estimates",
   employees: "/employees",
+  locations: "/locations",
   invoices: "/invoices",
   payments: "/payments",
   reports: "/reports",
@@ -1884,6 +1885,7 @@ export function App() {
   const [locationSearch, setLocationSearch] = useState("");
   const [activeView, setActiveView] = useState<View>(() => typeof window === "undefined" ? "dispatch" : viewFromPath(window.location.pathname));
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [employeeCreateMenuOpen, setEmployeeCreateMenuOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalSearchFocused, setGlobalSearchFocused] = useState(false);
   const [recentGlobalSearchIds, setRecentGlobalSearchIds] = useState<string[]>([]);
@@ -2343,6 +2345,15 @@ export function App() {
     document.addEventListener("mousedown", closeLocationMenu);
     return () => document.removeEventListener("mousedown", closeLocationMenu);
   }, [locationMenuOpen]);
+  useEffect(() => {
+    if (!employeeCreateMenuOpen) return;
+    function closeEmployeeCreateMenu(event: MouseEvent) {
+      if (event.target instanceof Element && event.target.closest(".employee-create-menu-wrap")) return;
+      setEmployeeCreateMenuOpen(false);
+    }
+    document.addEventListener("mousedown", closeEmployeeCreateMenu);
+    return () => document.removeEventListener("mousedown", closeEmployeeCreateMenu);
+  }, [employeeCreateMenuOpen]);
   const weekStart = useMemo(() => startOfWeek(scheduleDate), [scheduleDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
   const monthDays = useMemo(() => {
@@ -6986,6 +6997,7 @@ export function App() {
           <button className={activeView === "jobs" ? "active" : ""} onClick={() => setActiveView("jobs")}><Wrench size={18} /> Jobs</button>
           <button className={activeView === "customers" ? "active" : ""} onClick={() => setActiveView("customers")}><Users size={18} /> Clients & Leads</button>
           <button className={activeView === "employees" ? "active" : ""} onClick={() => setActiveView("employees")}><UserPlus size={18} /> Employees</button>
+          {canUseMainLocation && <button className={activeView === "locations" ? "active" : ""} onClick={() => setActiveView("locations")}><MapPin size={18} /> Locations</button>}
           <button className={activeView === "invoices" ? "active" : ""} onClick={() => setActiveView("invoices")}><ReceiptText size={18} /> Invoices</button>
           <button className={activeView === "estimates" ? "active" : ""} onClick={() => setActiveView("estimates")}><FileText size={18} /> Estimates</button>
           <button className={activeView === "payments" ? "active" : ""} onClick={() => setActiveView("payments")}><WalletCards size={18} /> Payments</button>
@@ -7077,25 +7089,6 @@ export function App() {
 
         <div className="page-titlebar">
           <div className="breadcrumb"><Home size={17} /> {activeView === "dispatch" ? "Dashboard" : activeView === "servicePlans" ? "Service Plans" : activeView[0].toUpperCase() + activeView.slice(1)}</div>
-          <div className="topbar-actions">
-            <button className="outline-button location-title-action" type="button" onClick={() => setLocationMenuOpen(true)}>{currentLocationLabel}</button>
-            {activeView === "dispatch" ? (
-              <label className="date-pill dashboard-date-input">
-                <input
-                  aria-label="Dashboard date"
-                  type="date"
-                  value={dashboardDate}
-                  onChange={(event) => {
-                    setDashboardDate(event.target.value);
-                    setDashboardDateRange("selectedDay");
-                  }}
-                />
-                <CalendarDays size={16} />
-              </label>
-            ) : (
-              <div className="date-pill">{new Date().toLocaleDateString([], { month: "2-digit", day: "2-digit", year: "numeric" })} <CalendarDays size={16} /></div>
-            )}
-          </div>
         </div>
 
         {error && <div className="error">{error}</div>}
@@ -9901,18 +9894,72 @@ export function App() {
           )
         )}
 
+        {activeView === "locations" && canUseMainLocation && (
+          <section className="locations-page">
+            <div className="section-actions">
+              <div className="breadcrumb"><MapPin size={17} /> Locations</div>
+              <div className="employee-create-menu-wrap">
+                <button className="primary" type="button" onClick={() => { setActiveView("employees"); openEmployeeModal("owner"); }}>
+                  <Plus size={17} /> Create Owner + Location
+                </button>
+              </div>
+            </div>
+            <div className="locations-admin-grid">
+              <section className="locations-admin-card main-location-card">
+                <header>
+                  <span className="location-avatar">M</span>
+                  <span>
+                    <strong>MAIN {activeLocationAccess?.organization.name || "Affordable Security"}</strong>
+                    <small>Rollup view for revenue, reporting, and all-location oversight.</small>
+                  </span>
+                </header>
+                <button className="outline-button" type="button" onClick={selectMainLocation}>Open MAIN</button>
+              </section>
+              {locations.map((item) => (
+                <section className="locations-admin-card" key={item.location.id}>
+                  <header>
+                    {invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="" /> : <span className="location-avatar">A</span>}
+                    <span>
+                      <strong>{locationDisplayName(item.location)}</strong>
+                      <small>{[item.location.city, item.location.state, item.location.postalCode].filter(Boolean).join(", ") || item.organization.name}</small>
+                    </span>
+                    {item.location.id === activeLocationId && locationScope === "location" && <em>Current</em>}
+                  </header>
+                  <dl>
+                    <div><dt>Phone</dt><dd>{item.location.phone || "-"}</dd></div>
+                    <div><dt>Address</dt><dd>{[item.location.street1, item.location.city, item.location.state, item.location.postalCode].filter(Boolean).join(", ") || "-"}</dd></div>
+                  </dl>
+                  <div className="employee-actions">
+                    <button className="outline-button" type="button" onClick={() => void switchLocation(item.location.id)}>Open location</button>
+                    <button className="text-button" type="button" onClick={() => { setActiveView("employees"); openEmployeeModal("employee"); setEmployeeForm((current) => ({ ...current, locationIds: [item.location.id] })); }}>Add staff here</button>
+                  </div>
+                </section>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {activeView === "locations" && !canUseMainLocation && (
+          <section className="employees-page"><div className="error">Only super admins can manage locations.</div></section>
+        )}
+
         {activeView === "employees" && (
           <section className="employees-page">
             <div className="section-actions">
               <div className="breadcrumb"><UserPlus size={17} /> Employees</div>
               {canManageEmployees && (
-                <div className="action-buttons">
-                  {canUseMainLocation && <button className="outline-button" type="button" onClick={() => openEmployeeModal("admin")}><Plus size={17} /> Add Super Admin</button>}
-                  {canUseMainLocation && <button className="outline-button" type="button" onClick={() => openEmployeeModal("owner")}><Plus size={17} /> Create Owner + Location</button>}
-                  <button className="outline-button" type="button" onClick={() => openEmployeeModal("contractor")}><Plus size={17} /> Create Contractor</button>
-                  <button className="outline-button" type="button" onClick={() => openEmployeeModal("fieldTech")}><Plus size={17} /> Create Field Tech</button>
-                  <button className="outline-button" type="button" onClick={() => openEmployeeModal("officeStaff")}><Plus size={17} /> Office Staff</button>
-                  <button className="primary" type="button" onClick={() => openEmployeeModal("employee")}><Plus size={17} /> Create Employee</button>
+                <div className="employee-create-menu-wrap">
+                  <button className="primary" type="button" onClick={() => setEmployeeCreateMenuOpen((open) => !open)}>
+                    <Plus size={17} /> Add staff <ChevronDown size={16} />
+                  </button>
+                  <div className={`employee-create-menu ${employeeCreateMenuOpen ? "open" : ""}`}>
+                    {canUseMainLocation && <button type="button" onClick={() => { openEmployeeModal("admin"); setEmployeeCreateMenuOpen(false); }}><CheckCircle2 size={16} /><span><strong>Super Admin</strong><small>All locations and MAIN access</small></span></button>}
+                    {canUseMainLocation && <button type="button" onClick={() => { openEmployeeModal("owner"); setEmployeeCreateMenuOpen(false); }}><MapPin size={16} /><span><strong>Owner + Location</strong><small>Create a location and assign its owner</small></span></button>}
+                    <button type="button" onClick={() => { openEmployeeModal("contractor"); setEmployeeCreateMenuOpen(false); }}><Users size={16} /><span><strong>Contractor</strong><small>Limited subcontractor access</small></span></button>
+                    <button type="button" onClick={() => { openEmployeeModal("fieldTech"); setEmployeeCreateMenuOpen(false); }}><Smartphone size={16} /><span><strong>Field Tech</strong><small>Jobs, schedule, and field work</small></span></button>
+                    <button type="button" onClick={() => { openEmployeeModal("officeStaff"); setEmployeeCreateMenuOpen(false); }}><Laptop size={16} /><span><strong>Office Staff</strong><small>Dispatch and office workflows</small></span></button>
+                    <button type="button" onClick={() => { openEmployeeModal("employee"); setEmployeeCreateMenuOpen(false); }}><UserPlus size={16} /><span><strong>Employee</strong><small>General employee profile</small></span></button>
+                  </div>
                 </div>
               )}
             </div>
