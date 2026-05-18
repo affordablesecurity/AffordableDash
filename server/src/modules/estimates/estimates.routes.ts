@@ -569,7 +569,7 @@ estimatesRouter.post("/:id/send", asyncHandler(async (req, res) => {
       locationId,
       customerId: estimate.customerId,
       to: to || estimate.customer.phone,
-      body: body.length > 155 ? defaultTextBody : body.replace(estimateUrl, shortEstimateUrl),
+      body: defaultTextBody,
       templateKey: "estimateSent",
       customer: estimate.customer
     }));

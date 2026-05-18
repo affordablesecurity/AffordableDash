@@ -38,6 +38,7 @@ type MessagingMetadata = Partial<MessagingSettings>;
 
 const provider = "voipms";
 const maskedPassword = "********";
+const smsCharacterLimit = 160;
 
 export const defaultTemplates: Record<MessagingTemplateKey, string> = {
   appointmentScheduled: "Hi {{customerFirstName}}, your appointment with {{companyName}} is scheduled for {{scheduledWindow}}. Reply STOP to opt out.",
@@ -56,6 +57,13 @@ const defaultAutoSend: Record<MessagingTemplateKey, boolean> = {
   invoiceSent: true,
   paymentReceived: true
 };
+
+function normalizeSmsRecipient(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+  if (digits.length === 10) return digits;
+  return "";
+}
 
 export function defaultMessagingSettings(): MessagingSettings {
   return {
@@ -203,8 +211,25 @@ export async function sendLocationSms(input: {
 }) {
   const settings = await getMessagingSettings(input.locationId, false);
   const fromNumber = settings.defaultDid || env.VOIPMS_DID || "";
+  const recipient = normalizeSmsRecipient(input.to);
 
   if (!settings.smsEnabled || !settings.username || !settings.apiPassword || !settings.defaultDid) {
+    return createMessage({
+      locationId: input.locationId,
+      customerId: input.customerId,
+      jobId: input.jobId,
+      invoiceId: input.invoiceId,
+      fromNumber,
+      toNumber: recipient || input.to,
+      body: input.body,
+      status: "FAILED",
+      error: "VoIP.ms SMS is not configured for this location.",
+      templateKey: input.templateKey,
+      attachments: input.attachments
+    });
+  }
+
+  if (!recipient) {
     return createMessage({
       locationId: input.locationId,
       customerId: input.customerId,
@@ -214,23 +239,7 @@ export async function sendLocationSms(input: {
       toNumber: input.to,
       body: input.body,
       status: "FAILED",
-      error: "VoIP.ms SMS is not configured for this location.",
-      templateKey: input.templateKey,
-      attachments: input.attachments
-    });
-  }
-
-  if (!input.to) {
-    return createMessage({
-      locationId: input.locationId,
-      customerId: input.customerId,
-      jobId: input.jobId,
-      invoiceId: input.invoiceId,
-      fromNumber,
-      toNumber: "",
-      body: input.body,
-      status: "FAILED",
-      error: "Customer has no phone number for SMS.",
+      error: input.to ? "Customer phone number is not valid for SMS." : "Customer has no phone number for SMS.",
       templateKey: input.templateKey,
       attachments: input.attachments
     });
@@ -243,7 +252,7 @@ export async function sendLocationSms(input: {
       jobId: input.jobId,
       invoiceId: input.invoiceId,
       fromNumber,
-      toNumber: input.to,
+      toNumber: recipient,
       body: input.body,
       status: "SKIPPED",
       error: "Customer has opted out of text messages.",
@@ -253,6 +262,9 @@ export async function sendLocationSms(input: {
   }
 
   const hasAttachments = (input.attachments ?? []).length > 0;
+  const body = !hasAttachments && input.body.length > smsCharacterLimit
+    ? `${input.body.slice(0, smsCharacterLimit - 1).trimEnd()}…`
+    : input.body;
 
   if (hasAttachments) {
     const queuedMessage = await createMessage({
@@ -261,8 +273,8 @@ export async function sendLocationSms(input: {
       jobId: input.jobId,
       invoiceId: input.invoiceId,
       fromNumber,
-      toNumber: input.to,
-      body: input.body,
+      toNumber: recipient,
+      body,
       status: "QUEUED",
       templateKey: input.templateKey,
       attachments: input.attachments,
@@ -270,7 +282,7 @@ export async function sendLocationSms(input: {
     });
 
     try {
-      const result = await sendMms(input.to, input.body, input.attachments ?? [], {
+      const result = await sendMms(recipient, body, input.attachments ?? [], {
         username: settings.username,
         apiPassword: settings.apiPassword,
         did: settings.defaultDid,
@@ -295,7 +307,7 @@ export async function sendLocationSms(input: {
   }
 
   try {
-    const result = await sendSms(input.to, input.body, {
+    const result = await sendSms(recipient, body, {
       username: settings.username,
       apiPassword: settings.apiPassword,
       did: settings.defaultDid
@@ -306,8 +318,8 @@ export async function sendLocationSms(input: {
       jobId: input.jobId,
       invoiceId: input.invoiceId,
       fromNumber,
-      toNumber: input.to,
-      body: input.body,
+      toNumber: recipient,
+      body,
       status: "SENT",
       templateKey: input.templateKey,
       attachments: input.attachments,
@@ -321,8 +333,8 @@ export async function sendLocationSms(input: {
       jobId: input.jobId,
       invoiceId: input.invoiceId,
       fromNumber,
-      toNumber: input.to,
-      body: input.body,
+      toNumber: recipient,
+      body,
       status: "FAILED",
       error: err instanceof Error ? err.message : "SMS failed",
       templateKey: input.templateKey,

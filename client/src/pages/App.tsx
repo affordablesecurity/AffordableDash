@@ -4082,7 +4082,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({
           customerId: selectedThread.customer?.id,
-          to: selectedThread.phone,
+          to: selectedThread.customer?.phone || selectedThread.phone,
           body: trimmedBody || "Attachment",
           attachments: messageAttachments.map((attachment) => JSON.stringify(attachment))
         })
