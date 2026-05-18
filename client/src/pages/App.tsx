@@ -569,6 +569,7 @@ type PublicServiceMapPayload = {
     state?: string | null;
     postalCode?: string | null;
     companyColor?: string | null;
+    logoDataUrl?: string | null;
   };
   range: string;
   jobs: Array<{
@@ -583,6 +584,9 @@ type PublicServiceMapPayload = {
     latitude?: number | null;
     longitude?: number | null;
     description?: string | null;
+    customerFirstName?: string | null;
+    customerLastInitial?: string | null;
+    tags?: string[];
     imageUrl?: string | null;
   }>;
 };
@@ -2063,9 +2067,12 @@ export function App() {
   const [recentGlobalSearchIds, setRecentGlobalSearchIds] = useState<string[]>([]);
   const [bookingData, setBookingData] = useState<PublicBookingPayload | null>(null);
   const [publicServiceMapData, setPublicServiceMapData] = useState<PublicServiceMapPayload | null>(null);
-  const [publicServiceMapRange, setPublicServiceMapRange] = useState("month");
+  const [selectedPublicMapJobId, setSelectedPublicMapJobId] = useState("");
   const [mapMode, setMapMode] = useState<"today" | "heat" | "embed">("today");
-  const [mapRange, setMapRange] = useState("month");
+  const [mapYearFilter, setMapYearFilter] = useState("all");
+  const [mapMonthFilter, setMapMonthFilter] = useState("all");
+  const [mapTagFilter, setMapTagFilter] = useState("");
+  const [mapJobTypeFilter, setMapJobTypeFilter] = useState("");
   const [bookingStep, setBookingStep] = useState<"zip" | "service" | "time" | "contact" | "done">("zip");
   const [bookingForm, setBookingForm] = useState({
     zipCode: "",
@@ -2483,10 +2490,10 @@ export function App() {
   }, [publicBookingLocationKey]);
   useEffect(() => {
     if (!publicServiceMapLocationKey) return;
-    api<PublicServiceMapPayload>(`/api/public-service-map/${encodeURIComponent(publicServiceMapLocationKey)}?range=${encodeURIComponent(publicServiceMapRange)}`, { skipAuth: true })
+    api<PublicServiceMapPayload>(`/api/public-service-map/${encodeURIComponent(publicServiceMapLocationKey)}`, { skipAuth: true })
       .then(setPublicServiceMapData)
       .catch((err) => setBookingSubmitMessage(err instanceof Error ? err.message : "Service map could not be loaded."));
-  }, [publicServiceMapLocationKey, publicServiceMapRange]);
+  }, [publicServiceMapLocationKey]);
   useEffect(() => {
     if (!token || publicBookingLocationKey || publicServiceMapLocationKey || activeView !== "onlineBooking" || !activeLocationId) return;
     api<{ settings: OnlineBookingSettings; services: Array<{ name: string; onlineBooking: boolean }> }>("/api/booking/settings")
@@ -3198,7 +3205,15 @@ export function App() {
     activeLocationAccess?.location.postalCode
   ].filter(Boolean).join(", ") || "No company address saved yet";
   const completedMapJobs = useMemo(() => jobs
-    .filter((job) => job.status === "COMPLETED" && completedWithinRange(job, mapRange))
+    .filter((job) => {
+      if (job.status !== "COMPLETED") return false;
+      const completedDate = new Date(job.completedAt ?? job.scheduledStart ?? job.createdAt ?? "");
+      const yearMatches = mapYearFilter === "all" || completedDate.getFullYear() === Number(mapYearFilter);
+      const monthMatches = mapMonthFilter === "all" || completedDate.getMonth() + 1 === Number(mapMonthFilter);
+      const tagMatches = !mapTagFilter || (job.tags ?? []).includes(mapTagFilter);
+      const typeMatches = !mapJobTypeFilter || job.jobType === mapJobTypeFilter;
+      return yearMatches && monthMatches && tagMatches && typeMatches;
+    })
     .map((job) => {
       const address = jobPrimaryAddress(job);
       const coordinates = addressCoordinates(address);
@@ -3211,14 +3226,21 @@ export function App() {
         amount: jobTotalCents(job),
         imageUrl: attachmentImageUrl(job.attachments)
       };
-    }), [jobs, mapRange]);
+    }), [jobs, mapJobTypeFilter, mapMonthFilter, mapTagFilter, mapYearFilter]);
   const locatedCompletedMapJobs = completedMapJobs.filter((item) => item.latitude !== undefined && item.longitude !== undefined);
-  const mapFallbackQuery = companyAddressPreview || activeLocationAccess?.location.city || "Yuma, AZ";
+  const completedMapYears = useMemo(() => Array.from(new Set(jobs
+    .filter((job) => job.status === "COMPLETED" && (job.completedAt || job.scheduledStart || job.createdAt))
+    .map((job) => new Date(job.completedAt ?? job.scheduledStart ?? job.createdAt ?? "").getFullYear())
+    .filter((year) => Number.isFinite(year))))
+    .sort((left, right) => right - left), [jobs]);
+  const mapFallbackQuery = companyAddressPreview !== "No company address saved yet"
+    ? companyAddressPreview
+    : [activeLocationAccess?.location.state || "AZ", "United States"].filter(Boolean).join(", ");
   const currentMapStops = mapMode === "heat"
     ? locatedCompletedMapJobs.map((item) => ({ location: item.location, latitude: item.latitude, longitude: item.longitude }))
     : todaysDispatchStops.map((stop) => ({ location: stop.location, latitude: stop.latitude, longitude: stop.longitude }));
   const mapEmbedUrl = googleMapsEmbedUrl(currentMapStops, mapFallbackQuery);
-  const serviceMapPublicLink = `${typeof window === "undefined" ? "" : window.location.origin}/service-map/${activeLocationAccess?.location.id ?? activeLocationId}?range=${encodeURIComponent(mapRange)}`;
+  const serviceMapPublicLink = `${typeof window === "undefined" ? "" : window.location.origin}/service-map/${activeLocationAccess?.location.id ?? activeLocationId}`;
   const serviceMapEmbedCode = `<iframe src="${serviceMapPublicLink}" style="width:100%;height:720px;border:0;border-radius:8px" loading="lazy" title="Affordable Security service map"></iframe>`;
 
   async function loadDashboard() {
@@ -6640,28 +6662,27 @@ export function App() {
   function renderPublicServiceMapPage() {
     const payload = publicServiceMapData;
     const jobsForMap = payload?.jobs ?? [];
+    const selectedPublicJob = jobsForMap.find((job) => job.id === selectedPublicMapJobId) ?? null;
     const color = payload?.location.companyColor || "#1d4ed8";
+    const publicMapFallback = [payload?.location.state || "AZ", "United States"].filter(Boolean).join(", ");
+    const publicLogo = payload?.location.logoDataUrl || "";
     const widgetMapUrl = googleMapsEmbedUrl(
       jobsForMap.map((job) => ({
         location: [job.city, job.state, job.postalCode].filter(Boolean).join(", "),
         latitude: job.latitude,
         longitude: job.longitude
       })),
-      [payload?.location.city, payload?.location.state, payload?.location.postalCode].filter(Boolean).join(", ") || "Yuma, AZ"
+      publicMapFallback
     );
+    const publicLocationName = "Affordable Security";
     return (
       <main className="public-service-map-shell" style={{ "--booking-color": color } as CSSProperties}>
         <section className="public-service-map-top">
           <div>
             <span>Affordable Security service map</span>
-            <h1>{payload?.location.name || "Recent completed jobs"}</h1>
+            <h1>Completed service map</h1>
           </div>
-          <select value={publicServiceMapRange} onChange={(event) => setPublicServiceMapRange(event.target.value)}>
-            <option value="today">Today</option>
-            <option value="week">Past week</option>
-            <option value="month">Past month</option>
-            <option value="quarter">Past 3 months</option>
-          </select>
+          <div className="public-map-logo-badge">{publicLogo ? <img src={publicLogo} alt="" /> : <span>A</span>}</div>
         </section>
         <section className="public-service-map-frame">
           <iframe title="Affordable Security completed job map" src={widgetMapUrl} loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
@@ -6678,19 +6699,42 @@ export function App() {
         </section>
         <section className="public-service-map-stats">
           <strong>{jobsForMap.length}</strong>
-          <span>completed jobs shown for this area</span>
+          <span>completed jobs shown from our service history</span>
         </section>
         <section className="public-map-card-grid">
           {jobsForMap.slice(0, 8).map((job) => (
-            <article key={job.id} className="public-map-job-card">
-              {job.imageUrl ? <img src={job.imageUrl} alt="" /> : <div className="public-map-image-placeholder"><Wrench size={28} /></div>}
-              <strong>{job.jobType}</strong>
+            <button key={job.id} className="public-map-job-card" type="button" onClick={() => setSelectedPublicMapJobId(job.id)}>
+              <div className="public-map-image-wrap">
+                {job.imageUrl ? <img src={job.imageUrl} alt="" /> : <div className="public-map-image-placeholder"><Wrench size={28} /></div>}
+                <strong>{[job.customerFirstName, job.customerLastInitial ? `${job.customerLastInitial}.` : ""].filter(Boolean).join(" ") || "Customer"}</strong>
+              </div>
+              <h2>{job.jobType}</h2>
               <p>{job.description || job.title}</p>
               <small>{[job.city, job.state, job.postalCode].filter(Boolean).join(", ")}</small>
-            </article>
+            </button>
           ))}
-          {!jobsForMap.length && <p className="empty-state">No completed jobs are available for this range yet.</p>}
+          {!jobsForMap.length && <p className="empty-state">No completed jobs are available yet.</p>}
         </section>
+        {selectedPublicJob && (
+          <div className="public-map-modal-backdrop" onClick={() => setSelectedPublicMapJobId("")}>
+            <article className="public-map-modal" onClick={(event) => event.stopPropagation()}>
+              <button className="public-map-modal-close" type="button" onClick={() => setSelectedPublicMapJobId("")}>Close <X size={18} /></button>
+              <div className="public-map-modal-image">
+                {selectedPublicJob.imageUrl ? <img src={selectedPublicJob.imageUrl} alt="" /> : <div className="public-map-image-placeholder"><Wrench size={34} /></div>}
+                <div className="public-map-logo-watermark">{publicLogo ? <img src={publicLogo} alt="" /> : "A"}</div>
+              </div>
+              <aside>
+                <h2>{[selectedPublicJob.customerFirstName, selectedPublicJob.customerLastInitial ? `${selectedPublicJob.customerLastInitial}.` : ""].filter(Boolean).join(" ") || "Customer"}</h2>
+                <p>{selectedPublicJob.description || selectedPublicJob.title}</p>
+                <div className="public-map-modal-meta">
+                  <span>{publicLocationName}</span>
+                  <strong>{selectedPublicJob.jobType}</strong>
+                  <em>{[selectedPublicJob.city, selectedPublicJob.state].filter(Boolean).join(", ")}</em>
+                </div>
+              </aside>
+            </article>
+          </div>
+        )}
       </main>
     );
   }
@@ -8067,12 +8111,11 @@ export function App() {
                   </div>
                   {mapMode === "heat" && (
                     <div className="map-filter-row">
-                      {[
-                        ["today", "Today"],
-                        ["week", "Week"],
-                        ["month", "Month"],
-                        ["quarter", "Last 3 months"]
-                      ].map(([value, label]) => <button key={value} className={mapRange === value ? "active" : ""} type="button" onClick={() => setMapRange(value)}>{label}</button>)}
+                      <label>Year<select value={mapYearFilter} onChange={(event) => setMapYearFilter(event.target.value)}><option value="all">All years</option>{completedMapYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
+                      <label>Month<select value={mapMonthFilter} onChange={(event) => setMapMonthFilter(event.target.value)}><option value="all">All months</option>{Array.from({ length: 12 }, (_item, index) => <option key={index + 1} value={index + 1}>{new Date(2026, index, 1).toLocaleString([], { month: "long" })}</option>)}</select></label>
+                      <label>Tag<select value={mapTagFilter} onChange={(event) => setMapTagFilter(event.target.value)}><option value="">All tags</option>{crmOptions.tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label>
+                      <label>Job type<select value={mapJobTypeFilter} onChange={(event) => setMapJobTypeFilter(event.target.value)}><option value="">All job types</option>{crmOptions.jobTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+                      <button type="button" onClick={() => { setMapYearFilter("all"); setMapMonthFilter("all"); setMapTagFilter(""); setMapJobTypeFilter(""); }}>Clear</button>
                     </div>
                   )}
                   <div className="google-map-frame">
@@ -8114,7 +8157,7 @@ export function App() {
                       );
                     })}
                     {mapMode === "today" && !dispatchStops.length && <p className="empty-state">Create jobs or events with locations to build the route map.</p>}
-                    {mapMode === "heat" && !completedMapJobs.length && <p className="empty-state">No completed jobs found for this range.</p>}
+                    {mapMode === "heat" && !completedMapJobs.length && <p className="empty-state">No completed jobs found for these filters.</p>}
                   </div>
                 </section>
               </div>
@@ -8123,15 +8166,7 @@ export function App() {
               <div className="map-page-grid">
                 <section className="panel route-map-board">
                   <div className="panel-header"><h2>Website service-area widget</h2><span>Public and auto-updating</span></div>
-                  <p className="muted-copy">This public widget shows completed jobs for the selected range with customer-safe details, job type, city/ZIP, photos when saved, and a live map visitors can zoom.</p>
-                  <div className="map-filter-row">
-                    {[
-                      ["today", "Today"],
-                      ["week", "Week"],
-                      ["month", "Month"],
-                      ["quarter", "Last 3 months"]
-                    ].map(([value, label]) => <button key={value} className={mapRange === value ? "active" : ""} type="button" onClick={() => setMapRange(value)}>{label}</button>)}
-                  </div>
+                  <p className="muted-copy">This public widget shows the full completed-job service history with customer-safe details, first name and last initial, city/ZIP, photos when saved, and a clickable job popup.</p>
                   <label className="embed-code-box">
                     Public link
                     <input readOnly value={serviceMapPublicLink} onFocus={(event) => event.currentTarget.select()} />

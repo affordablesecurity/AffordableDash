@@ -4,22 +4,6 @@ import { asyncHandler } from "../../utils/async-handler.js";
 
 export const publicServiceMapRouter = Router();
 
-function rangeStart(range: string) {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  if (range === "today") return start;
-  if (range === "week") {
-    start.setDate(start.getDate() - 6);
-    return start;
-  }
-  if (range === "quarter") {
-    start.setMonth(start.getMonth() - 3);
-    return start;
-  }
-  start.setMonth(start.getMonth() - 1);
-  return start;
-}
-
 function decimalNumber(value: unknown) {
   if (value === null || value === undefined) return null;
   const parsed = Number(value);
@@ -37,8 +21,6 @@ function summaryForJob(job: { description: string | null; title: string; jobType
 
 publicServiceMapRouter.get("/:locationKey", asyncHandler(async (req, res) => {
   const locationKey = String(req.params.locationKey);
-  const requestedRange = typeof req.query.range === "string" ? req.query.range : "month";
-  const range = ["today", "week", "month", "quarter"].includes(requestedRange) ? requestedRange : "month";
   const location = await prisma.location.findFirst({
     where: { OR: [{ id: locationKey }, { slug: locationKey }] },
     include: { organization: true }
@@ -48,11 +30,7 @@ publicServiceMapRouter.get("/:locationKey", asyncHandler(async (req, res) => {
   const jobs = await prisma.job.findMany({
     where: {
       locationId: location.id,
-      status: "COMPLETED",
-      OR: [
-        { completedAt: { gte: rangeStart(range) } },
-        { completedAt: null, scheduledStart: { gte: rangeStart(range) } }
-      ]
+      status: "COMPLETED"
     },
     include: {
       address: true,
@@ -60,7 +38,7 @@ publicServiceMapRouter.get("/:locationKey", asyncHandler(async (req, res) => {
       lineItems: true
     },
     orderBy: [{ completedAt: "desc" }, { scheduledStart: "desc" }],
-    take: 100
+    take: 500
   });
 
   res.json({
@@ -70,9 +48,12 @@ publicServiceMapRouter.get("/:locationKey", asyncHandler(async (req, res) => {
       city: location.city,
       state: location.state,
       postalCode: location.postalCode,
-      companyColor: location.companyColor
+      companyColor: location.companyColor,
+      logoDataUrl: typeof location.invoiceSettings === "object" && location.invoiceSettings && "logoDataUrl" in location.invoiceSettings
+        ? String((location.invoiceSettings as { logoDataUrl?: unknown }).logoDataUrl ?? "")
+        : ""
     },
-    range,
+    range: "all",
     jobs: jobs.map((job) => {
       const address = job.address ?? job.customer.addresses[0] ?? null;
       return {
@@ -87,6 +68,9 @@ publicServiceMapRouter.get("/:locationKey", asyncHandler(async (req, res) => {
         latitude: decimalNumber(address?.latitude),
         longitude: decimalNumber(address?.longitude),
         description: summaryForJob(job),
+        customerFirstName: job.customer.firstName,
+        customerLastInitial: job.customer.lastName?.slice(0, 1) ?? "",
+        tags: job.tags,
         imageUrl: publicImageUrl(job.attachments)
       };
     })

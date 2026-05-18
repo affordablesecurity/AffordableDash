@@ -7280,6 +7280,24 @@ button:disabled {
   margin-bottom: 12px;
 }
 
+.map-filter-row label {
+  display: grid;
+  gap: 4px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.map-filter-row select {
+  min-width: 140px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px 10px;
+  color: #0f172a;
+  font: inherit;
+}
+
 .map-filter-row button {
   border: 1px solid #cbd5e1;
   background: #ffffff;
@@ -7442,6 +7460,26 @@ button:disabled {
   font-weight: 700;
 }
 
+.public-map-logo-badge {
+  width: 74px;
+  height: 52px;
+  border-radius: 8px;
+  background: var(--booking-color);
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  font-weight: 900;
+  overflow: hidden;
+}
+
+.public-map-logo-badge img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #ffffff;
+}
+
 .public-service-map-frame {
   min-height: 430px;
 }
@@ -7474,6 +7512,27 @@ button:disabled {
   background: #ffffff;
   overflow: hidden;
   display: grid;
+  gap: 10px;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.public-map-image-wrap {
+  position: relative;
+}
+
+.public-map-image-wrap > strong {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  margin: 0;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: rgba(15, 23, 42, 0.74);
+  color: #ffffff;
+  font-size: 14px;
 }
 
 .public-map-job-card img,
@@ -7487,15 +7546,16 @@ button:disabled {
   place-items: center;
 }
 
-.public-map-job-card strong,
+.public-map-job-card h2,
 .public-map-job-card p,
 .public-map-job-card small {
   margin: 0;
   padding: 0 14px;
 }
 
-.public-map-job-card strong {
-  padding-top: 12px;
+.public-map-job-card h2 {
+  color: #0f172a;
+  font-size: 17px;
 }
 
 .public-map-job-card p {
@@ -7507,6 +7567,118 @@ button:disabled {
 .public-map-job-card small {
   color: #64748b;
   padding-bottom: 14px;
+}
+
+.public-map-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(15, 23, 42, 0.68);
+  display: grid;
+  place-items: center;
+  padding: 28px;
+}
+
+.public-map-modal {
+  width: min(1180px, 100%);
+  max-height: 92vh;
+  border: 1px solid #1d4ed8;
+  border-radius: 8px;
+  background: #ffffff;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  overflow: hidden;
+  position: relative;
+}
+
+.public-map-modal-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  border: 0;
+  border-left: 1px solid #1d4ed8;
+  border-bottom: 1px solid #1d4ed8;
+  background: #ffffff;
+  padding: 14px 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.public-map-modal-image {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 620px;
+  background: #f8fafc;
+}
+
+.public-map-modal-image img {
+  max-width: 100%;
+  max-height: 86vh;
+  object-fit: contain;
+}
+
+.public-map-logo-watermark {
+  position: absolute;
+  left: 28px;
+  bottom: 28px;
+  width: 104px;
+  height: 88px;
+  border-radius: 4px;
+  background: var(--booking-color);
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  font-size: 32px;
+  font-weight: 900;
+  overflow: hidden;
+}
+
+.public-map-logo-watermark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+.public-map-modal aside {
+  border-left: 1px solid #1d4ed8;
+  padding: 74px 18px 22px;
+  display: grid;
+  align-content: start;
+  gap: 18px;
+}
+
+.public-map-modal aside h2 {
+  margin: 0;
+  color: #1d4ed8;
+  font-size: 28px;
+}
+
+.public-map-modal aside p {
+  margin: 0;
+  line-height: 1.5;
+  color: #1f2937;
+}
+
+.public-map-modal-meta {
+  display: grid;
+  gap: 8px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.public-map-modal-meta strong {
+  color: #0f172a;
+}
+
+.public-map-modal-meta em {
+  font-style: normal;
+  color: #1d4ed8;
 }
 
 .event-create-overlay {
@@ -9229,6 +9401,21 @@ button:disabled {
   .map-actions {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .public-map-modal {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .public-map-modal-image {
+    min-height: 360px;
+  }
+
+  .public-map-modal aside {
+    border-left: 0;
+    border-top: 1px solid #1d4ed8;
+    padding-top: 64px;
   }
 
   .messages-layout,

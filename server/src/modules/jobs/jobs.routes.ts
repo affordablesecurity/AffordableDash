@@ -112,7 +112,7 @@ jobsRouter.get("/", asyncHandler(async (req, res) => {
     where: { locationId, ...(status ? { status } : {}) },
     include: jobInclude,
     orderBy: [{ scheduledStart: "asc" }, { createdAt: "desc" }],
-    take: 150
+    take: 1000
   });
   res.json({ jobs });
 }));
