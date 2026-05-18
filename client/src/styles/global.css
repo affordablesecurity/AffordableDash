@@ -7519,6 +7519,99 @@ button:disabled {
   min-height: 430px;
 }
 
+.public-service-map-frame.interactive {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  background: #dbeafe;
+}
+
+.public-service-map-frame.interactive:active {
+  cursor: grabbing;
+}
+
+.public-map-tile-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.public-map-tile-layer img {
+  position: absolute;
+  width: 256px;
+  height: 256px;
+  max-width: none;
+  user-select: none;
+}
+
+.public-map-lock-marker {
+  position: absolute;
+  z-index: 3;
+  transform: translate(-50%, -100%);
+  width: 38px;
+  height: 38px;
+  border: 3px solid #ffffff;
+  border-radius: 999px 999px 999px 4px;
+  background: #1d4ed8;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.32);
+  cursor: pointer;
+}
+
+.public-map-lock-marker svg {
+  transform: rotate(-45deg);
+}
+
+.public-map-lock-marker::after {
+  content: "";
+  position: absolute;
+  inset: -9px;
+  border-radius: 999px;
+  background: rgba(29, 78, 216, 0.16);
+  z-index: -1;
+}
+
+.public-map-controls {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  z-index: 4;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+}
+
+.public-map-controls button {
+  width: 42px;
+  height: 38px;
+  border: 0;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.public-map-controls button + button {
+  border-top: 1px solid #e2e8f0;
+}
+
+.public-map-drag-hint {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 4;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.76);
+  color: #ffffff;
+  padding: 7px 11px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .public-service-map-stats {
   display: flex;
   align-items: baseline;

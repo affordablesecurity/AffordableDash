@@ -1245,6 +1245,22 @@ function staticMapUrl(points: Array<{ latitude?: number | null; longitude?: numb
   return `/api/places/static-map?${params.toString()}`;
 }
 
+function mapWorldPoint(latitude: number, longitude: number, zoom: number) {
+  const scale = 256 * 2 ** zoom;
+  const sinLatitude = Math.sin((latitude * Math.PI) / 180);
+  return {
+    x: ((longitude + 180) / 360) * scale,
+    y: (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)) * scale
+  };
+}
+
+function mapTileUrl(x: number, y: number, zoom: number) {
+  const tileCount = 2 ** zoom;
+  const wrappedX = ((x % tileCount) + tileCount) % tileCount;
+  const clampedY = Math.max(0, Math.min(tileCount - 1, y));
+  return `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${clampedY}.png`;
+}
+
 function privacySafeJobSummary(job: Pick<Job, "description" | "jobType" | "title" | "lineItems">) {
   const line = job.lineItems?.[0]?.name;
   return job.description || line || job.title || `${job.jobType} service`;
@@ -2060,6 +2076,9 @@ export function App() {
   const [mapTagFilter, setMapTagFilter] = useState("");
   const [mapJobTypeFilter, setMapJobTypeFilter] = useState("");
   const [selectedMapFocusId, setSelectedMapFocusId] = useState("");
+  const [publicMapZoom, setPublicMapZoom] = useState(10);
+  const [publicMapPan, setPublicMapPan] = useState({ x: 0, y: 0 });
+  const publicMapDragRef = useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null);
   const [bookingStep, setBookingStep] = useState<"zip" | "service" | "time" | "contact" | "done">("zip");
   const [bookingForm, setBookingForm] = useState({
     zipCode: "",
@@ -6674,16 +6693,34 @@ export function App() {
     const selectedPublicJob = jobsForMap.find((job) => job.id === selectedPublicMapJobId) ?? null;
     const color = payload?.location.companyColor || "#1d4ed8";
     const publicLogo = payload?.location.logoDataUrl || "";
-    const widgetMapUrl = staticMapUrl(
-      jobsForMap.map((job) => ({
-        location: [job.city, job.state, job.postalCode].filter(Boolean).join(", "),
-        latitude: job.latitude,
-        longitude: job.longitude
-      })),
-      undefined,
-      "1200x420"
-    );
+    const locatedJobsForMap = jobsForMap.filter((job) => job.latitude !== null && job.latitude !== undefined && job.longitude !== null && job.longitude !== undefined) as Array<(typeof jobsForMap)[number] & { latitude: number; longitude: number }>;
+    const mapCenter = locatedJobsForMap.length
+      ? {
+        latitude: locatedJobsForMap.reduce((sum, job) => sum + job.latitude, 0) / locatedJobsForMap.length,
+        longitude: locatedJobsForMap.reduce((sum, job) => sum + job.longitude, 0) / locatedJobsForMap.length
+      }
+      : { latitude: 33.4484, longitude: -112.0740 };
+    const centerWorld = mapWorldPoint(mapCenter.latitude, mapCenter.longitude, publicMapZoom);
+    const centerTileX = Math.floor(centerWorld.x / 256);
+    const centerTileY = Math.floor(centerWorld.y / 256);
+    const tileOffsets = Array.from({ length: 7 }, (_item, xIndex) => xIndex - 3).flatMap((xOffset) => Array.from({ length: 5 }, (_item, yIndex) => ({ xOffset, yOffset: yIndex - 2 })));
     const publicLocationName = "Affordable Security";
+    const startPublicMapDrag = (event: ReactPointerEvent<HTMLElement>) => {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      publicMapDragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, panX: publicMapPan.x, panY: publicMapPan.y };
+    };
+    const movePublicMapDrag = (event: ReactPointerEvent<HTMLElement>) => {
+      const drag = publicMapDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      setPublicMapPan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y });
+    };
+    const endPublicMapDrag = (event: ReactPointerEvent<HTMLElement>) => {
+      if (publicMapDragRef.current?.pointerId === event.pointerId) publicMapDragRef.current = null;
+    };
+    const zoomPublicMap = (direction: 1 | -1) => {
+      setPublicMapZoom((current) => Math.max(4, Math.min(16, current + direction)));
+      setPublicMapPan({ x: 0, y: 0 });
+    };
     return (
       <main className="public-service-map-shell" style={{ "--booking-color": color } as CSSProperties}>
         <section className="public-service-map-top">
@@ -6693,8 +6730,27 @@ export function App() {
           </div>
           <div className="public-map-logo-badge">{publicLogo ? <img src={publicLogo} alt="" /> : <span>A</span>}</div>
         </section>
-        <section className="public-service-map-frame">
-          <img src={widgetMapUrl} alt="Affordable Security completed job map" />
+        <section className="public-service-map-frame interactive" onPointerDown={startPublicMapDrag} onPointerMove={movePublicMapDrag} onPointerUp={endPublicMapDrag} onPointerCancel={endPublicMapDrag}>
+          <div className="public-map-tile-layer">
+            {tileOffsets.map(({ xOffset, yOffset }) => {
+              const tileX = centerTileX + xOffset;
+              const tileY = centerTileY + yOffset;
+              return <img key={`${tileX}-${tileY}-${publicMapZoom}`} src={mapTileUrl(tileX, tileY, publicMapZoom)} alt="" draggable={false} style={{ left: `calc(50% + ${tileX * 256 - centerWorld.x + publicMapPan.x}px)`, top: `calc(50% + ${tileY * 256 - centerWorld.y + publicMapPan.y}px)` }} />;
+            })}
+          </div>
+          {locatedJobsForMap.map((job) => {
+            const point = mapWorldPoint(job.latitude, job.longitude, publicMapZoom);
+            return (
+              <button key={job.id} className="public-map-lock-marker" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => setSelectedPublicMapJobId(job.id)} style={{ left: `calc(50% + ${point.x - centerWorld.x + publicMapPan.x}px)`, top: `calc(50% + ${point.y - centerWorld.y + publicMapPan.y}px)` }} aria-label={`Open ${job.jobType}`}>
+                <KeyRound size={18} />
+              </button>
+            );
+          })}
+          <div className="public-map-controls">
+            <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => zoomPublicMap(1)}>+</button>
+            <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => zoomPublicMap(-1)}>-</button>
+          </div>
+          <div className="public-map-drag-hint">Drag to move. Use + or - to zoom.</div>
         </section>
         <section className="public-service-map-stats">
           <strong>{jobsForMap.length}</strong>
