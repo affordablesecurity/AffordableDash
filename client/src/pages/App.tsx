@@ -2752,25 +2752,28 @@ export function App() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (publicBookingLocationKey) return;
     const nextPath = activeView === "settings" && settingsSection === "stripe" ? "/settings/stripe" : viewPathMap[activeView];
     if (window.location.pathname !== nextPath) {
       window.history.pushState({ view: activeView }, "", nextPath);
     }
-  }, [activeView, settingsSection]);
+  }, [activeView, settingsSection, publicBookingLocationKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (publicBookingLocationKey) return;
     if (window.location.pathname === "/settings/stripe" || window.location.search.includes("stripe=")) {
       setSettingsSection("stripe");
       setActiveView("settings");
     }
     const handlePopState = () => {
+      if (/^\/book\/[^/?#]+/.test(window.location.pathname)) return;
       setActiveView(viewFromPath(window.location.pathname));
       if (window.location.pathname === "/settings/stripe" || window.location.search.includes("stripe=")) setSettingsSection("stripe");
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  }, [publicBookingLocationKey]);
 
   useEffect(() => {
     if (!token) return;
