@@ -2038,6 +2038,7 @@ export function App() {
     }
   });
   const [currentRole, setCurrentRole] = useState("");
+  const [organizationWideAccess, setOrganizationWideAccess] = useState(false);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
@@ -2582,7 +2583,7 @@ export function App() {
   const selectedSettings = settingsSections.find((section) => section.id === settingsSection);
   const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
   const activeLocationAccess = locations.find((item) => item.location.id === activeLocationId) ?? locations[0];
-  const canUseMainLocation = ["OWNER", "ADMIN"].includes(currentRole);
+  const canUseMainLocation = currentRole === "OWNER" || organizationWideAccess;
   const locationSearchMatches = useMemo(() => {
     const query = locationSearch.trim().toLowerCase();
     if (!query) return locations;
@@ -2725,6 +2726,7 @@ export function App() {
     clearToken();
     updateToken(null);
     setCurrentRole("");
+    setOrganizationWideAccess(false);
     setLocations([]);
     setActiveLocationId("");
     setLocationScope("location");
@@ -2859,7 +2861,7 @@ export function App() {
     const [locationResult, apiKeyResult, meResult] = await Promise.all([
       api<{ activeLocationId: string; locations: LocationAccess[] }>("/api/locations"),
       api<{ apiKeys: ApiKey[] }>("/api/location-api-keys"),
-      api<{ user: { memberships: Array<{ role: string; locationId: string | null }> }; activeLocationId: string }>("/api/auth/me")
+      api<{ user: { memberships: Array<{ role: string; locationId: string | null; organizationId: string }> }; activeLocationId: string; activeOrganizationId: string }>("/api/auth/me")
     ]);
     setLocations(locationResult.locations);
     setActiveLocationId(locationResult.activeLocationId);
@@ -2867,6 +2869,7 @@ export function App() {
     const activeMembership = meResult.user.memberships.find((item) => item.locationId === meResult.activeLocationId);
     const organizationWideMembership = meResult.user.memberships.find((item) => !item.locationId && ["OWNER", "ADMIN"].includes(item.role));
     setCurrentRole(activeMembership?.role ?? organizationWideMembership?.role ?? "");
+    setOrganizationWideAccess(Boolean(organizationWideMembership) || (activeMembership?.role === "OWNER"));
   }
 
   async function loadReports() {
@@ -3048,6 +3051,7 @@ export function App() {
       setToken(result.token);
       updateToken(result.token);
       setCurrentRole(result.user.role);
+      setOrganizationWideAccess(result.user.role === "OWNER");
       if (result.location) setActiveLocationId(result.location.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -3067,6 +3071,7 @@ export function App() {
     setLocationMenuOpen(false);
     setLocationSearch("");
     setCurrentRole("");
+    setOrganizationWideAccess(false);
     await loadDashboard();
   }
 
@@ -6753,7 +6758,7 @@ export function App() {
 
           <span className="nav-section">More</span>
           <button className={activeView === "reports" ? "active" : ""} onClick={() => setActiveView("reports")}><ListChecks size={18} /> Reports</button>
-          <button className={activeView === "settings" ? "active" : ""} onClick={() => setActiveView("settings")}><Settings size={18} /> Settings</button>
+          {["OWNER", "ADMIN"].includes(currentRole) && <button className={activeView === "settings" ? "active" : ""} onClick={() => setActiveView("settings")}><Settings size={18} /> Settings</button>}
           <button className={activeView === "api" ? "active" : ""} onClick={() => setActiveView("api")}><KeyRound size={18} /> API Access</button>
           <button><Headphones size={18} /> Support</button>
           <button><BookOpen size={18} /> Training</button>
@@ -9663,7 +9668,7 @@ export function App() {
               <div className="breadcrumb"><UserPlus size={17} /> Employees</div>
               <div className="action-buttons">
                 <button className="outline-button" type="button" onClick={() => openEmployeeModal("subcontractor")}><Plus size={17} /> Create Subcontractor</button>
-                <button className="outline-button" type="button" onClick={() => openEmployeeModal("owner")}><Plus size={17} /> Create Owner + Location</button>
+                {canUseMainLocation && <button className="outline-button" type="button" onClick={() => openEmployeeModal("owner")}><Plus size={17} /> Create Owner + Location</button>}
                 <button className="primary" type="button" onClick={() => openEmployeeModal("employee")}><Plus size={17} /> Create Employee</button>
               </div>
             </div>
@@ -9773,7 +9778,7 @@ export function App() {
                   <input
                     type="checkbox"
                     checked={employeeForm.allLocations}
-                    disabled={!["OWNER", "ADMIN"].includes(employeeForm.role)}
+                    disabled={!canUseMainLocation || !["OWNER", "ADMIN"].includes(employeeForm.role)}
                     onChange={(event) => setEmployeeForm({ ...employeeForm, allLocations: event.target.checked })}
                   />
                   All current and future locations
@@ -10206,7 +10211,14 @@ export function App() {
           </section>
         )}
 
-        {activeView === "settings" && (
+        {activeView === "settings" && !["OWNER", "ADMIN"].includes(currentRole) && (
+          <section className="panel">
+            <div className="panel-header"><h2>Settings</h2><Settings size={18} /></div>
+            <p className="empty">You do not have permission to change company settings.</p>
+          </section>
+        )}
+
+        {activeView === "settings" && ["OWNER", "ADMIN"].includes(currentRole) && (
           <section className="settings-page">
             <div className="section-actions">
               <div className="breadcrumb"><Settings size={17} /> Settings</div>

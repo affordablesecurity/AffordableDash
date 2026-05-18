@@ -97,6 +97,21 @@ async function organizationLocations(organizationId: string) {
   });
 }
 
+async function canManageOrganizationLocations(user: { id: string; role: string; organizationId: string }) {
+  if (user.role === "OWNER") return true;
+  if (user.role !== "ADMIN") return false;
+  const membership = await prisma.userMembership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId: user.organizationId,
+      locationId: null,
+      role: { in: ["OWNER", "ADMIN"] }
+    },
+    select: { id: true }
+  });
+  return Boolean(membership);
+}
+
 async function enrichTechnicians<T extends { userId: string | null; locationId: string }>(technicians: T[], organizationId: string) {
   const userIds = [...new Set(technicians.map((technician) => technician.userId).filter(Boolean) as string[])];
   const [memberships, orgLocations] = await Promise.all([
@@ -168,7 +183,14 @@ techniciansRouter.post("/", asyncHandler(async (req, res) => {
   }
   const input = technicianSchema.parse(req.body);
   let locationId = activeLocationId(req);
+  const canManageAllLocations = await canManageOrganizationLocations(req.user!);
+  if (input.newLocation?.name && !canManageAllLocations) {
+    return res.status(403).json({ error: "Only organization owners and super admins can create locations" });
+  }
   let targetLocationIds = Array.from(new Set(input.locationIds?.length ? input.locationIds : [locationId]));
+  if (!canManageAllLocations) {
+    targetLocationIds = [locationId];
+  }
   const cleanEmail = input.email || undefined;
   const membershipRole = membershipRoleByEmployeeRole[input.role];
   if (input.newLocation?.name && (!cleanEmail || !input.password)) {
@@ -210,7 +232,7 @@ techniciansRouter.post("/", asyncHandler(async (req, res) => {
       });
     }
 
-    if (input.allLocations && ["OWNER", "ADMIN"].includes(membershipRole)) {
+    if (canManageAllLocations && input.allLocations && ["OWNER", "ADMIN"].includes(membershipRole)) {
       const orgLocations = await tx.location.findMany({
         where: { organizationId: req.user!.organizationId, active: true },
         select: { id: true }
@@ -244,7 +266,7 @@ techniciansRouter.post("/", asyncHandler(async (req, res) => {
       }
 
       await syncLocationAccess(tx, userId, req.user!.organizationId, membershipRole, {
-        allLocations: input.allLocations,
+        allLocations: canManageAllLocations && input.allLocations,
         locationIds: targetLocationIds
       });
     }
@@ -286,6 +308,7 @@ techniciansRouter.patch("/:id", asyncHandler(async (req, res) => {
     return res.status(403).json({ error: "Only owners and admins can update employees" });
   }
   const input = technicianSchema.partial().parse(req.body);
+  const canManageAllLocations = await canManageOrganizationLocations(req.user!);
   const existing = await prisma.technician.findFirst({ where: { id: String(req.params.id), locationId: activeLocationId(req) } });
   if (!existing) return res.status(404).json({ error: "Employee not found" });
   const { username: _username, password: _password, newLocation: _newLocation, locationIds, allLocations, ...technicianInput } = input;
@@ -317,7 +340,10 @@ techniciansRouter.patch("/:id", asyncHandler(async (req, res) => {
     if (typeof allLocations === "boolean" || Array.isArray(locationIds)) {
       const membershipRole = input.role ? membershipRoleByEmployeeRole[input.role] : membershipRoleByEmployeeRole[technician.role] ?? "TECHNICIAN";
       let targetLocationIds = Array.from(new Set(locationIds?.length ? locationIds : [technician.locationId]));
-      if (allLocations && ["OWNER", "ADMIN"].includes(membershipRole)) {
+      if (!canManageAllLocations) {
+        targetLocationIds = [technician.locationId];
+      }
+      if (canManageAllLocations && allLocations && ["OWNER", "ADMIN"].includes(membershipRole)) {
         const orgLocations = await prisma.location.findMany({
           where: { organizationId: req.user!.organizationId, active: true },
           select: { id: true }
@@ -326,7 +352,7 @@ techniciansRouter.patch("/:id", asyncHandler(async (req, res) => {
       }
       await prisma.$transaction(async (tx) => {
         await syncLocationAccess(tx, technician.userId!, req.user!.organizationId, membershipRole, {
-          allLocations,
+          allLocations: canManageAllLocations && allLocations,
           locationIds: targetLocationIds
         });
         for (const targetLocationId of targetLocationIds) {

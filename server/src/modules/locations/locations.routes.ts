@@ -41,6 +41,21 @@ function slugify(value: string) {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+async function canManageOrganizationLocations(user: { id: string; role: string; organizationId: string }) {
+  if (user.role === "OWNER") return true;
+  if (user.role !== "ADMIN") return false;
+  const membership = await prisma.userMembership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId: user.organizationId,
+      locationId: null,
+      role: { in: ["OWNER", "ADMIN"] }
+    },
+    select: { id: true }
+  });
+  return Boolean(membership);
+}
+
 locationsRouter.get("/", asyncHandler(async (req, res) => {
   const memberships = await prisma.userMembership.findMany({
     where: { userId: req.user!.id },
@@ -90,8 +105,8 @@ locationsRouter.get("/", asyncHandler(async (req, res) => {
 }));
 
 locationsRouter.post("/", asyncHandler(async (req, res) => {
-  if (!["OWNER", "ADMIN"].includes(req.user!.role)) {
-    return res.status(403).json({ error: "Only owners and admins can create locations" });
+  if (!await canManageOrganizationLocations(req.user!)) {
+    return res.status(403).json({ error: "Only organization owners and super admins can create locations" });
   }
 
   const input = locationSchema.parse(req.body);

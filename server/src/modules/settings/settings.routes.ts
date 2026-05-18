@@ -55,6 +55,21 @@ function rangeBounds(range: string, selectedDate?: string) {
   return { start: new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)), end: tomorrow };
 }
 
+async function canUseOrganizationScope(user: { id: string; role: string; organizationId: string }) {
+  if (user.role === "OWNER") return true;
+  if (user.role !== "ADMIN") return false;
+  const membership = await prisma.userMembership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId: user.organizationId,
+      locationId: null,
+      role: { in: ["OWNER", "ADMIN"] }
+    },
+    select: { id: true }
+  });
+  return Boolean(membership);
+}
+
 settingsRouter.get("/summary", asyncHandler(async (req, res) => {
   const dateRange = typeof req.query.dateRange === "string" ? req.query.dateRange : "monthToDate";
   const selectedDate = typeof req.query.date === "string" ? req.query.date : undefined;
@@ -65,7 +80,8 @@ settingsRouter.get("/summary", asyncHandler(async (req, res) => {
   const completedInRange = { gte: start, lt: end };
   let locationFilter: string | Prisma.StringFilter = activeLocationId(req);
   let scopeLocations: Array<{ id: string; name: string; displayName: string | null }> = [];
-  if (scope === "organization" && ["OWNER", "ADMIN"].includes(req.user!.role)) {
+  const organizationScopeAllowed = scope === "organization" && await canUseOrganizationScope(req.user!);
+  if (organizationScopeAllowed) {
     scopeLocations = await prisma.location.findMany({
       where: { organizationId: req.user!.organizationId, active: true },
       select: { id: true, name: true, displayName: true },
@@ -124,7 +140,7 @@ settingsRouter.get("/summary", asyncHandler(async (req, res) => {
     count: row._count._all,
     percent: totalJobs ? row._count._all / totalJobs : 0
   }));
-  const revenuePayments = scope === "organization" && ["OWNER", "ADMIN"].includes(req.user!.role)
+  const revenuePayments = organizationScopeAllowed
     ? await prisma.payment.findMany({
       where: {
         status: "SUCCEEDED",
