@@ -56,13 +56,23 @@ function rangeBounds(range: string, selectedDate?: string) {
 }
 
 settingsRouter.get("/summary", asyncHandler(async (req, res) => {
-  const locationId = activeLocationId(req);
   const dateRange = typeof req.query.dateRange === "string" ? req.query.dateRange : "monthToDate";
   const selectedDate = typeof req.query.date === "string" ? req.query.date : undefined;
+  const scope = typeof req.query.scope === "string" ? req.query.scope : "location";
   const { start, end } = rangeBounds(dateRange, selectedDate);
   const createdInRange = { gte: start, lt: end };
   const scheduledInRange = { gte: start, lt: end };
   const completedInRange = { gte: start, lt: end };
+  let locationFilter: string | Prisma.StringFilter = activeLocationId(req);
+  let scopeLocations: Array<{ id: string; name: string; displayName: string | null }> = [];
+  if (scope === "organization" && ["OWNER", "ADMIN"].includes(req.user!.role)) {
+    scopeLocations = await prisma.location.findMany({
+      where: { organizationId: req.user!.organizationId, active: true },
+      select: { id: true, name: true, displayName: true },
+      orderBy: { createdAt: "asc" }
+    });
+    locationFilter = { in: scopeLocations.map((location) => location.id) };
+  }
   const [
     customers,
     openJobs,
@@ -77,25 +87,25 @@ settingsRouter.get("/summary", asyncHandler(async (req, res) => {
     jobsByTypeRows,
     jobsBySourceRows
   ] = await Promise.all([
-    prisma.customer.count({ where: { locationId, createdAt: createdInRange } }),
-    prisma.job.count({ where: { locationId, status: { in: ["LEAD", "SCHEDULED", "DISPATCHED", "IN_PROGRESS"] } } }),
-    prisma.job.count({ where: { locationId, createdAt: createdInRange } }),
-    prisma.job.count({ where: { locationId, status: "COMPLETED", completedAt: completedInRange } }),
-    prisma.job.count({ where: { locationId, status: "CANCELED", updatedAt: createdInRange } }),
-    prisma.job.count({ where: { locationId, status: "LEAD", createdAt: createdInRange } }),
-    prisma.job.count({ where: { locationId, status: { in: ["SCHEDULED", "DISPATCHED", "IN_PROGRESS", "COMPLETED"] }, createdAt: createdInRange } }),
-    prisma.invoice.count({ where: { locationId, createdAt: createdInRange } }),
-    prisma.invoice.aggregate({ where: { locationId, status: { not: "VOID" }, createdAt: createdInRange }, _sum: { total: true }, _avg: { total: true } }),
+    prisma.customer.count({ where: { locationId: locationFilter, createdAt: createdInRange } }),
+    prisma.job.count({ where: { locationId: locationFilter, status: { in: ["LEAD", "SCHEDULED", "DISPATCHED", "IN_PROGRESS"] } } }),
+    prisma.job.count({ where: { locationId: locationFilter, createdAt: createdInRange } }),
+    prisma.job.count({ where: { locationId: locationFilter, status: "COMPLETED", completedAt: completedInRange } }),
+    prisma.job.count({ where: { locationId: locationFilter, status: "CANCELED", updatedAt: createdInRange } }),
+    prisma.job.count({ where: { locationId: locationFilter, status: "LEAD", createdAt: createdInRange } }),
+    prisma.job.count({ where: { locationId: locationFilter, status: { in: ["SCHEDULED", "DISPATCHED", "IN_PROGRESS", "COMPLETED"] }, createdAt: createdInRange } }),
+    prisma.invoice.count({ where: { locationId: locationFilter, createdAt: createdInRange } }),
+    prisma.invoice.aggregate({ where: { locationId: locationFilter, status: { not: "VOID" }, createdAt: createdInRange }, _sum: { total: true }, _avg: { total: true } }),
     prisma.payment.aggregate({
       where: {
         status: "SUCCEEDED",
-        invoice: { locationId },
+        invoice: { locationId: locationFilter },
         OR: [{ paidAt: scheduledInRange }, { paidAt: null, createdAt: createdInRange }]
       },
       _sum: { amount: true }
     }),
-    prisma.job.groupBy({ by: ["jobType"], where: { locationId, createdAt: createdInRange }, _count: { _all: true } }),
-    prisma.job.groupBy({ by: ["leadSource"], where: { locationId, createdAt: createdInRange }, _count: { _all: true } })
+    prisma.job.groupBy({ by: ["jobType"], where: { locationId: locationFilter, createdAt: createdInRange }, _count: { _all: true } }),
+    prisma.job.groupBy({ by: ["leadSource"], where: { locationId: locationFilter, createdAt: createdInRange }, _count: { _all: true } })
   ]);
 
   const salesCents = invoiceTotals._sum.total ?? 0;
@@ -114,6 +124,27 @@ settingsRouter.get("/summary", asyncHandler(async (req, res) => {
     count: row._count._all,
     percent: totalJobs ? row._count._all / totalJobs : 0
   }));
+  const revenuePayments = scope === "organization" && ["OWNER", "ADMIN"].includes(req.user!.role)
+    ? await prisma.payment.findMany({
+      where: {
+        status: "SUCCEEDED",
+        invoice: { locationId: locationFilter },
+        OR: [{ paidAt: scheduledInRange }, { paidAt: null, createdAt: createdInRange }]
+      },
+      select: { amount: true, invoice: { select: { locationId: true } } }
+    })
+    : [];
+  const revenueByLocation = scopeLocations.map((location) => {
+    const collected = revenuePayments
+      .filter((payment) => payment.invoice.locationId === location.id)
+      .reduce((sum, payment) => sum + payment.amount, 0);
+    return {
+      locationId: location.id,
+      name: location.displayName || location.name,
+      collectedCents: collected,
+      percent: collectedCents ? collected / collectedCents : 0
+    };
+  }).filter((location) => location.collectedCents > 0);
 
   res.json({
     customers,
@@ -134,6 +165,8 @@ settingsRouter.get("/summary", asyncHandler(async (req, res) => {
     estimateWinRatio: { won: completedJobs, total: invoices },
     jobsByType,
     jobsBySource,
+    revenueByLocation,
+    scope,
     range: { start, end, dateRange }
   });
 }));

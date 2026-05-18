@@ -407,6 +407,9 @@ textarea {
 }
 
 .brand,
+.location-brand-button,
+.location-menu-current,
+.location-menu-option,
 .ghost,
 .primary,
 .panel-header,
@@ -449,6 +452,141 @@ textarea {
   color: #ffffff;
   font-size: 14px;
   font-weight: 900;
+}
+
+.location-brand-switcher {
+  position: relative;
+}
+
+.location-brand-button {
+  width: 100%;
+  gap: 10px;
+  border: 1px solid #dfe5ef;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #101421;
+  padding: 8px 10px;
+  text-align: left;
+  box-shadow: 0 8px 22px rgba(18, 28, 45, 0.05);
+}
+
+.location-brand-button img,
+.location-menu img {
+  width: 34px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.location-brand-button > span:not(.brand-mark),
+.location-menu-option > span:not(.location-avatar) {
+  min-width: 0;
+  flex: 1;
+}
+
+.location-brand-button strong,
+.location-menu-option strong {
+  display: block;
+  overflow: hidden;
+  color: #171b26;
+  font-size: 13px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.location-brand-button small,
+.location-menu-option small {
+  display: block;
+  overflow: hidden;
+  color: #68728a;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.location-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 10px);
+  left: 0;
+  width: min(530px, calc(100vw - 32px));
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dfe5ef;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px;
+  box-shadow: 0 18px 46px rgba(18, 28, 45, 0.18);
+}
+
+.location-menu-current,
+.location-menu-option {
+  width: 100%;
+  gap: 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 9px;
+  text-align: left;
+}
+
+.location-menu-current:hover,
+.location-menu-option:hover {
+  background: #f3f8ff;
+}
+
+.location-menu-current span {
+  flex: 1;
+  overflow: hidden;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.location-menu em {
+  border-radius: 6px;
+  background: #d8ecff;
+  color: #075fab;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.location-menu-search {
+  position: relative;
+}
+
+.location-menu-search svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  color: #7b8497;
+  transform: translateY(-50%);
+}
+
+.location-menu-search input {
+  width: 100%;
+  padding-left: 38px;
+}
+
+.location-avatar {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: #bfc4cc;
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.location-menu-empty {
+  margin: 8px;
+  color: #68728a;
+  font-weight: 800;
 }
 
 .sidebar nav {
@@ -1570,6 +1708,14 @@ button.stat-card {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
   gap: 20px;
+}
+
+.revenue-location-panel {
+  grid-column: 1 / -1;
+}
+
+.revenue-location-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
 .dashboard-schedule-list {

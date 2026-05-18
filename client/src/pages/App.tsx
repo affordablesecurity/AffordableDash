@@ -73,6 +73,8 @@ type Summary = {
   estimateWinRatio: { won: number; total: number };
   jobsByType: Array<{ label: string; count: number; percent: number }>;
   jobsBySource: Array<{ label: string; count: number; percent: number }>;
+  revenueByLocation?: Array<{ locationId: string; name: string; collectedCents: number; percent: number }>;
+  scope?: string;
 };
 
 type Customer = {
@@ -1748,6 +1750,9 @@ export function App() {
   const [password, setPassword] = useState("ChangeMe123!");
   const [locations, setLocations] = useState<LocationAccess[]>([]);
   const [activeLocationId, setActiveLocationId] = useState("");
+  const [locationScope, setLocationScope] = useState<"location" | "main">("location");
+  const [locationMenuOpen, setLocationMenuOpen] = useState(false);
+  const [locationSearch, setLocationSearch] = useState("");
   const [activeView, setActiveView] = useState<View>(() => typeof window === "undefined" ? "dispatch" : viewFromPath(window.location.pathname));
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
@@ -2196,6 +2201,15 @@ export function App() {
     document.addEventListener("mousedown", closePicker);
     return () => document.removeEventListener("mousedown", closePicker);
   }, [schedulePicker]);
+  useEffect(() => {
+    if (!locationMenuOpen) return;
+    function closeLocationMenu(event: MouseEvent) {
+      if (event.target instanceof Element && event.target.closest(".location-brand-switcher")) return;
+      setLocationMenuOpen(false);
+    }
+    document.addEventListener("mousedown", closeLocationMenu);
+    return () => document.removeEventListener("mousedown", closeLocationMenu);
+  }, [locationMenuOpen]);
   const weekStart = useMemo(() => startOfWeek(scheduleDate), [scheduleDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
   const monthDays = useMemo(() => {
@@ -2568,6 +2582,22 @@ export function App() {
   const selectedSettings = settingsSections.find((section) => section.id === settingsSection);
   const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
   const activeLocationAccess = locations.find((item) => item.location.id === activeLocationId) ?? locations[0];
+  const canUseMainLocation = ["OWNER", "ADMIN"].includes(currentRole);
+  const locationSearchMatches = useMemo(() => {
+    const query = locationSearch.trim().toLowerCase();
+    if (!query) return locations;
+    return locations.filter((item) => [
+      item.organization.name,
+      item.location.name,
+      item.location.displayName ?? "",
+      item.location.city ?? "",
+      item.location.state ?? "",
+      item.location.postalCode ?? ""
+    ].some((value) => value.toLowerCase().includes(query)));
+  }, [locationSearch, locations]);
+  const currentLocationLabel = locationScope === "main"
+    ? `MAIN ${activeLocationAccess?.organization.name || "Affordable Security"}`
+    : locationDisplayName(activeLocationAccess?.location);
   const globalSearchResults = useMemo<GlobalSearchResult[]>(() => {
     const company = activeLocationAccess?.location.displayName || activeLocationAccess?.organization.name || "Affordable Security";
     return [
@@ -2697,6 +2727,9 @@ export function App() {
     setCurrentRole("");
     setLocations([]);
     setActiveLocationId("");
+    setLocationScope("location");
+    setLocationMenuOpen(false);
+    setLocationSearch("");
     if (message) setError(message);
   }
 
@@ -2777,6 +2810,7 @@ export function App() {
   async function loadDashboard() {
     const dashboardQuery = new URLSearchParams({ dateRange: dashboardDateRange });
     if (dashboardDateRange === "selectedDay") dashboardQuery.set("date", dashboardDate);
+    if (locationScope === "main") dashboardQuery.set("scope", "organization");
     const [summaryResult, customersResult, jobsResult, eventsResult, estimatesResult, invoicesResult, techniciansResult, optionsResult, priceBookResult, templatesResult, servicePlanResult, invoiceSettingsResult, stripeStatusResult, messagesResult, internalMessagesResult, internalRecipientsResult, messagingSettingsResult] = await Promise.all([
       api<Summary>(`/api/settings/summary?${dashboardQuery.toString()}`),
       api<{ customers: Customer[] }>("/api/customers"),
@@ -2900,7 +2934,7 @@ export function App() {
   useEffect(() => {
     if (!token) return;
     loadDashboard().catch((err: unknown) => handleApiError(err, "Unable to load dashboard"));
-  }, [token, dashboardDateRange, dashboardDate]);
+  }, [token, dashboardDateRange, dashboardDate, locationScope]);
 
   useEffect(() => {
     if (!token || activeView !== "messages") return;
@@ -3029,8 +3063,19 @@ export function App() {
     setToken(result.token);
     updateToken(result.token);
     setActiveLocationId(result.location.id);
+    setLocationScope("location");
+    setLocationMenuOpen(false);
+    setLocationSearch("");
     setCurrentRole("");
     await loadDashboard();
+  }
+
+  function selectMainLocation() {
+    if (!canUseMainLocation) return;
+    setLocationScope("main");
+    setLocationMenuOpen(false);
+    setLocationSearch("");
+    setActiveView("dispatch");
   }
 
   async function createApiKey() {
@@ -6636,12 +6681,51 @@ export function App() {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">A</div>
-          <div>
-            <strong>affordable</strong>
-            <span>service CRM</span>
-          </div>
+        <div className="location-brand-switcher">
+          <button className="location-brand-button" type="button" onClick={() => setLocationMenuOpen((open) => !open)}>
+            {invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="Affordable Security logo" /> : <span className="brand-mark">A</span>}
+            <span>
+              <strong>{currentLocationLabel}</strong>
+              <small>{locationScope === "main" ? "All locations" : activeLocationAccess?.location.postalCode || "Current location"}</small>
+            </span>
+            <ChevronDown size={16} />
+          </button>
+          {locationMenuOpen && (
+            <div className="location-menu" role="dialog" aria-label="Switch location">
+              {activeLocationAccess && (
+                <button className="location-menu-current" type="button" onClick={() => void switchLocation(activeLocationAccess.location.id)}>
+                  {invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="" /> : <span className="location-avatar">A</span>}
+                  <span>{locationDisplayName(activeLocationAccess.location)}</span>
+                  {locationScope === "location" && <em>Current</em>}
+                </button>
+              )}
+              <div className="location-menu-search">
+                <Search size={16} />
+                <input value={locationSearch} onChange={(event) => setLocationSearch(event.target.value)} placeholder="Search by name or zip code" autoFocus />
+              </div>
+              {canUseMainLocation && (
+                <button className="location-menu-option" type="button" onClick={selectMainLocation}>
+                  <span className="location-avatar">M</span>
+                  <span>
+                    <strong>MAIN {activeLocationAccess?.organization.name || "Affordable Security"}</strong>
+                    <small>Rollup dashboard for every location</small>
+                  </span>
+                  {locationScope === "main" && <em>Current</em>}
+                </button>
+              )}
+              {locationSearchMatches.map((item) => (
+                <button className="location-menu-option" type="button" key={item.location.id} onClick={() => void switchLocation(item.location.id)}>
+                  {invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="" /> : <span className="location-avatar">A</span>}
+                  <span>
+                    <strong>{locationDisplayName(item.location)}</strong>
+                    <small>{[item.location.city, item.location.state, item.location.postalCode].filter(Boolean).join(", ") || item.organization.name}</small>
+                  </span>
+                  {locationScope === "location" && item.location.id === activeLocationId && <em>Current</em>}
+                </button>
+              ))}
+              {locationSearchMatches.length === 0 && <p className="location-menu-empty">No locations match that search.</p>}
+            </div>
+          )}
         </div>
         <nav>
           <span className="nav-section">Main Menu</span>
@@ -6750,13 +6834,7 @@ export function App() {
         <div className="page-titlebar">
           <div className="breadcrumb"><Home size={17} /> {activeView === "dispatch" ? "Dashboard" : activeView === "servicePlans" ? "Service Plans" : activeView[0].toUpperCase() + activeView.slice(1)}</div>
           <div className="topbar-actions">
-            <select className="location-switcher" value={activeLocationId} onChange={(event) => switchLocation(event.target.value)}>
-              {locations.map((item) => (
-                <option key={item.location.id} value={item.location.id}>
-                  {locationDisplayName(item.location)}
-                </option>
-              ))}
-            </select>
+            <button className="outline-button location-title-action" type="button" onClick={() => setLocationMenuOpen(true)}>{currentLocationLabel}</button>
             {activeView === "dispatch" ? (
               <label className="date-pill dashboard-date-input">
                 <input
@@ -6783,7 +6861,7 @@ export function App() {
             <div className="dashboard-hero">
               <div>
                 <h1>Business snapshot</h1>
-                <p>{dashboardDateRangeLabel} performance for {activeLocationAccess?.location.name ?? "this location"}.</p>
+                <p>{dashboardDateRangeLabel} performance for {locationScope === "main" ? "all locations" : activeLocationAccess?.location.name ?? "this location"}.</p>
               </div>
               <div className="dashboard-range-controls">
                 <select
@@ -6840,6 +6918,25 @@ export function App() {
             </div>
 
             <div className="dashboard-content-grid">
+              {locationScope === "main" && (
+                <section className="panel chart-panel revenue-location-panel">
+                  <div className="panel-header">
+                    <h2>Revenue by location</h2>
+                    <span>{money.format((summary?.collectedCents ?? 0) / 100)} collected</span>
+                  </div>
+                  {summary?.revenueByLocation?.length ? (
+                    <div className="metric-list">
+                      {summary.revenueByLocation.map((item, index) => (
+                        <div className="metric-row revenue-location-row" key={item.locationId}>
+                          <span><i className={sourceColor(index)} /> {item.name}</span>
+                          <strong>{money.format(item.collectedCents / 100)}</strong>
+                          <em>{percent.format(item.percent)}</em>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <div className="empty-chart"><span>!</span> No collected revenue across locations in this range</div>}
+                </section>
+              )}
               <section className="panel wide">
                 <div className="panel-header">
                   <h2>Schedule</h2>
