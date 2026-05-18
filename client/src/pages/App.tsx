@@ -159,6 +159,7 @@ type EmployeePermissionId =
   | "employees:write"
   | "reports:read";
 type LoginCodeMethod = "none" | "email" | "sms" | "both";
+type EmployeeCategoryId = "superAdmin" | "locationOwner" | "contractor" | "fieldTech" | "officeStaff" | "employee";
 
 type CalendarEvent = {
   id: string;
@@ -1641,6 +1642,30 @@ function employeeRoleLabel(role: Technician["role"]) {
   return labels[role];
 }
 
+const employeeCategoryDefinitions: Array<{
+  id: EmployeeCategoryId;
+  title: string;
+  shortTitle: string;
+  description: string;
+  accent: string;
+}> = [
+  { id: "superAdmin", title: "Super Admins", shortTitle: "Super Admin", description: "Can access MAIN reporting and every location.", accent: "super" },
+  { id: "locationOwner", title: "Owner + Location", shortTitle: "Location Owner", description: "Owns and manages only assigned location access.", accent: "owner" },
+  { id: "contractor", title: "Contractors", shortTitle: "Contractor", description: "Subcontractors with limited job and schedule access.", accent: "contractor" },
+  { id: "fieldTech", title: "Field Techs", shortTitle: "Field Tech", description: "Technicians working appointments, jobs, and payments.", accent: "tech" },
+  { id: "officeStaff", title: "Office Staff", shortTitle: "Office Staff", description: "Dispatch, customer, message, and office workflow access.", accent: "office" },
+  { id: "employee", title: "Employees", shortTitle: "Employee", description: "General employee profiles that do not match another role.", accent: "employee" }
+];
+
+function employeeCategory(employee: Technician): EmployeeCategoryId {
+  if (employee.allLocations && ["OWNER", "ADMIN"].includes(employee.role)) return "superAdmin";
+  if (employee.role === "OWNER") return "locationOwner";
+  if (employee.employmentType === "subcontractor") return "contractor";
+  if (employee.fieldTech || employee.role === "OUTSIDE_FIELD_TECH") return "fieldTech";
+  if (employee.role === "INSIDE_SALES") return "officeStaff";
+  return "employee";
+}
+
 const employeePermissionOptions: Array<{ id: EmployeePermissionId; label: string }> = [
   { id: "jobs:write", label: "Add/edit jobs" },
   { id: "jobs:delete", label: "Delete/cancel jobs" },
@@ -2647,9 +2672,16 @@ export function App() {
       employee.email ?? "",
       employee.phone,
       employee.employmentType,
-      employee.role
+      employee.role,
+      employee.username ?? "",
+      employeeCategoryDefinitions.find((definition) => definition.id === employeeCategory(employee))?.title ?? ""
     ].some((value) => value.toLowerCase().includes(query)));
   }, [employeeSearch, technicians]);
+  const employeeGroups = useMemo(() => employeeCategoryDefinitions.map((definition) => ({
+    ...definition,
+    employees: filteredEmployees.filter((employee) => employeeCategory(employee) === definition.id),
+    total: technicians.filter((employee) => employeeCategory(employee) === definition.id).length
+  })), [filteredEmployees, technicians]);
   const jobCounts = useMemo(() => ({
     open: jobs.filter((job) => job.status === "LEAD" || job.status === "SCHEDULED").length,
     dispatched: jobs.filter((job) => job.status === "DISPATCHED").length,
@@ -3394,6 +3426,14 @@ export function App() {
     } catch (err) {
       handleApiError(err, "Unable to send password reset");
     }
+  }
+
+  function employeeAccessLabel(employee: Technician) {
+    return employee.allLocations
+      ? "All locations"
+      : employee.locationAccess?.length
+        ? employee.locationAccess.map((location) => locationDisplayName(location)).join(", ")
+        : employee.userId ? "Current location" : "Roster only";
   }
 
   async function revokeApiKey(id: string) {
@@ -9881,57 +9921,58 @@ export function App() {
               <div className="jobs-tools">
                 <div className="search-box table-search">
                   <Search size={18} />
-                  <input placeholder="Search employees" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} />
+                  <input placeholder="Search employees by name, role, username, phone, email, or location type" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} />
                 </div>
-                <select aria-label="Page size">
-                  <option>10</option>
-                  <option>25</option>
-                  <option>50</option>
-                </select>
+                <span className="employee-result-count">{filteredEmployees.length} shown</span>
               </div>
 
-              <div className="employees-table">
-                <div className="employees-row employees-head">
-                  <span>Name</span>
-                  <span>Email</span>
-                  <span>Phone</span>
-                  <span>Type</span>
-                  <span>Role</span>
-                  <span>Field Tech</span>
-                  <span>Status</span>
-                  <span>Access</span>
-                  <span>Actions</span>
-                </div>
-                {filteredEmployees.map((employee) => (
-                  <div className="employees-row" key={employee.id}>
-                    <strong>{employee.name}</strong>
-                    <span>{employee.email || "-"}</span>
-                    <span>{employee.phone}</span>
-                    <span>{statusLabel(employee.employmentType.toUpperCase())}</span>
-                    <span>{employeeRoleLabel(employee.role)}</span>
-                    <span>{employee.fieldTech ? "Yes" : "No"}</span>
-                    <span className={`payment-pill ${employee.active ? "paid" : "unpaid"}`}>{employee.active ? "Active" : "Inactive"}</span>
-                    <small className="employee-access-copy">
-                      {employee.allLocations
-                        ? "All locations"
-                        : employee.locationAccess?.length
-                          ? employee.locationAccess.map((location) => locationDisplayName(location)).join(", ")
-                          : employee.userId ? "Current location" : "Roster only"}
-                    </small>
-                    <div className="employee-actions">
-                      {canManageEmployees ? (
-                        <>
-                          <button className="text-button" onClick={() => editEmployee(employee)}>Edit</button>
-                          <button className="text-button" onClick={() => updateEmployeeAccess(employee, !employee.active)}>
-                            {employee.active ? "Revoke" : "Restore"}
-                          </button>
-                          {employee.userId && employee.email && <button className="text-button" onClick={() => sendEmployeePasswordReset(employee)}>Send reset email</button>}
-                        </>
-                      ) : <span>-</span>}
+              <div className="employee-category-grid">
+                {employeeGroups.map((group) => (
+                  <section className={`employee-category-card employee-category-${group.accent}`} key={group.id}>
+                    <header>
+                      <span>
+                        <strong>{group.title}</strong>
+                        <small>{group.description}</small>
+                      </span>
+                      <em>{group.employees.length}{employeeSearch ? ` of ${group.total}` : ""}</em>
+                    </header>
+                    <div className="employee-card-list">
+                      {group.employees.map((employee) => (
+                        <article className="employee-profile-card" key={employee.id}>
+                          <div className="employee-profile-main">
+                            <span className="employee-avatar" style={{ background: employee.color }}>{employee.name.slice(0, 1).toUpperCase()}</span>
+                            <span>
+                              <strong>{employee.name}</strong>
+                              <small>{employee.username ? `@${employee.username}` : employee.email || "No portal login"}</small>
+                            </span>
+                          </div>
+                          <div className="employee-badge-row">
+                            <span className={`employee-role-badge employee-role-${group.accent}`}>{group.shortTitle}</span>
+                            <span className={`payment-pill ${employee.active ? "paid" : "unpaid"}`}>{employee.active ? "Active" : "Inactive"}</span>
+                          </div>
+                          <dl className="employee-profile-meta">
+                            <div><dt>Email</dt><dd>{employee.email || "-"}</dd></div>
+                            <div><dt>Phone</dt><dd>{employee.phone || "-"}</dd></div>
+                            <div><dt>Role</dt><dd>{employeeRoleLabel(employee.role)}</dd></div>
+                            <div><dt>Access</dt><dd>{employeeAccessLabel(employee)}</dd></div>
+                          </dl>
+                          <div className="employee-actions employee-card-actions">
+                            {canManageEmployees ? (
+                              <>
+                                <button className="text-button" onClick={() => editEmployee(employee)}>Edit</button>
+                                <button className="text-button" onClick={() => updateEmployeeAccess(employee, !employee.active)}>
+                                  {employee.active ? "Revoke" : "Restore"}
+                                </button>
+                                {employee.userId && employee.email && <button className="text-button" onClick={() => sendEmployeePasswordReset(employee)}>Send reset email</button>}
+                              </>
+                            ) : <span>-</span>}
+                          </div>
+                        </article>
+                      ))}
+                      {group.employees.length === 0 && <p className="empty employee-empty">No {group.title.toLowerCase()} match this search.</p>}
                     </div>
-                  </div>
+                  </section>
                 ))}
-                {filteredEmployees.length === 0 && <p className="empty table-empty">No employees yet.</p>}
               </div>
             </div>
           </section>
