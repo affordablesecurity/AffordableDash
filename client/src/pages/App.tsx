@@ -92,6 +92,7 @@ type Customer = {
   attachments?: string[];
   paymentMethodNote?: string;
   createdAt?: string;
+  updatedAt?: string;
   privateNotes?: CustomerNote[];
   jobs?: Job[];
   estimates?: Estimate[];
@@ -437,6 +438,52 @@ type InvoiceFilters = {
   amountMax: string;
   paymentMethod: string;
   customer: string;
+};
+
+type CustomerColumnId =
+  | "address"
+  | "company"
+  | "isContractor"
+  | "customerType"
+  | "dateAcquired"
+  | "dateCreated"
+  | "email"
+  | "firstName"
+  | "homePhone"
+  | "lastName"
+  | "lastServiceDate"
+  | "leadSource"
+  | "lifetimeValue"
+  | "mobilePhone"
+  | "notes"
+  | "notificationsEnabled"
+  | "role"
+  | "serviceStatus"
+  | "tags"
+  | "workPhone";
+
+type CustomerFilters = {
+  createdFrom: string;
+  createdTo: string;
+  acquiredFrom: string;
+  acquiredTo: string;
+  lastServiceFrom: string;
+  lastServiceTo: string;
+  valueMin: string;
+  valueMax: string;
+  leadSource: string;
+  tag: string;
+  notifications: string;
+  smsConsent: string;
+  serviceStatus: string;
+  contractor: string;
+  customerType: string;
+};
+
+type DuplicateCustomerGroup = {
+  key: string;
+  reason: string;
+  customers: Customer[];
 };
 
 type PaymentRecord = {
@@ -1233,6 +1280,49 @@ const blankInvoiceFilters: InvoiceFilters = {
   customer: ""
 };
 
+const customerColumnOptions: Array<{ id: CustomerColumnId; label: string }> = [
+  { id: "address", label: "Address" },
+  { id: "company", label: "Company" },
+  { id: "isContractor", label: "Customer is contractor" },
+  { id: "customerType", label: "Customer type" },
+  { id: "dateAcquired", label: "Date acquired" },
+  { id: "dateCreated", label: "Date created" },
+  { id: "email", label: "Email" },
+  { id: "firstName", label: "First name" },
+  { id: "homePhone", label: "Home phone" },
+  { id: "lastName", label: "Last name" },
+  { id: "lastServiceDate", label: "Last service date" },
+  { id: "leadSource", label: "Lead source" },
+  { id: "lifetimeValue", label: "Lifetime value" },
+  { id: "mobilePhone", label: "Mobile phone" },
+  { id: "notes", label: "Notes" },
+  { id: "notificationsEnabled", label: "Notifications enabled" },
+  { id: "role", label: "Role" },
+  { id: "serviceStatus", label: "Service Status" },
+  { id: "tags", label: "Tags" },
+  { id: "workPhone", label: "Work phone" }
+];
+
+const defaultCustomerColumns: CustomerColumnId[] = ["company", "address", "mobilePhone", "email", "leadSource", "notes", "tags"];
+
+const blankCustomerFilters: CustomerFilters = {
+  createdFrom: "",
+  createdTo: "",
+  acquiredFrom: "",
+  acquiredTo: "",
+  lastServiceFrom: "",
+  lastServiceTo: "",
+  valueMin: "",
+  valueMax: "",
+  leadSource: "",
+  tag: "",
+  notifications: "",
+  smsConsent: "",
+  serviceStatus: "",
+  contractor: "",
+  customerType: ""
+};
+
 const blankEstimateFilters: EstimateFilters = {
   createdFrom: "",
   createdTo: "",
@@ -1301,6 +1391,39 @@ function formatPhoneInput(value: string) {
   if (digits.length <= 3) return digits;
   if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
   return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+function normalizedPhone(value?: string | null) {
+  return (value ?? "").replace(/\D/g, "").slice(-10);
+}
+
+function customerAdditionalPhone(customer: Customer, label: "work" | "home") {
+  return customer.additionalPhones?.find((entry) => entry.label === label)?.number ?? "";
+}
+
+function customerLifetimeValue(customer: Customer) {
+  return (customer.invoices ?? []).reduce((sum, invoice) => sum + invoice.total, 0);
+}
+
+function customerLastServiceDate(customer: Customer) {
+  const jobs = customer.jobs ?? [];
+  return jobs
+    .filter((job) => job.completedAt || job.scheduledStart)
+    .sort((left, right) => new Date(right.completedAt ?? right.scheduledStart ?? "").getTime() - new Date(left.completedAt ?? left.scheduledStart ?? "").getTime())[0]?.completedAt
+    ?? jobs.sort((left, right) => new Date(right.createdAt ?? "").getTime() - new Date(left.createdAt ?? "").getTime())[0]?.createdAt
+    ?? null;
+}
+
+function customerServiceStatus(customer: Customer) {
+  return customer.communicationPrefs?.sms === false && customer.communicationPrefs?.email === false && customer.communicationPrefs?.phone === false ? "Do not service" : "Serviceable";
+}
+
+function customerType(customer: Customer) {
+  return customer.companyName ? "Business" : "Homeowner";
+}
+
+function notificationsEnabled(customer: Customer) {
+  return customer.communicationPrefs?.sms !== false || customer.communicationPrefs?.email !== false || customer.communicationPrefs?.phone !== false;
 }
 
 function blankCustomerForm(): CustomerForm {
@@ -1764,6 +1887,15 @@ export function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
+  const [customerFilters, setCustomerFilters] = useState<CustomerFilters>(blankCustomerFilters);
+  const [customerFilterPanelOpen, setCustomerFilterPanelOpen] = useState(false);
+  const [customerColumnDialogOpen, setCustomerColumnDialogOpen] = useState(false);
+  const [visibleCustomerColumns, setVisibleCustomerColumns] = useState<CustomerColumnId[]>(defaultCustomerColumns);
+  const [customerActionMenuOpen, setCustomerActionMenuOpen] = useState(false);
+  const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
+  const [duplicateMergeMessage, setDuplicateMergeMessage] = useState("");
+  const [customerImportMessage, setCustomerImportMessage] = useState("");
+  const customerImportInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [customerProfileTab, setCustomerProfileTab] = useState<"profile" | "leads" | "estimates" | "jobs" | "invoices" | "attachments" | "notes">("profile");
   const [customerNoteDraft, setCustomerNoteDraft] = useState("");
@@ -2114,7 +2246,8 @@ export function App() {
   }, [invoiceFilters, invoiceMessages, invoiceSearch, invoiceStatusFilter, invoices]);
   const filteredCustomers = useMemo(() => {
     const query = customerSearch.trim().toLowerCase();
-    if (!query) return customers;
+    const minValue = currencyToCents(customerFilters.valueMin);
+    const maxValue = currencyToCents(customerFilters.valueMax);
     return customers.filter((customer) => [
       customerName(customer),
       customer.phone,
@@ -2124,8 +2257,47 @@ export function App() {
       ...(customer.additionalEmails ?? []),
       ...(customer.additionalPhones ?? []).map((phoneEntry) => phoneEntry.number),
       ...(customer.addresses ?? []).map(addressLine)
-    ].some((value) => value.toLowerCase().includes(query)));
-  }, [customerSearch, customers]);
+    ].some((value) => value.toLowerCase().includes(query)) && matchesDateRange(customer.createdAt, customerFilters.createdFrom, customerFilters.createdTo)
+      && matchesDateRange(customer.createdAt, customerFilters.acquiredFrom, customerFilters.acquiredTo)
+      && matchesDateRange(customerLastServiceDate(customer), customerFilters.lastServiceFrom, customerFilters.lastServiceTo)
+      && (!customerFilters.valueMin || customerLifetimeValue(customer) >= minValue)
+      && (!customerFilters.valueMax || customerLifetimeValue(customer) <= maxValue)
+      && (!customerFilters.leadSource || customer.source === customerFilters.leadSource)
+      && (!customerFilters.tag || (customer.tags ?? []).includes(customerFilters.tag))
+      && (!customerFilters.notifications || (customerFilters.notifications === "enabled" ? notificationsEnabled(customer) : !notificationsEnabled(customer)))
+      && (!customerFilters.smsConsent || (customerFilters.smsConsent === "yes" ? customer.communicationPrefs?.sms !== false : customer.communicationPrefs?.sms === false))
+      && (!customerFilters.serviceStatus || customerServiceStatus(customer) === customerFilters.serviceStatus)
+      && (!customerFilters.contractor || customerFilters.contractor === "no")
+      && (!customerFilters.customerType || customerType(customer) === customerFilters.customerType));
+  }, [customerFilters, customerSearch, customers]);
+  const customerDuplicateGroups = useMemo<DuplicateCustomerGroup[]>(() => {
+    const groups = new globalThis.Map<string, { reason: string; customers: Customer[] }>();
+    const add = (key: string, reason: string, customer: Customer) => {
+      if (!key) return;
+      const groupKey = `${reason}:${key}`;
+      const current = groups.get(groupKey) ?? { reason, customers: [] };
+      if (!current.customers.some((item) => item.id === customer.id)) current.customers.push(customer);
+      groups.set(groupKey, current);
+    };
+    customers.forEach((customer) => {
+      add(normalizedPhone(customer.phone), "Matching mobile phone", customer);
+      (customer.additionalPhones ?? []).forEach((entry) => add(normalizedPhone(entry.number), `Matching ${entry.label} phone`, customer));
+      add((customer.email ?? "").trim().toLowerCase(), "Matching email", customer);
+      const primaryAddress = customer.addresses?.[0];
+      const nameAddress = primaryAddress ? `${customerName(customer).trim().toLowerCase()}|${addressLine(primaryAddress).trim().toLowerCase()}` : "";
+      add(nameAddress, "Matching name and address", customer);
+    });
+    const seenSets = new Set<string>();
+    return Array.from(groups.entries())
+      .filter(([, group]) => group.customers.length > 1)
+      .map(([key, group]) => ({ key, ...group, customers: group.customers.sort((left, right) => new Date(right.updatedAt ?? right.createdAt ?? "").getTime() - new Date(left.updatedAt ?? left.createdAt ?? "").getTime()) }))
+      .filter((group) => {
+        const setKey = group.customers.map((customer) => customer.id).sort().join("|");
+        if (seenSets.has(setKey)) return false;
+        seenSets.add(setKey);
+        return true;
+      });
+  }, [customers]);
   const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId) ?? null;
   const selectedCustomerJobs = useMemo(() => {
     if (!selectedCustomer) return [];
@@ -2788,6 +2960,114 @@ export function App() {
     setSelectedCustomerId(customer.id);
   }
 
+  function updateCustomerFilter(key: keyof CustomerFilters, value: string) {
+    setCustomerFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function csvEscape(value: unknown) {
+    const text = String(value ?? "");
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+
+  function exportCustomersCsv() {
+    const headers = ["Customer name", "Company", "Address", "Mobile phone", "Work phone", "Home phone", "Email", "Lead source", "Tags", "Notes", "Lifetime value", "Last service date", "Date created"];
+    const rows = filteredCustomers.map((customer) => [
+      customerName(customer),
+      customer.companyName ?? "",
+      addressLine(customer.addresses?.[0]),
+      customer.phone,
+      customerAdditionalPhone(customer, "work"),
+      customerAdditionalPhone(customer, "home"),
+      customer.email ?? "",
+      customer.source ?? "",
+      (customer.tags ?? []).join("; "),
+      customer.notes ?? "",
+      (customerLifetimeValue(customer) / 100).toFixed(2),
+      formatDate(customerLastServiceDate(customer)),
+      formatDate(customer.createdAt)
+    ]);
+    const blob = new Blob([[headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setCustomerActionMenuOpen(false);
+  }
+
+  function parseCustomerCsv(text: string) {
+    const lines = text.split(/\r?\n/).filter((line) => line.trim());
+    if (lines.length < 2) return [];
+    const parseLine = (line: string) => {
+      const cells: string[] = [];
+      let current = "";
+      let quoted = false;
+      for (let index = 0; index < line.length; index += 1) {
+        const char = line[index];
+        if (char === '"' && line[index + 1] === '"') {
+          current += '"';
+          index += 1;
+        } else if (char === '"') {
+          quoted = !quoted;
+        } else if (char === "," && !quoted) {
+          cells.push(current.trim());
+          current = "";
+        } else {
+          current += char;
+        }
+      }
+      cells.push(current.trim());
+      return cells;
+    };
+    const headers = parseLine(lines[0]).map((header) => header.toLowerCase().replace(/\s+/g, ""));
+    return lines.slice(1).map((line) => {
+      const cells = parseLine(line);
+      const row = new globalThis.Map(headers.map((header, index) => [header, cells[index] ?? ""]));
+      const fullName = row.get("customername") ?? row.get("name") ?? "";
+      const [firstName, ...lastNameParts] = fullName.split(/\s+/);
+      return {
+        firstName: row.get("firstname") || firstName || "Unknown",
+        lastName: row.get("lastname") || lastNameParts.join(" ") || "Customer",
+        companyName: row.get("company") || undefined,
+        phone: formatPhoneInput(row.get("mobilephone") || row.get("phone") || ""),
+        email: row.get("email") || "",
+        source: row.get("leadsource") || "",
+        tags: splitTags((row.get("tags") ?? "").replace(/;/g, ",")),
+        notes: row.get("notes") || "",
+        address: row.get("address") ? { label: "Service", street1: row.get("address") ?? "", city: row.get("city") || "Yuma", state: row.get("state") || "AZ", postalCode: row.get("zip") || row.get("postalcode") || "85365" } : undefined
+      };
+    }).filter((row) => normalizedPhone(row.phone).length >= 7);
+  }
+
+  async function importCustomersCsv(file?: File | null) {
+    if (!file) return;
+    setError("");
+    setCustomerImportMessage("Importing customers...");
+    const rows = parseCustomerCsv(await file.text());
+    const created: Customer[] = [];
+    for (const row of rows) {
+      const result = await api<{ customer: Customer }>("/api/customers", { method: "POST", body: JSON.stringify(row) });
+      created.push(result.customer);
+    }
+    setCustomers((current) => [...created, ...current.filter((customer) => !created.some((item) => item.id === customer.id))]);
+    setCustomerImportMessage(`Imported ${created.length} customer${created.length === 1 ? "" : "s"}.`);
+    await loadDashboard();
+  }
+
+  async function mergeDuplicateCustomers(group: DuplicateCustomerGroup, primaryCustomerId: string) {
+    setError("");
+    setDuplicateMergeMessage("");
+    const duplicateCustomerIds = group.customers.filter((customer) => customer.id !== primaryCustomerId).map((customer) => customer.id);
+    const result = await api<{ customer: Customer; removedCustomerIds: string[] }>("/api/customers/merge", {
+      method: "POST",
+      body: JSON.stringify({ primaryCustomerId, duplicateCustomerIds })
+    });
+    setCustomers((current) => [result.customer, ...current.filter((customer) => customer.id !== result.customer.id && !result.removedCustomerIds.includes(customer.id))]);
+    setDuplicateMergeMessage(`Merged ${duplicateCustomerIds.length} duplicate customer${duplicateCustomerIds.length === 1 ? "" : "s"} into ${customerName(result.customer)}.`);
+    await loadDashboard();
+  }
+
   async function addCustomerNote(event: FormEvent) {
     event.preventDefault();
     if (!selectedCustomer || !customerNoteDraft.trim()) return;
@@ -3006,9 +3286,14 @@ export function App() {
     });
     const customer = customerResult.customer;
     setCustomers((current) => [customer, ...current.filter((item) => item.id !== customer.id)]);
-    setJobForm((current) => ({ ...current, customerId: customer.id, addressId: customer.addresses?.[0]?.id ?? "" }));
-    setJobClientSearch(`${customer.firstName} ${customer.lastName} / ${customer.phone}`);
-    setJobAddressSearch(customer.addresses?.[0] ? addressLine(customer.addresses[0]) : "");
+    if (activeView === "customers") {
+      setSelectedCustomerId(customer.id);
+      setCustomerProfileTab("profile");
+    } else {
+      setJobForm((current) => ({ ...current, customerId: customer.id, addressId: customer.addresses?.[0]?.id ?? "" }));
+      setJobClientSearch(`${customer.firstName} ${customer.lastName} / ${customer.phone}`);
+      setJobAddressSearch(customer.addresses?.[0] ? addressLine(customer.addresses[0]) : "");
+    }
     setCreateClientInline(false);
     setJobClientForm(blankCustomerForm());
   }
@@ -5377,6 +5662,7 @@ export function App() {
     + (estimateStatusFilter === "all" ? 0 : 1);
   const invoiceFilterCount = Object.values(invoiceFilters).filter(Boolean).length
     + (invoiceStatusFilter === "all" ? 0 : 1);
+  const customerFilterCount = Object.values(customerFilters).filter(Boolean).length;
 
   function updateEstimateFilter<K extends keyof EstimateFilters>(key: K, value: EstimateFilters[K]) {
     setEstimateFilters((current) => ({ ...current, [key]: value }));
@@ -5384,6 +5670,57 @@ export function App() {
 
   function updateInvoiceFilter<K extends keyof InvoiceFilters>(key: K, value: InvoiceFilters[K]) {
     setInvoiceFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function renderCustomerColumn(customer: Customer, columnId: CustomerColumnId) {
+    switch (columnId) {
+      case "address":
+        return addressLine(customer.addresses?.[0]) || "--";
+      case "company":
+        return customer.companyName || "--";
+      case "isContractor":
+        return "No";
+      case "customerType":
+        return customerType(customer);
+      case "dateAcquired":
+      case "dateCreated":
+        return formatDate(customer.createdAt);
+      case "email":
+        return customer.email || "--";
+      case "firstName":
+        return customer.firstName || "--";
+      case "homePhone":
+        return customerAdditionalPhone(customer, "home") || "--";
+      case "lastName":
+        return customer.lastName || "--";
+      case "lastServiceDate":
+        return formatDate(customerLastServiceDate(customer));
+      case "leadSource":
+        return customer.source || "--";
+      case "lifetimeValue":
+        return money.format(customerLifetimeValue(customer) / 100);
+      case "mobilePhone":
+        return customer.phone || "--";
+      case "notes":
+        return customer.notes || "--";
+      case "notificationsEnabled":
+        return notificationsEnabled(customer) ? "Enabled" : "Off";
+      case "role":
+        return customer.companyName ? "Business" : "Homeowner";
+      case "serviceStatus":
+        return <span className={`status-pill ${customerServiceStatus(customer) === "Serviceable" ? "estimate-outcome-won" : "estimate-outcome-lost"}`}>{customerServiceStatus(customer)}</span>;
+      case "tags":
+        return (
+          <span className="table-tag-wrap">
+            {(customer.tags ?? []).slice(0, 4).map((tagName) => <span className="tag-chip compact" key={tagName}>{tagName}</span>)}
+            {(customer.tags ?? []).length === 0 ? "--" : null}
+          </span>
+        );
+      case "workPhone":
+        return customerAdditionalPhone(customer, "work") || "--";
+      default:
+        return "--";
+    }
   }
 
   function invoiceLatestSend(invoice: Invoice) {
@@ -6046,14 +6383,14 @@ export function App() {
           </div>
         )}
 
-        {createClientInline && (activeView === "jobs" || activeView === "estimates") && (
+        {createClientInline && (activeView === "jobs" || activeView === "estimates" || activeView === "customers") && (
           <div className="modal-backdrop customer-create-backdrop" onClick={() => setCreateClientInline(false)}>
             <form className="job-customer-create-modal" onSubmit={saveInlineJobClient} onClick={(event) => event.stopPropagation()}>
               <header>
                 <button className="icon-button" type="button" onClick={() => setCreateClientInline(false)} aria-label="Close customer creator"><X size={20} /></button>
                 <div>
                   <h2>Add new customer</h2>
-                  <p>Create the customer, then return to the {activeView === "estimates" ? "estimate" : "job"} with them selected.</p>
+                  <p>Create the customer, then return to the {activeView === "customers" ? "customer profile" : activeView === "estimates" ? "estimate" : "job"} with them selected.</p>
                 </div>
               </header>
               <section>
@@ -6325,6 +6662,78 @@ export function App() {
           </section>
         )}
 
+        {customerColumnDialogOpen && (
+          <div className="modal-backdrop" onClick={() => setCustomerColumnDialogOpen(false)}>
+            <div className="estimate-column-modal" onClick={(event) => event.stopPropagation()}>
+              <h2>Select columns to view</h2>
+              <div className="estimate-column-grid">
+                {customerColumnOptions.map((column) => (
+                  <label key={column.id}>
+                    <input
+                      type="checkbox"
+                      checked={visibleCustomerColumns.includes(column.id)}
+                      onChange={(event) => setVisibleCustomerColumns((current) => event.target.checked ? [...current, column.id] : current.filter((id) => id !== column.id))}
+                    />
+                    {column.label}
+                  </label>
+                ))}
+              </div>
+              <div className="dialog-actions">
+                <button className="text-button" type="button" onClick={() => setVisibleCustomerColumns([])}>Deselect all</button>
+                <button className="primary" type="button" onClick={() => setCustomerColumnDialogOpen(false)}>Done</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {customerFilterPanelOpen && (
+          <div className="modal-backdrop estimate-filter-backdrop" onClick={() => setCustomerFilterPanelOpen(false)}>
+            <aside className="estimate-filter-panel" onClick={(event) => event.stopPropagation()}>
+              <header><button className="icon-button" type="button" onClick={() => setCustomerFilterPanelOpen(false)}><X size={20} /></button><h2>Filters</h2></header>
+              <label>Date created<div className="two-column-inputs"><input type="date" value={customerFilters.createdFrom} onChange={(event) => updateCustomerFilter("createdFrom", event.target.value)} /><input type="date" value={customerFilters.createdTo} onChange={(event) => updateCustomerFilter("createdTo", event.target.value)} /></div></label>
+              <label>Date acquired<div className="two-column-inputs"><input type="date" value={customerFilters.acquiredFrom} onChange={(event) => updateCustomerFilter("acquiredFrom", event.target.value)} /><input type="date" value={customerFilters.acquiredTo} onChange={(event) => updateCustomerFilter("acquiredTo", event.target.value)} /></div></label>
+              <label>Last service date<div className="two-column-inputs"><input type="date" value={customerFilters.lastServiceFrom} onChange={(event) => updateCustomerFilter("lastServiceFrom", event.target.value)} /><input type="date" value={customerFilters.lastServiceTo} onChange={(event) => updateCustomerFilter("lastServiceTo", event.target.value)} /></div></label>
+              <label>Lifetime value<div className="two-column-inputs"><input placeholder="Min" value={customerFilters.valueMin} onChange={(event) => updateCustomerFilter("valueMin", event.target.value)} /><input placeholder="Max" value={customerFilters.valueMax} onChange={(event) => updateCustomerFilter("valueMax", event.target.value)} /></div></label>
+              <label>Lead source<select value={customerFilters.leadSource} onChange={(event) => updateCustomerFilter("leadSource", event.target.value)}><option value="">Choose lead source</option>{crmOptions.leadSources.map((source) => <option key={source} value={source}>{source}</option>)}</select></label>
+              <label>Customer tags<select value={customerFilters.tag} onChange={(event) => updateCustomerFilter("tag", event.target.value)}><option value="">Search tags</option>{crmOptions.tags.map((tagName) => <option key={tagName} value={tagName}>{tagName}</option>)}</select></label>
+              <label>Notifications enabled<select value={customerFilters.notifications} onChange={(event) => updateCustomerFilter("notifications", event.target.value)}><option value="">Any</option><option value="enabled">Enabled</option><option value="off">Off</option></select></label>
+              <label>SMS consent<select value={customerFilters.smsConsent} onChange={(event) => updateCustomerFilter("smsConsent", event.target.value)}><option value="">Any</option><option value="yes">Allowed</option><option value="no">Opted out</option></select></label>
+              <label>Service status<select value={customerFilters.serviceStatus} onChange={(event) => updateCustomerFilter("serviceStatus", event.target.value)}><option value="">Any</option><option value="Serviceable">Serviceable</option><option value="Do not service">Do not service</option></select></label>
+              <label>Customer type<select value={customerFilters.customerType} onChange={(event) => updateCustomerFilter("customerType", event.target.value)}><option value="">Any</option><option value="Homeowner">Homeowner</option><option value="Business">Business</option></select></label>
+              <div className="dialog-actions"><button className="outline-button" type="button" onClick={() => setCustomerFilters(blankCustomerFilters)}>Clear</button><button className="primary" type="button" onClick={() => setCustomerFilterPanelOpen(false)}>Apply</button></div>
+            </aside>
+          </div>
+        )}
+
+        {duplicateDialogOpen && (
+          <div className="modal-backdrop" onClick={() => setDuplicateDialogOpen(false)}>
+            <div className="estimate-column-modal duplicate-customer-modal" onClick={(event) => event.stopPropagation()}>
+              <h2>Manage duplicates</h2>
+              <p className="muted-copy">{customerDuplicateGroups.length} possible duplicate group{customerDuplicateGroups.length === 1 ? "" : "s"} found by matching phone, email, or name and address.</p>
+              {duplicateMergeMessage && <p className="success-message">{duplicateMergeMessage}</p>}
+              <div className="duplicate-group-list">
+                {customerDuplicateGroups.map((group) => (
+                  <article className="duplicate-group-card" key={group.key}>
+                    <header><strong>{group.reason}</strong><span>{group.customers.length} records</span></header>
+                    {group.customers.map((customer, index) => (
+                      <div className="duplicate-customer-row" key={customer.id}>
+                        <div>
+                          <strong>{customerName(customer)}</strong>
+                          <span>{customer.phone} {customer.email ? `· ${customer.email}` : ""}</span>
+                          <small>{addressLine(customer.addresses?.[0])}</small>
+                        </div>
+                        <button className={index === 0 ? "primary" : "outline-button"} type="button" onClick={() => void mergeDuplicateCustomers(group, customer.id)}>Keep this record</button>
+                      </div>
+                    ))}
+                  </article>
+                ))}
+                {customerDuplicateGroups.length === 0 && <div className="table-empty">No duplicate customers found right now.</div>}
+              </div>
+              <div className="dialog-actions"><button className="primary" type="button" onClick={() => setDuplicateDialogOpen(false)}>Done</button></div>
+            </div>
+          </div>
+        )}
+
         {activeView === "messages" && (
           <section className="messages-page">
             <div className="section-actions">
@@ -6537,67 +6946,83 @@ export function App() {
           <section className="customer-workspace">
             <div className="section-actions">
               <div className="breadcrumb"><Users size={17} /> Clients & Leads</div>
-              <button className="primary" onClick={() => setSelectedCustomerId("")}><Plus size={18} /> Create Customer</button>
+              <button className="primary" onClick={() => { setJobClientForm(blankCustomerForm()); setCreateClientInline(true); }}><Plus size={18} /> Create customer</button>
             </div>
 
             {!selectedCustomer ? (
-              <div className="customer-grid">
-                <section className="panel customer-form-panel">
-                  <div className="panel-header"><h2>Create Customer</h2><UserPlus size={18} /></div>
-                  <form className="record-form customer-create-form" onSubmit={createCustomer}>
-                    <input placeholder="First name" value={customerForm.firstName} onChange={(event) => setCustomerForm({ ...customerForm, firstName: event.target.value })} required />
-                    <input placeholder="Last name" value={customerForm.lastName} onChange={(event) => setCustomerForm({ ...customerForm, lastName: event.target.value })} required />
-                    <input placeholder="Mobile phone" value={customerForm.phone} onChange={(event) => setCustomerForm({ ...customerForm, phone: formatPhoneInput(event.target.value) })} required />
-                    <input placeholder="Email" value={customerForm.email} onChange={(event) => setCustomerForm({ ...customerForm, email: event.target.value })} />
-                    <input placeholder="Additional emails, comma separated" value={customerForm.additionalEmails} onChange={(event) => setCustomerForm({ ...customerForm, additionalEmails: event.target.value })} />
-                    <input placeholder="Work phone" value={customerForm.workPhone} onChange={(event) => setCustomerForm({ ...customerForm, workPhone: formatPhoneInput(event.target.value) })} />
-                    <input placeholder="Home phone" value={customerForm.homePhone} onChange={(event) => setCustomerForm({ ...customerForm, homePhone: formatPhoneInput(event.target.value) })} />
-                    <select value={customerForm.source} onChange={(event) => setCustomerForm({ ...customerForm, source: event.target.value })}>
-                      <option value="">Lead source</option>
-                      {crmOptions.leadSources.map((source) => <option key={source} value={source}>{source}</option>)}
-                    </select>
-                    <input placeholder="Customer tags, comma separated" value={customerForm.tags} onChange={(event) => setCustomerForm({ ...customerForm, tags: event.target.value })} />
-                    {renderAddressAutocomplete({
-                      lookupKey: "customer-create-address",
-                      value: customerForm.street1,
-                      placeholder: "Street address",
-                      className: "span-2",
-                      onChange: (value) => setCustomerForm((current) => ({ ...current, street1: value, latitude: "", longitude: "" })),
-                      onSelect: (place) => setCustomerForm((current) => ({ ...current, ...placeToAddressPatch(place) }))
-                    })}
-                    <input placeholder="Unit, suite, gate code" value={customerForm.street2} onChange={(event) => setCustomerForm({ ...customerForm, street2: event.target.value })} />
-                    <input placeholder="City" value={customerForm.city} onChange={(event) => setCustomerForm({ ...customerForm, city: event.target.value })} />
-                    <input placeholder="State" value={customerForm.state} onChange={(event) => setCustomerForm({ ...customerForm, state: event.target.value })} />
-                    <input placeholder="Postal code" value={customerForm.postalCode} onChange={(event) => setCustomerForm({ ...customerForm, postalCode: event.target.value })} />
-                    <textarea className="span-2" placeholder="Customer notes" value={customerForm.notes} onChange={(event) => setCustomerForm({ ...customerForm, notes: event.target.value })} />
-                    <div className="span-2 preference-row">
-                      <label><input type="checkbox" checked={customerForm.communicationSms} onChange={(event) => setCustomerForm({ ...customerForm, communicationSms: event.target.checked })} /> SMS ok</label>
-                      <label><input type="checkbox" checked={customerForm.communicationEmail} onChange={(event) => setCustomerForm({ ...customerForm, communicationEmail: event.target.checked })} /> Email ok</label>
-                      <label><input type="checkbox" checked={customerForm.communicationPhone} onChange={(event) => setCustomerForm({ ...customerForm, communicationPhone: event.target.checked })} /> Phone ok</label>
-                    </div>
-                    <button className="primary span-2" type="submit"><Plus size={18} /> Save customer</button>
-                  </form>
-                </section>
-
-                <section className="panel wide customers-list-panel">
-                  <div className="panel-header"><h2>Customer List</h2><Users size={18} /></div>
-                  <div className="table-search"><Search size={18} /><input placeholder="Search name, phone, email, tag, or address" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} /></div>
-                  <div className="customer-list">
-                    {filteredCustomers.map((customer) => (
-                      <article key={customer.id} onClick={() => { setSelectedCustomerId(customer.id); setCustomerProfileTab("profile"); }}>
-                        <div className="customer-avatar">{customer.firstName.slice(0, 1)}{customer.lastName.slice(0, 1)}</div>
-                        <div>
-                          <strong>{customerName(customer)}</strong>
-                          <span>{customer.phone} {customer.email ? `/ ${customer.email}` : ""}</span>
-                          <small>{addressLine(customer.addresses?.[0])}</small>
-                        </div>
-                        <div className="customer-tags">{(customer.tags ?? []).slice(0, 3).map((tagName) => <span key={tagName}>{tagName}</span>)}</div>
-                      </article>
-                    ))}
-                    {filteredCustomers.length === 0 && <p className="empty">No customers match that search yet.</p>}
+              <section className="estimate-index-panel customer-index-panel">
+                <div className="estimate-index-header">
+                  <div>
+                    <h2>Customers</h2>
+                    <span>{filteredCustomers.length} of {customers.length} records</span>
                   </div>
-                </section>
-              </div>
+                  <div className="estimate-index-actions customer-index-actions">
+                    <div className="customer-action-wrap">
+                      <button className="outline-button" type="button" onClick={() => setCustomerActionMenuOpen((open) => !open)}>Actions <ChevronDown size={16} /></button>
+                      {customerActionMenuOpen && (
+                        <div className="customer-action-menu">
+                          <button type="button" onClick={() => { setCustomerActionMenuOpen(false); customerImportInputRef.current?.click(); }}><Upload size={16} /> Import</button>
+                          <button type="button" onClick={exportCustomersCsv}><Download size={16} /> Export</button>
+                          <button type="button" onClick={() => setError("Restore deleted needs customer archiving turned on before deleted profiles can be recovered.")}><FolderOpen size={16} /> Restore deleted</button>
+                          <button type="button" onClick={() => { setDuplicateDialogOpen(true); setCustomerActionMenuOpen(false); }}><Users size={16} /> Manage duplicates</button>
+                        </div>
+                      )}
+                    </div>
+                    <button className="primary" type="button" onClick={() => { setJobClientForm(blankCustomerForm()); setCreateClientInline(true); }}><Plus size={18} /> Create customer</button>
+                    <input
+                      ref={customerImportInputRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      hidden
+                      onChange={(event) => {
+                        void importCustomersCsv(event.currentTarget.files?.[0]);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </div>
+                </div>
+                {customerImportMessage && <p className="success-message">{customerImportMessage}</p>}
+                <div className="estimate-management-toolbar">
+                  <div className="table-search"><Search size={18} /><input placeholder="Search customers" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} /></div>
+                  <button className="icon-button" type="button" onClick={() => setCustomerFilterPanelOpen(true)} aria-label="Filter customers"><ListChecks size={18} /></button>
+                  <button className="icon-button" type="button" onClick={() => setCustomerColumnDialogOpen(true)} aria-label="Select customer columns"><Settings size={18} /></button>
+                </div>
+                <div className="estimate-outcome-tabs">
+                  {[
+                    ["all", "All"],
+                    ["serviceable", "Serviceable"],
+                    ["doNotService", "Do not service"]
+                  ].map(([value, label]) => (
+                    <button key={value} className={(value === "all" && !customerFilters.serviceStatus) || (value === "serviceable" && customerFilters.serviceStatus === "Serviceable") || (value === "doNotService" && customerFilters.serviceStatus === "Do not service") ? "active" : ""} type="button" onClick={() => updateCustomerFilter("serviceStatus", value === "all" ? "" : value === "serviceable" ? "Serviceable" : "Do not service")}>{label}</button>
+                  ))}
+                </div>
+                {customerFilterCount > 0 && (
+                  <div className="estimate-status-chips">
+                    <button className="selected" type="button" onClick={() => setCustomerFilters(blankCustomerFilters)}>{customerFilterCount} customer filter{customerFilterCount === 1 ? "" : "s"} <X size={14} /></button>
+                  </div>
+                )}
+                <div className="estimate-table-wrap customer-table-wrap">
+                  <table className="estimate-management-table customer-management-table">
+                    <thead>
+                      <tr>
+                        <th><input type="checkbox" aria-label="Select all customers" /></th>
+                        <th>Customer name</th>
+                        {visibleCustomerColumns.map((columnId) => <th key={columnId}>{customerColumnOptions.find((column) => column.id === columnId)?.label}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredCustomers.map((customer) => (
+                        <tr key={customer.id}>
+                          <td><input type="checkbox" aria-label={`Select ${customerName(customer)}`} /></td>
+                          <td><button className="table-link" type="button" onClick={() => { setSelectedCustomerId(customer.id); setCustomerProfileTab("profile"); }}>{customerName(customer)}</button></td>
+                          {visibleCustomerColumns.map((columnId) => <td key={columnId}>{renderCustomerColumn(customer, columnId)}</td>)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {filteredCustomers.length === 0 && <div className="table-empty">No customers match those filters.</div>}
+                </div>
+              </section>
             ) : (
               <div className="customer-profile">
                 <div className="customer-profile-header">

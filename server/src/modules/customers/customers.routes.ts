@@ -49,6 +49,10 @@ const customerSchema = z.object({
 const customerUpdateSchema = customerSchema.partial();
 const customerNoteSchema = z.object({ content: z.string().min(1), author: z.string().optional() });
 const attachmentSchema = z.object({ name: z.string().min(1) });
+const customerMergeSchema = z.object({
+  primaryCustomerId: z.string().min(1),
+  duplicateCustomerIds: z.array(z.string().min(1)).min(1)
+});
 
 const customerInclude = {
   addresses: true,
@@ -74,6 +78,23 @@ async function saveCustomerOptions(locationId: string, input: { source?: string;
     create: { locationId, ...option },
     update: {}
   })));
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
+}
+
+function mergePhoneEntries(values: unknown[]) {
+  const entries = values
+    .flatMap((value) => Array.isArray(value) ? value : [])
+    .filter((entry): entry is { label?: string; number: string } => Boolean(entry) && typeof entry === "object" && typeof entry.number === "string");
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const key = `${entry.label ?? "other"}:${entry.number.replace(/\D/g, "") || entry.number}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 customersRouter.get("/", asyncHandler(async (req, res) => {
@@ -124,6 +145,53 @@ customersRouter.post("/", asyncHandler(async (req, res) => {
     include: customerInclude
   });
   res.status(201).json({ customer });
+}));
+
+customersRouter.post("/merge", asyncHandler(async (req, res) => {
+  const input = customerMergeSchema.parse(req.body);
+  const locationId = activeLocationId(req);
+  const ids = uniqueStrings([input.primaryCustomerId, ...input.duplicateCustomerIds]);
+  const customers = await prisma.customer.findMany({ where: { id: { in: ids }, locationId } });
+  const primary = customers.find((customer) => customer.id === input.primaryCustomerId);
+  const duplicates = customers.filter((customer) => customer.id !== input.primaryCustomerId);
+
+  if (!primary) return res.status(404).json({ error: "Primary customer not found" });
+  if (duplicates.length !== input.duplicateCustomerIds.length) return res.status(404).json({ error: "One or more duplicate customers were not found" });
+
+  const duplicateIds = duplicates.map((customer) => customer.id);
+  const mergedNotes = uniqueStrings([primary.notes, ...duplicates.map((customer) => customer.notes)]).join("\n\n");
+  const mergedCustomer = await prisma.$transaction(async (tx) => {
+    await tx.address.updateMany({ where: { customerId: { in: duplicateIds } }, data: { customerId: primary.id } });
+    await tx.job.updateMany({ where: { customerId: { in: duplicateIds } }, data: { customerId: primary.id } });
+    await tx.estimate.updateMany({ where: { customerId: { in: duplicateIds } }, data: { customerId: primary.id } });
+    await tx.invoice.updateMany({ where: { customerId: { in: duplicateIds } }, data: { customerId: primary.id } });
+    await tx.message.updateMany({ where: { customerId: { in: duplicateIds } }, data: { customerId: primary.id } });
+    await tx.customerNote.updateMany({ where: { customerId: { in: duplicateIds } }, data: { customerId: primary.id } });
+
+    await tx.customer.deleteMany({ where: { id: { in: duplicateIds }, locationId } });
+
+    return tx.customer.update({
+      where: { id: primary.id },
+      data: {
+        firstName: primary.firstName || duplicates.find((customer) => customer.firstName)?.firstName || primary.firstName,
+        lastName: primary.lastName || duplicates.find((customer) => customer.lastName)?.lastName || primary.lastName,
+        companyName: primary.companyName || duplicates.find((customer) => customer.companyName)?.companyName,
+        email: primary.email || duplicates.find((customer) => customer.email)?.email,
+        phone: primary.phone || duplicates.find((customer) => customer.phone)?.phone || primary.phone,
+        alternatePhone: primary.alternatePhone || duplicates.find((customer) => customer.alternatePhone)?.alternatePhone,
+        additionalEmails: uniqueStrings([...(primary.additionalEmails ?? []), ...duplicates.flatMap((customer) => customer.additionalEmails ?? []), ...duplicates.map((customer) => customer.email)]),
+        additionalPhones: mergePhoneEntries([primary.additionalPhones, ...duplicates.map((customer) => customer.additionalPhones), ...duplicates.map((customer) => [{ label: "mobile", number: customer.phone }])]),
+        source: primary.source || duplicates.find((customer) => customer.source)?.source,
+        tags: uniqueStrings([...(primary.tags ?? []), ...duplicates.flatMap((customer) => customer.tags ?? [])]),
+        notes: mergedNotes || undefined,
+        attachments: uniqueStrings([...(primary.attachments ?? []), ...duplicates.flatMap((customer) => customer.attachments ?? [])]),
+        paymentMethodNote: primary.paymentMethodNote || duplicates.find((customer) => customer.paymentMethodNote)?.paymentMethodNote
+      },
+      include: customerInclude
+    });
+  });
+
+  res.json({ customer: mergedCustomer, removedCustomerIds: duplicateIds });
 }));
 
 customersRouter.get("/:id", asyncHandler(async (req, res) => {
