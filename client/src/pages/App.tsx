@@ -1915,6 +1915,7 @@ export function App() {
     timezone: "America/Phoenix"
   });
   const [activeView, setActiveView] = useState<View>(() => typeof window === "undefined" ? "dispatch" : viewFromPath(window.location.pathname));
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [employeeCreateMenuOpen, setEmployeeCreateMenuOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
@@ -7030,54 +7031,71 @@ export function App() {
     );
   }
 
-  return (
-    <main className="app-shell">
-      <aside className="sidebar">
-        <div className="location-brand-switcher">
-          <button className="location-brand-button" type="button" onClick={() => setLocationMenuOpen((open) => !open)}>
-            {invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="Affordable Security logo" /> : <span className="brand-mark">A</span>}
-            <span>
-              <strong>{currentLocationLabel}</strong>
-              <small>{locationScope === "main" ? "All locations" : activeLocationAccess?.location.postalCode || "Current location"}</small>
-            </span>
-            <ChevronDown size={16} />
-          </button>
-          {locationMenuOpen && (
-            <div className="location-menu" role="dialog" aria-label="Switch location">
-              {activeLocationAccess && (
-                <button className="location-menu-current" type="button" onClick={() => void switchLocation(activeLocationAccess.location.id)}>
-                  {invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="" /> : <span className="location-avatar">A</span>}
-                  <span>{locationDisplayName(activeLocationAccess.location)}</span>
-                  {locationScope === "location" && <em>Current</em>}
-                </button>
-              )}
-              <div className="location-menu-search">
-                <Search size={16} />
-                <input value={locationSearch} onChange={(event) => setLocationSearch(event.target.value)} placeholder="Search by name or zip code" autoFocus />
-              </div>
-              {canUseMainLocation && (
-                <button className="location-menu-option" type="button" onClick={selectMainLocation}>
-                  <span className="location-avatar">M</span>
-                  <span>
-                    <strong>MAIN {activeLocationAccess?.organization.name || "Affordable Security"}</strong>
-                    <small>Rollup dashboard for every location</small>
-                  </span>
-                  {locationScope === "main" && <em>Current</em>}
-                </button>
-              )}
-              {locationSearchMatches.map((item) => (
-                <button className="location-menu-option" type="button" key={item.location.id} onClick={() => void switchLocation(item.location.id)}>
-                  {invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="" /> : <span className="location-avatar">A</span>}
-                  <span>
-                    <strong>{locationDisplayName(item.location)}</strong>
-                    <small>{[item.location.city, item.location.state, item.location.postalCode].filter(Boolean).join(", ") || item.organization.name}</small>
-                  </span>
-                  {locationScope === "location" && item.location.id === activeLocationId && <em>Current</em>}
-                </button>
-              ))}
-              {locationSearchMatches.length === 0 && <p className="location-menu-empty">No locations match that search.</p>}
+  function renderLocationSwitcher() {
+    return (
+      <div className="location-brand-switcher topbar-location-switcher">
+        <button className="location-brand-button" type="button" onClick={() => setLocationMenuOpen((open) => !open)}>
+          {invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="Affordable Security logo" /> : <span className="brand-mark">A</span>}
+          <span>
+            <strong>{currentLocationLabel}</strong>
+            <small>{locationScope === "main" ? "All locations" : activeLocationAccess?.location.postalCode || "Current location"}</small>
+          </span>
+          <ChevronDown size={16} />
+        </button>
+        {locationMenuOpen && (
+          <div className="location-menu" role="dialog" aria-label="Switch location">
+            {activeLocationAccess && (
+              <button className="location-menu-current" type="button" onClick={() => void switchLocation(activeLocationAccess.location.id)}>
+                {invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="" /> : <span className="location-avatar">A</span>}
+                <span>{locationDisplayName(activeLocationAccess.location)}</span>
+                {locationScope === "location" && <em>Current</em>}
+              </button>
+            )}
+            <div className="location-menu-search">
+              <Search size={16} />
+              <input value={locationSearch} onChange={(event) => setLocationSearch(event.target.value)} placeholder="Search by name or zip code" autoFocus />
             </div>
-          )}
+            {canUseMainLocation && (
+              <button className="location-menu-option" type="button" onClick={selectMainLocation}>
+                <span className="location-avatar">M</span>
+                <span>
+                  <strong>MAIN {activeLocationAccess?.organization.name || "Affordable Security"}</strong>
+                  <small>Rollup dashboard for every location</small>
+                </span>
+                {locationScope === "main" && <em>Current</em>}
+              </button>
+            )}
+            {locationSearchMatches.map((item) => (
+              <button className="location-menu-option" type="button" key={item.location.id} onClick={() => void switchLocation(item.location.id)}>
+                {invoiceSettings.logoDataUrl ? <img src={invoiceSettings.logoDataUrl} alt="" /> : <span className="location-avatar">A</span>}
+                <span>
+                  <strong>{locationDisplayName(item.location)}</strong>
+                  <small>{[item.location.city, item.location.state, item.location.postalCode].filter(Boolean).join(", ") || item.organization.name}</small>
+                </span>
+                {locationScope === "location" && item.location.id === activeLocationId && <em>Current</em>}
+              </button>
+            ))}
+            {locationSearchMatches.length === 0 && <p className="location-menu-empty">No locations match that search.</p>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <div className="brand">
+            <span className="brand-mark">A</span>
+            <span className="brand-copy">
+              <strong>Affordable CRM</strong>
+              <small>Field operations</small>
+            </span>
+          </div>
+          <button className="icon-button sidebar-toggle" type="button" onClick={() => setSidebarCollapsed((collapsed) => !collapsed)} aria-label={sidebarCollapsed ? "Expand menu" : "Collapse menu"}>
+            {sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+          </button>
         </div>
         <nav>
           <span className="nav-section">Main Menu</span>
@@ -7118,6 +7136,7 @@ export function App() {
 
       <section className="workspace">
         <header className="topbar">
+          {renderLocationSwitcher()}
           <div className="search-box global-search-box">
             <Search size={18} />
             <input
