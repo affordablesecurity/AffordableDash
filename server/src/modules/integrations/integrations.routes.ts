@@ -1,12 +1,22 @@
 import { Router } from "express";
 import jwt from "jsonwebtoken";
 import type Stripe from "stripe";
+import { z } from "zod";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
 import { asyncHandler } from "../../utils/async-handler.js";
 import { housecallPro } from "./housecall-pro.service.js";
-import { stripe } from "../payments/stripe.service.js";
+import {
+  activeStripeMode,
+  getLocationStripeConfig,
+  getLocationStripeCredential,
+  locationStripeSettings,
+  maskStripeValue,
+  stripeKeyMode,
+  type StripeCredentialMetadata,
+  type StripeMode
+} from "../payments/stripe.service.js";
 
 export const integrationsRouter = Router();
 export const stripeOAuthRouter = Router();
@@ -16,24 +26,24 @@ type StripeConnectState = {
   userId: string;
   organizationId: string;
   locationId: string;
+  mode: StripeMode;
 };
 
-type StripeMetadata = {
-  stripeAccountId?: string;
-  stripeUserId?: string;
-  livemode?: boolean;
-  scope?: string;
-  tokenType?: string;
-  connectedAt?: string;
-  disconnectedAt?: string;
-};
-
-function stripeKeyMode(value?: string) {
-  if (!value) return "missing";
-  if (value.startsWith("sk_test_") || value.startsWith("pk_test_")) return "test";
-  if (value.startsWith("sk_live_") || value.startsWith("pk_live_")) return "live";
-  return "unknown";
-}
+const stripeSettingsSchema = z.object({
+  activeMode: z.enum(["test", "live"]),
+  test: z.object({
+    secretKey: z.string().trim().optional(),
+    publishableKey: z.string().trim().optional(),
+    connectClientId: z.string().trim().optional(),
+    webhookSecret: z.string().trim().optional()
+  }).optional(),
+  live: z.object({
+    secretKey: z.string().trim().optional(),
+    publishableKey: z.string().trim().optional(),
+    connectClientId: z.string().trim().optional(),
+    webhookSecret: z.string().trim().optional()
+  }).optional()
+});
 
 function stripeCallbackUrl() {
   return `${env.CLIENT_URL.replace(/\/+$/, "")}/api/integrations/stripe/oauth/callback`;
@@ -55,25 +65,40 @@ integrationsRouter.get("/status", asyncHandler(async (req, res) => {
 
 integrationsRouter.get("/stripe/status", asyncHandler(async (req, res) => {
   const locationId = activeLocationId(req);
-  const credential = await prisma.integrationCredential.findUnique({
-    where: { locationId_provider: { locationId, provider: "stripe" } }
-  });
-  const metadata = credential?.metadata as StripeMetadata | null;
-  const accountId = metadata?.stripeAccountId ?? metadata?.stripeUserId;
+  const config = await getLocationStripeConfig(locationId);
+  const metadata = config.metadata;
+  const mode = config.mode;
+  const testSettings = locationStripeSettings(metadata, "test");
+  const liveSettings = locationStripeSettings(metadata, "live");
 
   let account: Stripe.Account | null = null;
-  if (stripe && credential?.enabled && accountId) {
-    const retrieved = await stripe.accounts.retrieve(accountId);
+  if (config.stripe && config.accountId) {
+    const retrieved = await config.stripe.accounts.retrieve(config.accountId);
     account = "deleted" in retrieved && retrieved.deleted ? null : retrieved;
   }
 
   res.json({
-    configured: Boolean(stripe && env.STRIPE_CONNECT_CLIENT_ID),
-    connected: Boolean(credential?.enabled && accountId),
-    accountId,
-    accountMode: metadata?.livemode === true ? "live" : metadata?.livemode === false ? "test" : null,
-    secretKeyMode: stripeKeyMode(env.STRIPE_SECRET_KEY),
-    publishableKeyMode: stripeKeyMode(env.STRIPE_PUBLISHABLE_KEY),
+    configured: Boolean(config.stripe && config.connectClientId),
+    connected: Boolean(config.accountId),
+    accountId: config.accountId,
+    activeMode: mode,
+    accountMode: mode,
+    secretKeyMode: stripeKeyMode(config.settings.secretKey),
+    publishableKeyMode: stripeKeyMode(config.settings.publishableKey),
+    settings: {
+      test: {
+        secretKey: maskStripeValue(testSettings.secretKey),
+        publishableKey: maskStripeValue(testSettings.publishableKey),
+        connectClientId: maskStripeValue(testSettings.connectClientId),
+        webhookSecret: maskStripeValue(testSettings.webhookSecret)
+      },
+      live: {
+        secretKey: maskStripeValue(liveSettings.secretKey),
+        publishableKey: maskStripeValue(liveSettings.publishableKey),
+        connectClientId: maskStripeValue(liveSettings.connectClientId),
+        webhookSecret: maskStripeValue(liveSettings.webhookSecret)
+      }
+    },
     businessName: account?.business_profile?.name ?? null,
     chargesEnabled: account?.charges_enabled ?? false,
     payoutsEnabled: account?.payouts_enabled ?? false,
@@ -82,8 +107,45 @@ integrationsRouter.get("/stripe/status", asyncHandler(async (req, res) => {
   });
 }));
 
+integrationsRouter.post("/stripe/settings", asyncHandler(async (req, res) => {
+  const locationId = activeLocationId(req);
+  const input = stripeSettingsSchema.parse(req.body);
+  const { credential, metadata } = await getLocationStripeCredential(locationId);
+  const mergeModeSettings = (mode: StripeMode) => {
+    const existing = metadata[mode] ?? {};
+    const incoming = input[mode] ?? {};
+    return {
+      ...existing,
+      ...Object.fromEntries(Object.entries(incoming).filter(([, value]) => value && !String(value).includes("...")))
+    };
+  };
+  const nextMetadata: StripeCredentialMetadata = {
+    ...metadata,
+    activeMode: input.activeMode,
+    test: mergeModeSettings("test"),
+    live: mergeModeSettings("live")
+  };
+
+  await prisma.integrationCredential.upsert({
+    where: { locationId_provider: { locationId, provider: "stripe" } },
+    update: {
+      organizationId: req.user!.organizationId,
+      metadata: nextMetadata
+    },
+    create: {
+      organizationId: req.user!.organizationId,
+      locationId,
+      provider: "stripe",
+      enabled: false,
+      metadata: nextMetadata
+    }
+  });
+  res.json({ saved: true });
+}));
+
 integrationsRouter.post("/stripe/connect", asyncHandler(async (req, res) => {
-  if (!stripe || !env.STRIPE_CONNECT_CLIENT_ID) {
+  const config = await getLocationStripeConfig(activeLocationId(req));
+  if (!config.stripe || !config.connectClientId) {
     return res.status(422).json({ error: "Stripe Connect is not configured" });
   }
 
@@ -91,12 +153,13 @@ integrationsRouter.post("/stripe/connect", asyncHandler(async (req, res) => {
     purpose: "stripe_connect",
     userId: req.user!.id,
     organizationId: req.user!.organizationId,
-    locationId: activeLocationId(req)
+    locationId: activeLocationId(req),
+    mode: config.mode
   } satisfies StripeConnectState, env.JWT_SECRET, { expiresIn: "10m" });
 
   const params = new URLSearchParams({
     response_type: "code",
-    client_id: env.STRIPE_CONNECT_CLIENT_ID,
+    client_id: config.connectClientId,
     scope: "read_write",
     redirect_uri: stripeCallbackUrl(),
     state
@@ -106,30 +169,36 @@ integrationsRouter.post("/stripe/connect", asyncHandler(async (req, res) => {
 }));
 
 integrationsRouter.post("/stripe/disconnect", asyncHandler(async (req, res) => {
-  if (!stripe || !env.STRIPE_CONNECT_CLIENT_ID) {
+  const locationId = activeLocationId(req);
+  const config = await getLocationStripeConfig(locationId);
+  if (!config.stripe || !config.connectClientId) {
     return res.status(422).json({ error: "Stripe Connect is not configured" });
   }
 
-  const locationId = activeLocationId(req);
-  const credential = await prisma.integrationCredential.findUnique({
-    where: { locationId_provider: { locationId, provider: "stripe" } }
-  });
-  const metadata = credential?.metadata as StripeMetadata | null;
-  const stripeUserId = metadata?.stripeUserId ?? metadata?.stripeAccountId;
+  const credential = config.credential;
+  const metadata = config.metadata;
+  const stripeUserId = config.accountId;
 
   if (stripeUserId) {
-    await stripe.oauth.deauthorize({
-      client_id: env.STRIPE_CONNECT_CLIENT_ID,
+    await config.stripe.oauth.deauthorize({
+      client_id: config.connectClientId,
       stripe_user_id: stripeUserId
     });
   }
 
   if (credential) {
+    const accountsByMode = {
+      ...(metadata.accountsByMode ?? {}),
+      [config.mode]: {
+        ...(metadata.accountsByMode?.[config.mode] ?? {}),
+        disconnectedAt: new Date().toISOString()
+      }
+    };
     await prisma.integrationCredential.update({
       where: { id: credential.id },
       data: {
         enabled: false,
-        metadata: { ...metadata, disconnectedAt: new Date().toISOString() }
+        metadata: { ...metadata, accountsByMode, disconnectedAt: new Date().toISOString() }
       }
     });
   }
@@ -138,10 +207,6 @@ integrationsRouter.post("/stripe/disconnect", asyncHandler(async (req, res) => {
 }));
 
 stripeOAuthRouter.get("/oauth/callback", asyncHandler(async (req, res) => {
-  if (!stripe || !env.STRIPE_CONNECT_CLIENT_ID) {
-    return res.redirect(stripeSettingsUrl("not_configured"));
-  }
-
   const error = typeof req.query.error === "string" ? req.query.error : "";
   if (error) return res.redirect(stripeSettingsUrl("cancelled"));
 
@@ -157,8 +222,12 @@ stripeOAuthRouter.get("/oauth/callback", asyncHandler(async (req, res) => {
   }
 
   if (state.purpose !== "stripe_connect") return res.redirect(stripeSettingsUrl("invalid_state"));
+  const config = await getLocationStripeConfig(state.locationId);
+  if (!config.stripe || !config.connectClientId) {
+    return res.redirect(stripeSettingsUrl("not_configured"));
+  }
 
-  const token = await stripe.oauth.token({
+  const token = await config.stripe.oauth.token({
     grant_type: "authorization_code",
     code
   }) as {
@@ -168,33 +237,44 @@ stripeOAuthRouter.get("/oauth/callback", asyncHandler(async (req, res) => {
     token_type?: string;
   };
 
+  const existing = await getLocationStripeCredential(state.locationId);
+  const metadata = existing.metadata;
+  const account = {
+    stripeAccountId: token.stripe_user_id,
+    stripeUserId: token.stripe_user_id,
+    livemode: token.livemode,
+    scope: token.scope,
+    tokenType: token.token_type,
+    connectedAt: new Date().toISOString()
+  };
+  const nextMetadata: StripeCredentialMetadata = {
+    ...metadata,
+    activeMode: state.mode,
+    stripeAccountId: token.stripe_user_id,
+    stripeUserId: token.stripe_user_id,
+    livemode: token.livemode,
+    scope: token.scope,
+    tokenType: token.token_type,
+    connectedAt: account.connectedAt,
+    accountsByMode: {
+      ...(metadata.accountsByMode ?? {}),
+      [state.mode]: account
+    }
+  };
+
   await prisma.integrationCredential.upsert({
     where: { locationId_provider: { locationId: state.locationId, provider: "stripe" } },
     update: {
       enabled: true,
       organizationId: state.organizationId,
-      metadata: {
-        stripeAccountId: token.stripe_user_id,
-        stripeUserId: token.stripe_user_id,
-        livemode: token.livemode,
-        scope: token.scope,
-        tokenType: token.token_type,
-        connectedAt: new Date().toISOString()
-      }
+      metadata: nextMetadata
     },
     create: {
       organizationId: state.organizationId,
       locationId: state.locationId,
       provider: "stripe",
       enabled: true,
-      metadata: {
-        stripeAccountId: token.stripe_user_id,
-        stripeUserId: token.stripe_user_id,
-        livemode: token.livemode,
-        scope: token.scope,
-        tokenType: token.token_type,
-        connectedAt: new Date().toISOString()
-      }
+      metadata: nextMetadata
     }
   });
 

@@ -6,9 +6,36 @@ export const stripe = env.STRIPE_SECRET_KEY
   ? new Stripe(env.STRIPE_SECRET_KEY, { apiVersion: "2025-02-24.acacia" })
   : null;
 
-type StripeCredentialMetadata = {
+export type StripeMode = "test" | "live";
+
+export type StripeModeSettings = {
+  secretKey?: string;
+  publishableKey?: string;
+  connectClientId?: string;
+  webhookSecret?: string;
+};
+
+export type StripeConnectedAccount = {
   stripeAccountId?: string;
   stripeUserId?: string;
+  livemode?: boolean;
+  scope?: string;
+  tokenType?: string;
+  connectedAt?: string;
+  disconnectedAt?: string;
+};
+
+export type StripeCredentialMetadata = {
+  activeMode?: StripeMode;
+  stripeAccountId?: string;
+  stripeUserId?: string;
+  livemode?: boolean;
+  scope?: string;
+  tokenType?: string;
+  connectedAt?: string;
+  test?: StripeModeSettings;
+  live?: StripeModeSettings;
+  accountsByMode?: Partial<Record<StripeMode, StripeConnectedAccount>>;
 };
 
 type InvoiceCheckoutLine = {
@@ -29,12 +56,85 @@ type InvoiceCheckoutInput = {
   items?: InvoiceCheckoutLine[];
 };
 
-export async function getLocationStripeAccountId(locationId: string) {
+export function stripeKeyMode(value?: string) {
+  if (!value) return "missing";
+  if (value.startsWith("sk_test_") || value.startsWith("pk_test_")) return "test";
+  if (value.startsWith("sk_live_") || value.startsWith("pk_live_")) return "live";
+  if (value.startsWith("whsec_")) return "unknown";
+  return "unknown";
+}
+
+export function maskStripeValue(value?: string) {
+  if (!value) return "";
+  if (value.length <= 12) return "********";
+  return `${value.slice(0, 8)}...${value.slice(-4)}`;
+}
+
+function metadataObject(value: unknown): StripeCredentialMetadata {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as StripeCredentialMetadata : {};
+}
+
+export function activeStripeMode(metadata: StripeCredentialMetadata): StripeMode {
+  if (metadata.activeMode === "live" || metadata.activeMode === "test") return metadata.activeMode;
+  return metadata.livemode ? "live" : "test";
+}
+
+export function locationStripeSettings(metadata: StripeCredentialMetadata, mode = activeStripeMode(metadata)): StripeModeSettings {
+  const saved = metadata[mode] ?? {};
+  return {
+    secretKey: saved.secretKey || env.STRIPE_SECRET_KEY,
+    publishableKey: saved.publishableKey || env.STRIPE_PUBLISHABLE_KEY,
+    connectClientId: saved.connectClientId || env.STRIPE_CONNECT_CLIENT_ID,
+    webhookSecret: saved.webhookSecret || env.STRIPE_WEBHOOK_SECRET
+  };
+}
+
+export async function getLocationStripeCredential(locationId: string) {
   const credential = await prisma.integrationCredential.findUnique({
     where: { locationId_provider: { locationId, provider: "stripe" } }
   });
-  const metadata = credential?.metadata as StripeCredentialMetadata | null;
-  return credential?.enabled ? metadata?.stripeAccountId ?? metadata?.stripeUserId ?? null : null;
+  return { credential, metadata: metadataObject(credential?.metadata) };
+}
+
+export async function getLocationStripeConfig(locationId: string) {
+  const { credential, metadata } = await getLocationStripeCredential(locationId);
+  const mode = activeStripeMode(metadata);
+  const settings = locationStripeSettings(metadata, mode);
+  const account = metadata.accountsByMode?.[mode];
+  const legacyMatchesMode = metadata.livemode === undefined || (mode === "live") === metadata.livemode;
+  const legacyAccountId = legacyMatchesMode ? metadata.stripeAccountId ?? metadata.stripeUserId ?? null : null;
+  const accountId = account?.stripeAccountId ?? account?.stripeUserId ?? legacyAccountId;
+  return {
+    credential,
+    metadata,
+    mode,
+    settings,
+    stripe: settings.secretKey ? new Stripe(settings.secretKey, { apiVersion: "2025-02-24.acacia" }) : null,
+    publishableKey: settings.publishableKey ?? "",
+    connectClientId: settings.connectClientId ?? "",
+    webhookSecret: settings.webhookSecret ?? "",
+    accountId: credential?.enabled ? accountId : null
+  };
+}
+
+export async function getLocationStripeAccountId(locationId: string) {
+  const config = await getLocationStripeConfig(locationId);
+  return config.accountId;
+}
+
+export async function getAllStripeWebhookSecrets() {
+  const credentials = await prisma.integrationCredential.findMany({
+    where: { provider: "stripe" },
+    select: { metadata: true }
+  });
+  const secrets = [
+    env.STRIPE_WEBHOOK_SECRET,
+    ...credentials.flatMap((credential) => {
+      const metadata = metadataObject(credential.metadata);
+      return [metadata.test?.webhookSecret, metadata.live?.webhookSecret];
+    })
+  ].filter((value): value is string => Boolean(value));
+  return [...new Set(secrets)];
 }
 
 export async function createInvoicePaymentIntent(invoice: {
@@ -43,15 +143,15 @@ export async function createInvoicePaymentIntent(invoice: {
   invoiceNumber: number;
   locationId: string;
 }, options: { amount?: number; tipAmount?: number } = {}) {
-  if (!stripe) {
+  const config = await getLocationStripeConfig(invoice.locationId);
+  if (!config.stripe) {
     throw new Error("Stripe is not configured");
   }
-  const stripeAccount = await getLocationStripeAccountId(invoice.locationId);
-  if (!stripeAccount) {
+  if (!config.accountId) {
     throw new Error("Stripe is not connected for this location");
   }
 
-  return stripe.paymentIntents.create({
+  return config.stripe.paymentIntents.create({
     amount: options.amount ?? invoice.total,
     currency: "usd",
     automatic_payment_methods: { enabled: true },
@@ -62,7 +162,7 @@ export async function createInvoicePaymentIntent(invoice: {
       invoiceTotal: String(invoice.total),
       tipAmount: String(options.tipAmount ?? 0)
     }
-  }, { stripeAccount });
+  }, { stripeAccount: config.accountId });
 }
 
 function checkoutQuantity(value: InvoiceCheckoutLine["quantity"]) {
@@ -169,15 +269,15 @@ function checkoutLineItems(invoice: InvoiceCheckoutInput, options: { amount?: nu
 }
 
 export async function createInvoiceCheckoutSession(invoice: InvoiceCheckoutInput, baseUrl: string, options: { amount?: number; tipAmount?: number; customerEmail?: string } = {}) {
-  if (!stripe) {
+  const config = await getLocationStripeConfig(invoice.locationId);
+  if (!config.stripe) {
     throw new Error("Stripe is not configured");
   }
-  const stripeAccount = await getLocationStripeAccountId(invoice.locationId);
-  if (!stripeAccount) {
+  if (!config.accountId) {
     throw new Error("Stripe is not connected for this location");
   }
 
-  return stripe.checkout.sessions.create({
+  return config.stripe.checkout.sessions.create({
     mode: "payment",
     customer_email: options.customerEmail || invoice.customer?.email || undefined,
     metadata: {
@@ -200,5 +300,5 @@ export async function createInvoiceCheckoutSession(invoice: InvoiceCheckoutInput
     },
     success_url: `${baseUrl}/pay/${invoice.invoiceNumber}/complete?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/pay/${invoice.invoiceNumber}`
-  }, { stripeAccount });
+  }, { stripeAccount: config.accountId });
 }

@@ -4537,6 +4537,51 @@ button:disabled {
   font-weight: 800;
 }
 
+.stripe-credential-form {
+  display: grid;
+  gap: 18px;
+}
+
+.stripe-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #d9deea;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.stripe-mode-toggle button {
+  border: 0;
+  border-right: 1px solid #d9deea;
+  background: transparent;
+  padding: 10px 18px;
+  color: #53607e;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.stripe-mode-toggle button:last-child {
+  border-right: 0;
+}
+
+.stripe-mode-toggle button.active {
+  background: #005eb8;
+  color: #ffffff;
+}
+
+.stripe-mode-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #e4e8f1;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.stripe-mode-card h4 {
+  margin: 0;
+}
+
 .success-banner,
 .info-banner {
   border-radius: 12px;

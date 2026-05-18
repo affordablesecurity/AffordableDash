@@ -478,9 +478,16 @@ type StripeStatus = {
   configured: boolean;
   connected: boolean;
   accountId?: string;
+  activeMode?: "live" | "test";
   accountMode?: "live" | "test" | null;
   secretKeyMode?: "live" | "test" | "missing" | "unknown";
   publishableKeyMode?: "live" | "test" | "missing" | "unknown";
+  settings?: Record<"test" | "live", {
+    secretKey?: string;
+    publishableKey?: string;
+    connectClientId?: string;
+    webhookSecret?: string;
+  }>;
   businessName?: string | null;
   chargesEnabled: boolean;
   payoutsEnabled: boolean;
@@ -1594,6 +1601,11 @@ export function App() {
   const [invoiceSettingsMessage, setInvoiceSettingsMessage] = useState("");
   const [stripeStatus, setStripeStatus] = useState<StripeStatus | null>(null);
   const [stripeMessage, setStripeMessage] = useState("");
+  const [stripeSettingsForm, setStripeSettingsForm] = useState({
+    activeMode: "test" as "test" | "live",
+    test: { secretKey: "", publishableKey: "", connectClientId: "", webhookSecret: "" },
+    live: { secretKey: "", publishableKey: "", connectClientId: "", webhookSecret: "" }
+  });
   const [messages, setMessages] = useState<CrmMessage[]>([]);
   const [selectedMessageThread, setSelectedMessageThread] = useState("");
   const [messageDraft, setMessageDraft] = useState("");
@@ -2730,7 +2742,44 @@ export function App() {
   async function refreshStripeStatus() {
     const result = await api<StripeStatus>("/api/integrations/stripe/status");
     setStripeStatus(result);
+    setStripeSettingsForm({
+      activeMode: result.activeMode ?? result.accountMode ?? "test",
+      test: {
+        secretKey: result.settings?.test.secretKey ?? "",
+        publishableKey: result.settings?.test.publishableKey ?? "",
+        connectClientId: result.settings?.test.connectClientId ?? "",
+        webhookSecret: result.settings?.test.webhookSecret ?? ""
+      },
+      live: {
+        secretKey: result.settings?.live.secretKey ?? "",
+        publishableKey: result.settings?.live.publishableKey ?? "",
+        connectClientId: result.settings?.live.connectClientId ?? "",
+        webhookSecret: result.settings?.live.webhookSecret ?? ""
+      }
+    });
     return result;
+  }
+
+  async function saveStripeSettings(event?: FormEvent) {
+    event?.preventDefault();
+    setError("");
+    setStripeMessage("");
+    await api("/api/integrations/stripe/settings", {
+      method: "POST",
+      body: JSON.stringify(stripeSettingsForm)
+    });
+    await refreshStripeStatus();
+    setStripeMessage("Stripe settings saved.");
+  }
+
+  function updateStripeSetting(mode: "test" | "live", key: "secretKey" | "publishableKey" | "connectClientId" | "webhookSecret", value: string) {
+    setStripeSettingsForm((current) => ({
+      ...current,
+      [mode]: {
+        ...current[mode],
+        [key]: value
+      }
+    }));
   }
 
   async function connectStripe() {
@@ -8774,9 +8823,46 @@ export function App() {
 
                   {!stripeStatus?.configured && (
                     <div className="info-banner">
-                      Start setup is locked until Render has `STRIPE_SECRET_KEY` and `STRIPE_CONNECT_CLIENT_ID`. In Stripe, configure the OAuth redirect URL as `{window.location.origin}/api/integrations/stripe/oauth/callback`.
+                      Add a secret key and Connect client ID below, then save. In Stripe, configure the OAuth redirect URL as `{window.location.origin}/api/integrations/stripe/oauth/callback`.
                     </div>
                   )}
+
+                  <form className="invoice-settings-card stripe-credential-form" onSubmit={saveStripeSettings}>
+                    <div className="panel-header compact">
+                      <div>
+                        <h3>Stripe credentials</h3>
+                        <p className="muted">Save test and live credentials here, then choose which mode this location uses. Blank fields keep the existing saved value.</p>
+                      </div>
+                      <div className="stripe-mode-toggle" role="group" aria-label="Stripe mode">
+                        {(["test", "live"] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            className={stripeSettingsForm.activeMode === mode ? "active" : ""}
+                            type="button"
+                            onClick={() => setStripeSettingsForm((current) => ({ ...current, activeMode: mode }))}
+                          >
+                            {statusLabel(mode)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {(["test", "live"] as const).map((mode) => (
+                      <section className="stripe-mode-card" key={mode}>
+                        <h4>{statusLabel(mode)} mode</h4>
+                        <div className="settings-grid">
+                          <label>Secret key<input value={stripeSettingsForm[mode].secretKey} onChange={(event) => updateStripeSetting(mode, "secretKey", event.target.value)} placeholder={mode === "test" ? "sk_test_..." : "sk_live_..."} /></label>
+                          <label>Publishable key<input value={stripeSettingsForm[mode].publishableKey} onChange={(event) => updateStripeSetting(mode, "publishableKey", event.target.value)} placeholder={mode === "test" ? "pk_test_..." : "pk_live_..."} /></label>
+                          <label>Connect client ID<input value={stripeSettingsForm[mode].connectClientId} onChange={(event) => updateStripeSetting(mode, "connectClientId", event.target.value)} placeholder="ca_..." /></label>
+                          <label>Webhook signing secret<input value={stripeSettingsForm[mode].webhookSecret} onChange={(event) => updateStripeSetting(mode, "webhookSecret", event.target.value)} placeholder="whsec_..." /></label>
+                        </div>
+                      </section>
+                    ))}
+
+                    <div className="modal-actions">
+                      <button className="primary" type="submit">Save Stripe settings</button>
+                    </div>
+                  </form>
                 </div>
               </div>
             ) : settingsSection === "company" ? (

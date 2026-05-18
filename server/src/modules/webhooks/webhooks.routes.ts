@@ -5,7 +5,7 @@ import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { asyncHandler } from "../../utils/async-handler.js";
 import { sendPaymentReceiptSms } from "../messaging/messaging.service.js";
-import { stripe } from "../payments/stripe.service.js";
+import { getAllStripeWebhookSecrets, stripe } from "../payments/stripe.service.js";
 
 export const webhooksRouter = Router();
 
@@ -343,14 +343,25 @@ webhooksRouter.get("/voipms/media/:messageId/:index", asyncHandler(async (req, r
 }));
 
 webhooksRouter.post("/stripe", asyncHandler(async (req, res) => {
-  if (!stripe || !env.STRIPE_WEBHOOK_SECRET) {
+  const webhookSecrets = await getAllStripeWebhookSecrets();
+  if (!webhookSecrets.length) {
     return res.status(400).json({ error: "Stripe webhook is not configured" });
   }
 
   const signature = req.header("stripe-signature");
   if (!signature) return res.status(400).json({ error: "Missing Stripe signature" });
 
-  const event = stripe.webhooks.constructEvent(req.body, signature, env.STRIPE_WEBHOOK_SECRET);
+  const verifier = stripe ?? new Stripe("sk_test_placeholder", { apiVersion: "2025-02-24.acacia" });
+  let event: Stripe.Event | null = null;
+  for (const secret of webhookSecrets) {
+    try {
+      event = verifier.webhooks.constructEvent(req.body, signature, secret);
+      break;
+    } catch {
+      // Try the next saved webhook secret.
+    }
+  }
+  if (!event) return res.status(400).json({ error: "Invalid Stripe webhook signature" });
 
   if (event.type === "payment_intent.succeeded" || event.type === "payment_intent.payment_failed") {
     const intent = event.data.object as Stripe.PaymentIntent;

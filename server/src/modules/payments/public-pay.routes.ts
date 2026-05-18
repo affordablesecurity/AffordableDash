@@ -4,7 +4,7 @@ import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { asyncHandler } from "../../utils/async-handler.js";
 import { sendPaymentReceiptSms } from "../messaging/messaging.service.js";
-import { createInvoiceCheckoutSession, createInvoicePaymentIntent, getLocationStripeAccountId, stripe } from "./stripe.service.js";
+import { createInvoiceCheckoutSession, createInvoicePaymentIntent, getLocationStripeConfig } from "./stripe.service.js";
 
 export const publicPayRouter = Router();
 
@@ -96,13 +96,12 @@ async function recordPaidStripeInvoice(input: {
 }
 
 async function reconcileStripeReturn(invoice: NonNullable<Awaited<ReturnType<typeof loadInvoice>>>, query: Record<string, unknown>) {
-  if (!stripe) return false;
-  const stripeAccount = await getLocationStripeAccountId(invoice.locationId);
-  if (!stripeAccount) return false;
+  const config = await getLocationStripeConfig(invoice.locationId);
+  if (!config.stripe || !config.accountId) return false;
 
   const sessionId = queryValue(query.session_id);
   if (sessionId) {
-    const session = await stripe.checkout.sessions.retrieve(sessionId, { expand: ["payment_intent"] }, { stripeAccount });
+    const session = await config.stripe.checkout.sessions.retrieve(sessionId, { expand: ["payment_intent"] }, { stripeAccount: config.accountId });
     if (session.payment_status !== "paid" || session.metadata?.invoiceId !== invoice.id) return false;
     const paymentIntent = typeof session.payment_intent === "string" ? null : session.payment_intent;
     const paymentId = typeof session.payment_intent === "string" ? session.payment_intent : paymentIntent?.id ?? session.id;
@@ -112,7 +111,7 @@ async function reconcileStripeReturn(invoice: NonNullable<Awaited<ReturnType<typ
 
   const paymentIntentId = queryValue(query.payment_intent);
   if (paymentIntentId) {
-    const intent = await stripe.paymentIntents.retrieve(paymentIntentId, {}, { stripeAccount });
+    const intent = await config.stripe.paymentIntents.retrieve(paymentIntentId, {}, { stripeAccount: config.accountId });
     const matchesInvoice = intent.metadata.invoiceId === invoice.id || invoice.stripePaymentIntentId === intent.id;
     if (!matchesInvoice || intent.status !== "succeeded") return false;
     return recordPaidStripeInvoice({
@@ -156,6 +155,7 @@ function renderInvoicePayPage(input: {
   invoice: NonNullable<Awaited<ReturnType<typeof loadInvoice>>>;
   clientSecret?: string | null;
   stripeAccount?: string | null;
+  publishableKey?: string | null;
   checkoutUrl?: string | null;
   configurationError?: string | null;
 }) {
@@ -165,7 +165,6 @@ function renderInvoicePayPage(input: {
   const customerAddress = invoice.customer.addresses[0] || invoice.job?.address;
   const serviceDate = invoice.job?.scheduledStart || invoice.createdAt;
   const lines = invoiceLines(invoice);
-  const publishableKey = env.STRIPE_PUBLISHABLE_KEY || "";
 
   return `<!doctype html>
 <html lang="en">
@@ -243,7 +242,7 @@ function renderInvoicePayPage(input: {
       <section class="card">
         <h2>Payment Method</h2>
         <div class="card-body payment-card-body">
-          ${configurationError ? `<p class="message error">${escapeHtml(configurationError)}</p>` : clientSecret && publishableKey ? `
+          ${configurationError ? `<p class="message error">${escapeHtml(configurationError)}</p>` : clientSecret && input.publishableKey ? `
             <form id="payment-form">
               <div id="payment-element"></div>
               <button id="pay-button" class="pay-button" type="submit">Pay ${escapeHtml(cents(invoice.total))}</button>
@@ -286,12 +285,12 @@ function renderInvoicePayPage(input: {
     </div>
   </main>
 
-  ${(clientSecret && publishableKey) || checkoutUrl ? `<script>
+  ${(clientSecret && input.publishableKey) || checkoutUrl ? `<script>
     const invoiceTotal = ${invoice.total};
     let currentTip = 0;
     let currentClientSecret = ${JSON.stringify(clientSecret)};
-    const embeddedPaymentsEnabled = ${clientSecret && publishableKey ? "true" : "false"};
-    const stripe = embeddedPaymentsEnabled ? Stripe(${JSON.stringify(publishableKey)}, ${stripeAccount ? `{ stripeAccount: ${JSON.stringify(stripeAccount)} }` : "undefined"}) : null;
+    const embeddedPaymentsEnabled = ${clientSecret && input.publishableKey ? "true" : "false"};
+    const stripe = embeddedPaymentsEnabled ? Stripe(${JSON.stringify(input.publishableKey)}, ${stripeAccount ? `{ stripeAccount: ${JSON.stringify(stripeAccount)} }` : "undefined"}) : null;
     let elements;
     let paymentElement;
     const form = document.getElementById("payment-form");
@@ -440,7 +439,8 @@ publicPayRouter.post("/:invoiceNumber/intent", asyncHandler(async (req, res) => 
   if (invoice.total <= 0) return res.status(422).json({ error: "This invoice does not have an amount due" });
 
   const input = tipSchema.parse(req.body);
-  if (!env.STRIPE_PUBLISHABLE_KEY) {
+  const config = await getLocationStripeConfig(invoice.locationId);
+  if (!config.publishableKey) {
     const checkout = await createInvoiceCheckoutSession(invoice, env.PUBLIC_BASE_URL, { tipAmount: input.tipAmount });
     return res.json({
       checkoutUrl: checkout.url,
@@ -475,12 +475,15 @@ publicPayRouter.get("/:invoiceNumber", asyncHandler(async (req, res) => {
   if (invoice.total <= 0) return res.status(422).send("This invoice does not have an amount due.");
 
   let clientSecret: string | null | undefined;
+  let publishableKey = "";
   let stripeAccount: string | null = null;
   let checkoutUrl: string | null = null;
   let configurationError: string | null = null;
 
   try {
-    stripeAccount = await getLocationStripeAccountId(invoice.locationId);
+    const config = await getLocationStripeConfig(invoice.locationId);
+    stripeAccount = config.accountId;
+    publishableKey = config.publishableKey;
     const intent = await createInvoicePaymentIntent(invoice);
     clientSecret = intent.client_secret;
     await prisma.invoice.update({
@@ -491,15 +494,15 @@ publicPayRouter.get("/:invoiceNumber", asyncHandler(async (req, res) => {
     configurationError = err instanceof Error ? err.message : "Unable to start embedded payment.";
   }
 
-  if (!env.STRIPE_PUBLISHABLE_KEY) {
+  if (!publishableKey) {
     try {
       const checkout = await createInvoiceCheckoutSession(invoice, env.PUBLIC_BASE_URL);
       checkoutUrl = checkout.url;
       configurationError = null;
     } catch {
-      configurationError = "Stripe publishable key is missing. Add STRIPE_PUBLISHABLE_KEY in Render to show the embedded payment form.";
+      configurationError = "Stripe publishable key is missing. Add it in CRM Stripe settings to show the embedded payment form.";
     }
   }
 
-  res.status(200).send(renderInvoicePayPage({ invoice, clientSecret, stripeAccount, checkoutUrl, configurationError }));
+  res.status(200).send(renderInvoicePayPage({ invoice, clientSecret, stripeAccount, publishableKey, checkoutUrl, configurationError }));
 }));
