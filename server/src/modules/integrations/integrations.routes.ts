@@ -28,6 +28,13 @@ type StripeMetadata = {
   disconnectedAt?: string;
 };
 
+function stripeKeyMode(value?: string) {
+  if (!value) return "missing";
+  if (value.startsWith("sk_test_") || value.startsWith("pk_test_")) return "test";
+  if (value.startsWith("sk_live_") || value.startsWith("pk_live_")) return "live";
+  return "unknown";
+}
+
 function stripeCallbackUrl() {
   return `${env.CLIENT_URL.replace(/\/+$/, "")}/api/integrations/stripe/oauth/callback`;
 }
@@ -64,6 +71,9 @@ integrationsRouter.get("/stripe/status", asyncHandler(async (req, res) => {
     configured: Boolean(stripe && env.STRIPE_CONNECT_CLIENT_ID),
     connected: Boolean(credential?.enabled && accountId),
     accountId,
+    accountMode: metadata?.livemode === true ? "live" : metadata?.livemode === false ? "test" : null,
+    secretKeyMode: stripeKeyMode(env.STRIPE_SECRET_KEY),
+    publishableKeyMode: stripeKeyMode(env.STRIPE_PUBLISHABLE_KEY),
     businessName: account?.business_profile?.name ?? null,
     chargesEnabled: account?.charges_enabled ?? false,
     payoutsEnabled: account?.payouts_enabled ?? false,

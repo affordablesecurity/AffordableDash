@@ -478,6 +478,9 @@ type StripeStatus = {
   configured: boolean;
   connected: boolean;
   accountId?: string;
+  accountMode?: "live" | "test" | null;
+  secretKeyMode?: "live" | "test" | "missing" | "unknown";
+  publishableKeyMode?: "live" | "test" | "missing" | "unknown";
   businessName?: string | null;
   chargesEnabled: boolean;
   payoutsEnabled: boolean;
@@ -4148,8 +4151,15 @@ export function App() {
   async function createInvoiceFromJob(job: Job) {
     const existingInvoice = job.invoices?.[0];
     if (existingInvoice) {
+      const result = await api<{ invoice: Invoice }>(`/api/invoices/${existingInvoice.id}`);
+      setInvoices((current) => [result.invoice, ...current.filter((invoice) => invoice.id !== result.invoice.id)]);
+      setJobs((current) => current.map((item) => {
+        if (item.id !== job.id) return item;
+        const remainingInvoices = (item.invoices ?? []).filter((invoice) => invoice.id !== result.invoice.id);
+        return { ...item, invoices: [result.invoice, ...remainingInvoices] };
+      }));
       setDetailSavedMessage(`Invoice #${existingInvoice.invoiceNumber} opened`);
-      return existingInvoice;
+      return result.invoice;
     }
     const fallbackLineItem: NonNullable<Job["lineItems"]>[number] = {
       id: "fallback",
@@ -4207,6 +4217,10 @@ export function App() {
   }
 
   async function openInvoicePayment(invoice: Invoice) {
+    if (!invoice.customer) {
+      setError("Unable to open payment because the invoice is missing customer details. Refresh the page and try again.");
+      return;
+    }
     const address = invoice.customer.addresses?.[0];
     const amountDue = invoiceAmountDue(invoice) || invoice.total;
     setSelectedInvoiceId(invoice.id);
@@ -8749,6 +8763,9 @@ export function App() {
 
                   {stripeStatus?.connected && (
                     <div className="stripe-status-grid">
+                      <div><span>Mode</span><strong>{stripeStatus.accountMode === "test" ? "Test" : stripeStatus.accountMode === "live" ? "Live" : "Unknown"}</strong></div>
+                      <div><span>Secret key</span><strong>{stripeStatus.secretKeyMode === "test" ? "Test" : stripeStatus.secretKeyMode === "live" ? "Live" : statusLabel(stripeStatus.secretKeyMode || "unknown")}</strong></div>
+                      <div><span>Publishable key</span><strong>{stripeStatus.publishableKeyMode === "test" ? "Test" : stripeStatus.publishableKeyMode === "live" ? "Live" : statusLabel(stripeStatus.publishableKeyMode || "unknown")}</strong></div>
                       <div><span>Charges</span><strong>{stripeStatus.chargesEnabled ? "Enabled" : "Needs review"}</strong></div>
                       <div><span>Payouts</span><strong>{stripeStatus.payoutsEnabled ? "Enabled" : "Needs review"}</strong></div>
                       <div><span>Verification</span><strong>{stripeStatus.detailsSubmitted ? "Submitted" : "Incomplete"}</strong></div>
