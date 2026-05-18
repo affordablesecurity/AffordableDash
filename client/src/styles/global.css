@@ -2644,7 +2644,7 @@ button:disabled {
   position: relative;
 }
 
-.schedule-picker-field > button {
+.schedule-picker-field > input {
   width: 100%;
   min-height: 38px;
   border: 1px solid #d8deea;
@@ -2656,7 +2656,9 @@ button:disabled {
   text-align: left;
 }
 
-.schedule-picker-field > button.active {
+.schedule-picker-field > input.active,
+.schedule-picker-field > input:focus {
+  outline: none;
   border-color: #0b76d1;
   box-shadow: 0 0 0 2px rgba(11, 118, 209, 0.14);
 }

@@ -838,6 +838,42 @@ function displayScheduleTime(value: string, fallback = "") {
   return `${hour % 12 || 12}:${minuteText}${suffix}`;
 }
 
+function parseScheduleDateInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+  const slashMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(trimmed);
+  if (!slashMatch) return "";
+  const [, month, day, yearText] = slashMatch;
+  const year = yearText.length === 2 ? `20${yearText}` : yearText;
+  const parsed = new Date(Number(year), Number(month) - 1, Number(day));
+  if (Number.isNaN(parsed.getTime()) || parsed.getMonth() !== Number(month) - 1 || parsed.getDate() !== Number(day)) return "";
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+function parseScheduleTimeInput(value: string) {
+  const trimmed = value.trim().toLowerCase().replace(/\s/g, "");
+  if (!trimmed) return "";
+  const match = /^(\d{1,2})(?::?(\d{2}))?(am|pm)?$/.exec(trimmed);
+  if (!match) return "";
+  const [, hourText, minuteText = "00", period] = match;
+  let hour = Number(hourText);
+  const minute = Number(minuteText);
+  if (minute < 0 || minute > 59) return "";
+  if (period) {
+    if (hour < 1 || hour > 12) return "";
+    if (period === "pm" && hour < 12) hour += 12;
+    if (period === "am" && hour === 12) hour = 0;
+  } else if (hour > 23) {
+    return "";
+  }
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 const scheduleTimeOptions = Array.from({ length: 48 }, (_item, index) => {
   const hour = Math.floor(index / 2);
   const minute = index % 2 ? 30 : 0;
@@ -1386,6 +1422,7 @@ export function App() {
   const [scheduleDate, setScheduleDate] = useState(() => new Date());
   const [schedulePicker, setSchedulePicker] = useState<SchedulePickerState>(null);
   const [schedulePickerMonth, setSchedulePickerMonth] = useState(() => startOfMonth(new Date()));
+  const [scheduleInputDrafts, setScheduleInputDrafts] = useState<Record<string, string>>({});
   const [slotPrompt, setSlotPrompt] = useState<SlotPrompt>(null);
   const [selectedScheduleJob, setSelectedScheduleJob] = useState<Job | null>(null);
   const [selectedScheduleEstimate, setSelectedScheduleEstimate] = useState<Estimate | null>(null);
@@ -5055,10 +5092,15 @@ export function App() {
     }
   }
 
-  function openSchedulePicker(key: string, mode: "date" | "time", value: string) {
+  function openSchedulePicker(key: string, mode: "date" | "time", value: string, fallbackTime = "") {
     const date = formDatePart(value);
     setSchedulePickerMonth(startOfMonth(date ? new Date(`${date}T00:00:00`) : new Date()));
     setSchedulePicker({ key, mode });
+    const draftKey = `${key}:${mode}`;
+    setScheduleInputDrafts((current) => ({
+      ...current,
+      [draftKey]: mode === "date" ? displayScheduleDate(value) : displayScheduleTime(value, fallbackTime)
+    }));
   }
 
   function updateJobScheduleStart(nextValue: string) {
@@ -5086,15 +5128,37 @@ export function App() {
     const selectedDate = formDatePart(args.value);
     const activeDate = schedulePicker?.key === args.pickerKey && schedulePicker.mode === "date";
     const activeTime = schedulePicker?.key === args.pickerKey && schedulePicker.mode === "time";
+    const dateDraftKey = `${args.pickerKey}:date`;
+    const timeDraftKey = `${args.pickerKey}:time`;
     const monthStart = startOfMonth(schedulePickerMonth);
     const gridStart = startOfWeek(monthStart);
     const days = Array.from({ length: 42 }, (_item, index) => addDays(gridStart, index));
     return (
       <div className="schedule-picker-pair">
         <div className="schedule-picker-field">
-          <button type="button" className={activeDate ? "active" : ""} onClick={() => openSchedulePicker(args.pickerKey, "date", args.value)}>
-            {displayScheduleDate(args.value)}
-          </button>
+          <input
+            className={activeDate ? "active" : ""}
+            value={scheduleInputDrafts[dateDraftKey] ?? displayScheduleDate(args.value)}
+            placeholder="mm/dd/yyyy"
+            onFocus={() => openSchedulePicker(args.pickerKey, "date", args.value, args.fallbackTime)}
+            onClick={() => openSchedulePicker(args.pickerKey, "date", args.value, args.fallbackTime)}
+            onChange={(event) => {
+              const nextDraft = event.target.value;
+              setScheduleInputDrafts((current) => ({ ...current, [dateDraftKey]: nextDraft }));
+              const parsedDate = parseScheduleDateInput(nextDraft);
+              if (parsedDate) args.onChange(mergeDateAndTime(args.value || `${parsedDate}T${args.fallbackTime}`, "date", parsedDate));
+            }}
+            onBlur={(event) => {
+              const parsedDate = parseScheduleDateInput(event.target.value);
+              if (parsedDate) {
+                args.onChange(mergeDateAndTime(args.value || `${parsedDate}T${args.fallbackTime}`, "date", parsedDate));
+              }
+              window.setTimeout(() => setScheduleInputDrafts((current) => {
+                const { [dateDraftKey]: _removed, ...rest } = current;
+                return rest;
+              }), 140);
+            }}
+          />
           {activeDate && (
             <div className="schedule-date-popover">
               <header>
@@ -5115,6 +5179,7 @@ export function App() {
                       className={`${day.getMonth() !== schedulePickerMonth.getMonth() ? "muted" : ""} ${selectedDate === inputDate ? "selected" : ""}`}
                       onClick={() => {
                         args.onChange(mergeDateAndTime(args.value || `${inputDate}T${args.fallbackTime}`, "date", inputDate));
+                        setScheduleInputDrafts((current) => ({ ...current, [dateDraftKey]: displayScheduleDate(`${inputDate}T${formTimePart(args.value) || args.fallbackTime}`) }));
                         setSchedulePicker(null);
                       }}
                     >
@@ -5127,9 +5192,29 @@ export function App() {
           )}
         </div>
         <div className="schedule-picker-field">
-          <button type="button" className={activeTime ? "active" : ""} onClick={() => openSchedulePicker(args.pickerKey, "time", args.value)}>
-            {displayScheduleTime(args.value, args.fallbackTime)}
-          </button>
+          <input
+            className={activeTime ? "active" : ""}
+            value={scheduleInputDrafts[timeDraftKey] ?? displayScheduleTime(args.value, args.fallbackTime)}
+            placeholder="time"
+            onFocus={() => openSchedulePicker(args.pickerKey, "time", args.value, args.fallbackTime)}
+            onClick={() => openSchedulePicker(args.pickerKey, "time", args.value, args.fallbackTime)}
+            onChange={(event) => {
+              const nextDraft = event.target.value;
+              setScheduleInputDrafts((current) => ({ ...current, [timeDraftKey]: nextDraft }));
+              const parsedTime = parseScheduleTimeInput(nextDraft);
+              if (parsedTime) args.onChange(mergeDateAndTime(args.value || `${toInputDate(new Date())}T${args.fallbackTime}`, "time", parsedTime));
+            }}
+            onBlur={(event) => {
+              const parsedTime = parseScheduleTimeInput(event.target.value);
+              if (parsedTime) {
+                args.onChange(mergeDateAndTime(args.value || `${toInputDate(new Date())}T${args.fallbackTime}`, "time", parsedTime));
+              }
+              window.setTimeout(() => setScheduleInputDrafts((current) => {
+                const { [timeDraftKey]: _removed, ...rest } = current;
+                return rest;
+              }), 140);
+            }}
+          />
           {activeTime && (
             <div className="schedule-time-popover">
               {scheduleTimeOptions.map((time) => (
@@ -5139,6 +5224,7 @@ export function App() {
                   className={(formTimePart(args.value) || args.fallbackTime) === time ? "selected" : ""}
                   onClick={() => {
                     args.onChange(mergeDateAndTime(args.value || `${toInputDate(new Date())}T${args.fallbackTime}`, "time", time));
+                    setScheduleInputDrafts((current) => ({ ...current, [timeDraftKey]: displayScheduleTime(`2000-01-01T${time}`) }));
                     setSchedulePicker(null);
                   }}
                 >
