@@ -496,6 +496,32 @@ type GlobalSearchResult = {
   searchText: string;
 };
 
+type BookingService = {
+  id: string;
+  name: string;
+  description?: string;
+  price: number;
+  category: string;
+  itemType: string;
+  taxable: boolean;
+};
+
+type PublicBookingPayload = {
+  location: {
+    id: string;
+    slug: string;
+    name: string;
+    phone?: string;
+    city?: string;
+    state?: string;
+    postalCode?: string;
+    timezone?: string;
+    companyColor?: string;
+  };
+  services: BookingService[];
+  slots: Array<{ start: string; end: string }>;
+};
+
 type PaymentRecord = {
   id: string;
   invoiceId: string;
@@ -559,7 +585,7 @@ type ApiKey = {
   revokedAt?: string;
 };
 
-type View = "dispatch" | "schedule" | "map" | "messages" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "events" | "settings" | "api";
+type View = "dispatch" | "schedule" | "map" | "messages" | "customers" | "jobs" | "estimates" | "employees" | "invoices" | "reports" | "pricebook" | "servicePlans" | "events" | "onlineBooking" | "settings" | "api";
 type CalendarMode = "employees" | "day" | "week" | "month";
 type SlotPrompt = { date: Date; hour: number; minute: number; technicianId?: string } | null;
 type SchedulePickerState = { key: string; mode: "date" | "time" } | null;
@@ -806,6 +832,7 @@ const viewPathMap: Record<View, string> = {
   pricebook: "/pricebook",
   servicePlans: "/service-plans",
   events: "/events",
+  onlineBooking: "/booking",
   settings: "/settings",
   api: "/api-access"
 };
@@ -817,6 +844,7 @@ function viewFromPath(pathname: string): View {
   if (normalized === "/" || normalized === "/home") return "dispatch";
   if (normalized === "/clients" || normalized === "/clients-leads") return "customers";
   if (normalized === "/price-book") return "pricebook";
+  if (normalized === "/online-booking") return "onlineBooking";
   if (normalized === "/settings/stripe") return "settings";
   return "dispatch";
 }
@@ -1678,6 +1706,26 @@ export function App() {
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalSearchFocused, setGlobalSearchFocused] = useState(false);
   const [recentGlobalSearchIds, setRecentGlobalSearchIds] = useState<string[]>([]);
+  const [bookingData, setBookingData] = useState<PublicBookingPayload | null>(null);
+  const [bookingStep, setBookingStep] = useState<"zip" | "service" | "time" | "contact" | "done">("zip");
+  const [bookingForm, setBookingForm] = useState({
+    zipCode: "",
+    serviceId: "",
+    serviceName: "Locksmith",
+    scheduledStart: "",
+    scheduledEnd: "",
+    firstName: "",
+    lastName: "",
+    phone: "",
+    email: "",
+    address: "",
+    city: "",
+    notes: "",
+    smsConsent: true
+  });
+  const [bookingSubmitMessage, setBookingSubmitMessage] = useState("");
+  const [bookingAttributeName, setBookingAttributeName] = useState("Affordable Website");
+  const [bookingAttributeCode, setBookingAttributeCode] = useState("website");
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("week");
   const [scheduleDate, setScheduleDate] = useState(() => new Date());
   const [schedulePicker, setSchedulePicker] = useState<SchedulePickerState>(null);
@@ -1992,6 +2040,9 @@ export function App() {
   const selectedEstimateOptions = selectedEstimate?.options?.length ? selectedEstimate.options : [];
   const activeEstimateOption = selectedEstimateOptions.find((option) => option.id === activeEstimateOptionId) ?? selectedEstimateOptions[0];
   const activeEstimateCreateOption = estimateCreateOptions.find((option) => option.id === activeEstimateCreateOptionId) ?? estimateCreateOptions[0];
+  const publicBookingMatch = typeof window === "undefined" ? null : /^\/book\/([^/?#]+)/.exec(window.location.pathname);
+  const publicBookingLocationKey = publicBookingMatch?.[1] ?? "";
+  const publicBookingAttr = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("attr") ?? "";
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -2000,6 +2051,22 @@ export function App() {
       setRecentGlobalSearchIds([]);
     }
   }, [activeLocationId]);
+  useEffect(() => {
+    if (!publicBookingLocationKey) return;
+    api<PublicBookingPayload>(`/api/public-booking/${encodeURIComponent(publicBookingLocationKey)}`, { skipAuth: true })
+      .then((payload) => {
+        setBookingData(payload);
+        setBookingForm((current) => ({
+          ...current,
+          zipCode: current.zipCode || payload.location.postalCode || "",
+          serviceId: current.serviceId || payload.services[0]?.id || "",
+          serviceName: current.serviceName || payload.services[0]?.name || "Locksmith",
+          scheduledStart: current.scheduledStart || payload.slots[0]?.start || "",
+          scheduledEnd: current.scheduledEnd || payload.slots[0]?.end || ""
+        }));
+      })
+      .catch((err) => setBookingSubmitMessage(err instanceof Error ? err.message : "Booking page could not be loaded."));
+  }, [publicBookingLocationKey]);
   useEffect(() => {
     if (!selectedEstimate) return;
     setEstimateDepositDraft({
@@ -5715,6 +5782,111 @@ export function App() {
     );
   }
 
+  const selectedBookingService = bookingData?.services.find((service) => service.id === bookingForm.serviceId) ?? bookingData?.services[0];
+
+  async function submitPublicBooking(event: FormEvent) {
+    event.preventDefault();
+    if (!publicBookingLocationKey || !bookingForm.scheduledStart || !bookingForm.scheduledEnd) return;
+    setBookingSubmitMessage("Booking your appointment...");
+    try {
+      const result = await api<{ jobNumber: number }>(`/api/public-booking/${encodeURIComponent(publicBookingLocationKey)}`, {
+        skipAuth: true,
+        method: "POST",
+        body: JSON.stringify({
+          ...bookingForm,
+          serviceId: selectedBookingService?.id,
+          serviceName: selectedBookingService?.name || bookingForm.serviceName,
+          trackingAttribute: publicBookingAttr,
+          sourceLabel: publicBookingAttr ? `Online Booking - ${publicBookingAttr}` : "Online Booking"
+        })
+      });
+      setBookingSubmitMessage(`You're booked. Appointment job #${result.jobNumber} was added to the schedule.`);
+      setBookingStep("done");
+    } catch (err) {
+      setBookingSubmitMessage(err instanceof Error ? err.message : "Unable to book this appointment.");
+    }
+  }
+
+  function renderPublicBookingPage() {
+    const color = bookingData?.location.companyColor || "#2647c7";
+    const slotsByDay = bookingData?.slots.slice(0, 10) ?? [];
+    return (
+      <main className="public-booking-shell" style={{ "--booking-color": color } as CSSProperties}>
+        <section className="public-booking-modal">
+          <header className="public-booking-header">
+            <div className="booking-logo-mark">{bookingData?.location.name?.slice(0, 1) || "A"}</div>
+            <div><strong>{bookingData?.location.name || "Affordable Security"}</strong><span>Online Booking Form</span></div>
+          </header>
+          <div className="public-booking-hero"><h1>Let's Get You Scheduled</h1><div className="booking-house-shape" /></div>
+          {bookingStep !== "zip" && (
+            <div className="booking-summary-row">
+              <MapPin size={16} /> {bookingForm.city || bookingData?.location.city || "Service area"}, {bookingData?.location.state || "AZ"} {bookingForm.zipCode}
+            </div>
+          )}
+          {bookingStep === "zip" && (
+            <form className="booking-step centered" onSubmit={(event) => { event.preventDefault(); setBookingStep("service"); }}>
+              <MapPin size={74} />
+              <h2>Where are you?</h2>
+              <p>Enter your zip code so we can check if we provide service in your area.</p>
+              <label>Zip Code<input required value={bookingForm.zipCode} onChange={(event) => setBookingForm({ ...bookingForm, zipCode: event.target.value })} /></label>
+              <button className="primary" type="submit">Confirm</button>
+            </form>
+          )}
+          {bookingStep === "service" && (
+            <div className="booking-step">
+              <h2>What do you need help with?</h2>
+              <div className="booking-service-grid">
+                {(bookingData?.services.length ? bookingData.services : [{ id: "locksmith", name: "Locksmith", description: "Building lockout", price: 0, category: "Locksmith", itemType: "service", taxable: false }]).map((service) => (
+                  <button key={service.id} className={bookingForm.serviceId === service.id ? "selected" : ""} type="button" onClick={() => setBookingForm({ ...bookingForm, serviceId: service.id, serviceName: service.name })}>
+                    <Wrench size={20} /><strong>{service.name}</strong>{service.description && <span>{service.description}</span>}{service.price > 0 && <em>{money.format(service.price / 100)}</em>}
+                  </button>
+                ))}
+              </div>
+              <div className="booking-footer-actions"><button className="outline-button" type="button" onClick={() => setBookingStep("zip")}>Back</button><button className="primary" type="button" onClick={() => setBookingStep("time")}>Continue Booking</button></div>
+            </div>
+          )}
+          {bookingStep === "time" && (
+            <div className="booking-step">
+              <h2>When do you need us?</h2>
+              <div className="booking-tabs"><button className="active" type="button">First Available</button><button type="button">All Appointments</button></div>
+              <p className="booking-timezone">Time zone: {bookingData?.location.timezone || "America/Phoenix"}</p>
+              <div className="booking-slot-list">
+                {slotsByDay.map((slot) => (
+                  <button key={slot.start} className={bookingForm.scheduledStart === slot.start ? "selected" : ""} type="button" onClick={() => setBookingForm({ ...bookingForm, scheduledStart: slot.start, scheduledEnd: slot.end })}>
+                    <span /> {formatDateTime(slot.start)} - {new Date(slot.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                  </button>
+                ))}
+              </div>
+              <div className="booking-footer-actions"><button className="outline-button" type="button" onClick={() => setBookingStep("service")}>Back</button><button className="primary" type="button" onClick={() => setBookingStep("contact")}>Continue Booking</button></div>
+            </div>
+          )}
+          {bookingStep === "contact" && (
+            <form className="booking-step" onSubmit={submitPublicBooking}>
+              <div className="booking-summary-card"><strong>{selectedBookingService?.name || "Locksmith"}</strong><span>{formatDateTime(bookingForm.scheduledStart)}</span></div>
+              <h2>How should we reach you?</h2>
+              <div className="booking-contact-grid">
+                <label>First Name<input required value={bookingForm.firstName} onChange={(event) => setBookingForm({ ...bookingForm, firstName: event.target.value })} /></label>
+                <label>Last Name<input required value={bookingForm.lastName} onChange={(event) => setBookingForm({ ...bookingForm, lastName: event.target.value })} /></label>
+                <label>Phone<input required value={bookingForm.phone} onChange={(event) => setBookingForm({ ...bookingForm, phone: formatPhoneInput(event.target.value) })} /></label>
+                <label>Email<input type="email" value={bookingForm.email} onChange={(event) => setBookingForm({ ...bookingForm, email: event.target.value })} /></label>
+                <label className="span-2">Service address<input value={bookingForm.address} onChange={(event) => setBookingForm({ ...bookingForm, address: event.target.value })} /></label>
+                <label className="span-2">Notes<textarea value={bookingForm.notes} onChange={(event) => setBookingForm({ ...bookingForm, notes: event.target.value })} /></label>
+              </div>
+              <label className="check-row"><input type="checkbox" checked={bookingForm.smsConsent} onChange={(event) => setBookingForm({ ...bookingForm, smsConsent: event.target.checked })} /> Receive text messages about appointment</label>
+              {bookingSubmitMessage && <p className="muted-copy">{bookingSubmitMessage}</p>}
+              <div className="booking-footer-actions"><button className="outline-button" type="button" onClick={() => setBookingStep("time")}>Back</button><button className="primary" type="submit">Book appointment</button></div>
+            </form>
+          )}
+          {bookingStep === "done" && (
+            <div className="booking-step centered"><CheckCircle2 size={70} /><h2>You're booked</h2><p>{bookingSubmitMessage}</p></div>
+          )}
+        </section>
+      </main>
+    );
+  }
+
+  if (publicBookingLocationKey) return renderPublicBookingPage();
+
   if (!token) {
     return (
       <main className="login-screen">
@@ -6189,7 +6361,7 @@ export function App() {
           <button><WalletCards size={18} /> Payments</button>
           <button className={activeView === "events" ? "active" : ""} onClick={() => setActiveView("events")}><CalendarDays size={18} /> Events</button>
           <button><Clock3 size={18} /> Time Clock</button>
-          <button><Laptop size={18} /> Online Booking</button>
+          <button className={activeView === "onlineBooking" ? "active" : ""} onClick={() => setActiveView("onlineBooking")}><Laptop size={18} /> Online Booking</button>
           <button className={activeView === "pricebook" ? "active" : ""} onClick={() => setActiveView("pricebook")}><Tag size={18} /> Pricebook</button>
           <button className={activeView === "servicePlans" ? "active" : ""} onClick={() => setActiveView("servicePlans")}><CheckCheck size={18} /> Service Plans</button>
 
@@ -6840,6 +7012,58 @@ export function App() {
                 </div>
               </section>
             </div>
+          </section>
+        )}
+
+        {activeView === "onlineBooking" && (
+          <section className="booking-settings-page">
+            <div className="section-actions">
+              <div className="breadcrumb"><Laptop size={17} /> Booking</div>
+              <button className="primary" type="button" onClick={() => window.open(`${window.location.origin}/book/${activeLocationAccess?.location.id ?? activeLocationId}?attr=${encodeURIComponent(bookingAttributeCode || "website")}`, "_blank")}>Preview</button>
+            </div>
+            <div className="booking-tabs-settings">
+              <button type="button">General</button>
+              <button type="button">Services & Pricing</button>
+              <button className="active" type="button">Online Booking</button>
+              <button type="button">Reserve with Google</button>
+            </div>
+            <section className="booking-settings-card">
+              <header><div><h2>Preview and share your booking page</h2><p>Use this link or button code on your website. Appointments book directly into this CRM as scheduled jobs.</p></div><button className="outline-button" type="button" onClick={() => window.open(`${window.location.origin}/book/${activeLocationAccess?.location.id ?? activeLocationId}?attr=${encodeURIComponent(bookingAttributeCode || "website")}`, "_blank")}>Preview</button></header>
+              {(() => {
+                const locationKey = activeLocationAccess?.location.id ?? activeLocationId;
+                const bookingLink = `${window.location.origin}/book/${locationKey}?attr=${encodeURIComponent(bookingAttributeCode || "website")}`;
+                const buttonCode = `<a href="${bookingLink}" style="display:inline-block;background:${activeLocationAccess?.location.companyColor || "#0b76d1"};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;font-weight:700">Book Now</a>`;
+                return (
+                  <>
+                    <div className="booking-share-row"><div><span>Booking button</span><code>{buttonCode}</code></div><button className="outline-button" type="button" onClick={() => void navigator.clipboard.writeText(buttonCode)}>Copy</button></div>
+                    <div className="booking-share-row"><div><span>Booking page link</span><code>{bookingLink}</code></div><button className="outline-button" type="button" onClick={() => void navigator.clipboard.writeText(bookingLink)}>Copy</button></div>
+                  </>
+                );
+              })()}
+            </section>
+            <section className="booking-settings-card">
+              <header><div><h2>Pricing & Payments</h2><p>Services marked “Add to Online Booking” in the Pricebook appear on the public booking page.</p></div><button className="outline-button" type="button" onClick={() => setActiveView("pricebook")}>Edit services</button></header>
+              <div className="setting-toggle-row"><span><strong>Show service prices</strong><small>Display price book amounts to customers during booking.</small></span><input type="checkbox" disabled /></div>
+              <div className="setting-toggle-row"><span><strong>No payment required</strong><small>The first version creates the job appointment; deposits can be added next.</small></span><input type="checkbox" checked readOnly /></div>
+            </section>
+            <section className="booking-settings-card">
+              <header><div><h2>Booking Flow</h2><p>Customers enter service area, select a service, choose a time slot, and enter contact details.</p></div></header>
+              <div className="setting-toggle-row"><span><strong>Allow multiple services</strong><small>Coming later. Current flow books one service per appointment.</small></span><input type="checkbox" disabled /></div>
+              <div className="setting-toggle-row"><span><strong>Match existing customers</strong><small>Phone and email are matched to prevent duplicate customer profiles.</small></span><input type="checkbox" checked readOnly /></div>
+            </section>
+            <section className="booking-settings-card">
+              <header><div><h2>Tracking attribute</h2><p>Add a tracking attribute to your booking page so reports can show where jobs came from.</p></div></header>
+              <div className="booking-attribute-editor">
+                <label>Name<input value={bookingAttributeName} onChange={(event) => setBookingAttributeName(event.target.value)} /></label>
+                <label>Attribute code<input value={bookingAttributeCode} onChange={(event) => setBookingAttributeCode(event.target.value.replace(/\s+/g, "-").toLowerCase())} /></label>
+              </div>
+              <div className="booking-tracking-list">
+                {[bookingAttributeCode || "website", "facebook", "google-local-services", "lucy-ai"].map((attr) => {
+                  const link = `${window.location.origin}/book/${activeLocationAccess?.location.id ?? activeLocationId}?attr=${encodeURIComponent(attr)}`;
+                  return <div key={attr}><span>{attr === bookingAttributeCode ? bookingAttributeName : statusLabel(attr.replace(/-/g, "_"))}</span><code>{link}</code><button type="button" onClick={() => void navigator.clipboard.writeText(link)}>Copy</button></div>;
+                })}
+              </div>
+            </section>
           </section>
         )}
 
