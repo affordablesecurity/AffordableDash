@@ -487,6 +487,15 @@ type DuplicateCustomerGroup = {
   customers: Customer[];
 };
 
+type GlobalSearchResult = {
+  id: string;
+  type: "customer" | "job" | "estimate" | "invoice";
+  title: string;
+  status?: string;
+  detail: string;
+  searchText: string;
+};
+
 type PaymentRecord = {
   id: string;
   invoiceId: string;
@@ -1457,6 +1466,10 @@ function customerName(customer?: Customer) {
   return [customer.firstName, customer.lastName].filter(Boolean).join(" ") || customer.companyName || "Unnamed customer";
 }
 
+function globalSearchStorageKey(locationId: string) {
+  return `affordable_crm_recent_search_records:${locationId || "default"}`;
+}
+
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleDateString([], { month: "2-digit", day: "2-digit", year: "numeric" }) : "Not recorded";
 }
@@ -1662,6 +1675,9 @@ export function App() {
   const [activeLocationId, setActiveLocationId] = useState("");
   const [activeView, setActiveView] = useState<View>(() => typeof window === "undefined" ? "dispatch" : viewFromPath(window.location.pathname));
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [globalSearchFocused, setGlobalSearchFocused] = useState(false);
+  const [recentGlobalSearchIds, setRecentGlobalSearchIds] = useState<string[]>([]);
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("week");
   const [scheduleDate, setScheduleDate] = useState(() => new Date());
   const [schedulePicker, setSchedulePicker] = useState<SchedulePickerState>(null);
@@ -1976,6 +1992,14 @@ export function App() {
   const selectedEstimateOptions = selectedEstimate?.options?.length ? selectedEstimate.options : [];
   const activeEstimateOption = selectedEstimateOptions.find((option) => option.id === activeEstimateOptionId) ?? selectedEstimateOptions[0];
   const activeEstimateCreateOption = estimateCreateOptions.find((option) => option.id === activeEstimateCreateOptionId) ?? estimateCreateOptions[0];
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      setRecentGlobalSearchIds(JSON.parse(window.localStorage.getItem(globalSearchStorageKey(activeLocationId)) ?? "[]") as string[]);
+    } catch {
+      setRecentGlobalSearchIds([]);
+    }
+  }, [activeLocationId]);
   useEffect(() => {
     if (!selectedEstimate) return;
     setEstimateDepositDraft({
@@ -2372,6 +2396,72 @@ export function App() {
   const selectedSettings = settingsSections.find((section) => section.id === settingsSection);
   const selectedSettingsValues = selectedSettings ? crmOptions[optionKeyByKind[selectedSettings.kind]] : [];
   const activeLocationAccess = locations.find((item) => item.location.id === activeLocationId) ?? locations[0];
+  const globalSearchResults = useMemo<GlobalSearchResult[]>(() => {
+    const company = activeLocationAccess?.location.displayName || activeLocationAccess?.organization.name || "Affordable Security";
+    return [
+      ...customers.map((customer) => {
+        const detail = `${customer.phone || "No phone listed"} • ${addressLine(customer.addresses?.[0])} • ${customer.email || "No email listed"}`;
+        return {
+          id: `customer:${customer.id}`,
+          type: "customer" as const,
+          title: customerName(customer),
+          status: customerServiceStatus(customer),
+          detail,
+          searchText: [customerName(customer), customer.phone, customer.email ?? "", customer.source ?? "", ...(customer.tags ?? []), detail].join(" ")
+        };
+      }),
+      ...jobs.map((job) => {
+        const detail = `${customerName(job.customer)} • ${addressLine(job.address ?? job.customer.addresses?.[0])} • Scheduled date: ${job.scheduledStart ? formatDate(job.scheduledStart) : "N/A"}`;
+        return {
+          id: `job:${job.id}`,
+          type: "job" as const,
+          title: `JOB #${job.jobNumber}`,
+          status: statusLabel(job.status),
+          detail,
+          searchText: [`JOB ${job.jobNumber}`, job.title, job.jobType, job.status, customerName(job.customer), job.customer.phone, detail].join(" ")
+        };
+      }),
+      ...estimates.map((estimate) => {
+        const optionSuffix = estimate.options && estimate.options.length > 1 ? "-1" : "";
+        const detail = `${customerName(estimate.customer)} • ${addressLine(estimate.address ?? estimate.customer.addresses?.[0])}`;
+        return {
+          id: `estimate:${estimate.id}`,
+          type: "estimate" as const,
+          title: `EST #${estimate.estimateNumber}${optionSuffix}`,
+          status: statusLabel(estimate.status),
+          detail,
+          searchText: [`EST ${estimate.estimateNumber}`, estimate.title, estimate.jobType, estimate.status, customerName(estimate.customer), estimate.customer.phone, detail].join(" ")
+        };
+      }),
+      ...invoices.map((invoice) => {
+        const detail = `${customerName(invoice.customer)} • Invoice created: ${formatDate(invoice.createdAt)} • Due: ${money.format(invoiceAmountDue(invoice) / 100)} • Total: ${money.format(invoice.total / 100)} • ${company}`;
+        return {
+          id: `invoice:${invoice.id}`,
+          type: "invoice" as const,
+          title: `INV #${invoice.invoiceNumber}`,
+          status: statusLabel(invoice.status === "DRAFT" ? "OPEN" : invoice.status),
+          detail,
+          searchText: [`INV ${invoice.invoiceNumber}`, invoice.status, customerName(invoice.customer), invoice.customer.phone, invoice.customer.email ?? "", detail].join(" ")
+        };
+      })
+    ];
+  }, [activeLocationAccess, customers, estimates, invoices, jobs]);
+  const globalSearchMatches = useMemo(() => {
+    const query = globalSearch.trim().toLowerCase();
+    if (!query) {
+      const byId = new globalThis.Map(globalSearchResults.map((result) => [result.id, result]));
+      return recentGlobalSearchIds.map((id) => byId.get(id)).filter((result): result is GlobalSearchResult => Boolean(result)).slice(0, 8);
+    }
+    return globalSearchResults
+      .filter((result) => result.searchText.toLowerCase().includes(query))
+      .slice(0, 18);
+  }, [globalSearch, globalSearchResults, recentGlobalSearchIds]);
+  const groupedGlobalSearchMatches = useMemo(() => ({
+    customer: globalSearchMatches.filter((result) => result.type === "customer").slice(0, globalSearch.trim() ? 4 : 8),
+    job: globalSearchMatches.filter((result) => result.type === "job").slice(0, globalSearch.trim() ? 4 : 8),
+    estimate: globalSearchMatches.filter((result) => result.type === "estimate").slice(0, globalSearch.trim() ? 4 : 8),
+    invoice: globalSearchMatches.filter((result) => result.type === "invoice").slice(0, globalSearch.trim() ? 5 : 8)
+  }), [globalSearch, globalSearchMatches]);
   function messageThreadKey(phone: string) {
     const digits = phone.replace(/\D/g, "");
     return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits || phone || "unknown";
@@ -5742,6 +5832,67 @@ export function App() {
     }
   }
 
+  function rememberGlobalSearchResult(result: GlobalSearchResult) {
+    setRecentGlobalSearchIds((current) => {
+      const next = [result.id, ...current.filter((id) => id !== result.id)].slice(0, 8);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(globalSearchStorageKey(activeLocationId), JSON.stringify(next));
+      }
+      return next;
+    });
+  }
+
+  function openGlobalSearchResult(result: GlobalSearchResult) {
+    rememberGlobalSearchResult(result);
+    setGlobalSearchFocused(false);
+    setGlobalSearch("");
+    const [, recordId] = result.id.split(":");
+    if (result.type === "customer") {
+      setSelectedCustomerId(recordId);
+      setCustomerProfileTab("profile");
+      setActiveView("customers");
+      return;
+    }
+    if (result.type === "job") {
+      setSelectedJobId(recordId);
+      setJobPageMode("list");
+      setActiveView("jobs");
+      return;
+    }
+    if (result.type === "estimate") {
+      setSelectedEstimateId(recordId);
+      setEstimatePageMode("list");
+      setActiveView("estimates");
+      return;
+    }
+    if (result.type === "invoice") {
+      setSelectedInvoiceId(recordId);
+      setActiveView("invoices");
+    }
+  }
+
+  function renderGlobalSearchSection(title: string, results: GlobalSearchResult[], type: GlobalSearchResult["type"]) {
+    if (!results.length) return null;
+    const searchTarget = type === "customer" ? "customers" : type === "job" ? "jobs" : type === "estimate" ? "estimates" : "invoices";
+    return (
+      <section className="global-search-section">
+        <h3>{title}</h3>
+        {results.map((result) => (
+          <button key={result.id} className="global-search-result" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => openGlobalSearchResult(result)}>
+            <span className="global-search-icon">
+              {result.type === "customer" ? <Users size={20} /> : result.type === "job" ? <Wrench size={20} /> : result.type === "estimate" ? <FileText size={20} /> : <ReceiptText size={20} />}
+            </span>
+            <span>
+              <strong>{result.title} {result.status && <em>{result.status}</em>}</strong>
+              <small>{result.detail}</small>
+            </span>
+          </button>
+        ))}
+        {globalSearch.trim() && <button className="global-search-all" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setGlobalSearchFocused(false); setActiveView(searchTarget as View); }}>Search all {title.toLowerCase()} <ChevronRight size={15} /></button>}
+      </section>
+    );
+  }
+
   function invoiceLatestSend(invoice: Invoice) {
     return (invoiceMessages.get(invoice.id) ?? []).find((message: CrmMessage) => message.direction === "OUTBOUND");
   }
@@ -6056,9 +6207,54 @@ export function App() {
 
       <section className="workspace">
         <header className="topbar">
-          <div className="search-box">
+          <div className="search-box global-search-box">
             <Search size={18} />
-            <input aria-label="Search" placeholder="Type to search" />
+            <input
+              aria-label="Search records"
+              placeholder="Search records"
+              value={globalSearch}
+              onFocus={() => setGlobalSearchFocused(true)}
+              onChange={(event) => setGlobalSearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setGlobalSearch("");
+                  setGlobalSearchFocused(false);
+                }
+                if (event.key === "Enter" && globalSearchMatches[0]) {
+                  openGlobalSearchResult(globalSearchMatches[0]);
+                }
+              }}
+              onBlur={() => window.setTimeout(() => setGlobalSearchFocused(false), 160)}
+            />
+            {globalSearch && <button className="global-search-clear" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setGlobalSearch("")} aria-label="Clear search"><X size={18} /></button>}
+            {globalSearchFocused && (
+              <div className="global-search-panel">
+                {!globalSearch.trim() && globalSearchMatches.length > 0 && <h3 className="global-search-heading">Recently viewed</h3>}
+                {!globalSearch.trim() && globalSearchMatches.length === 0 && <div className="global-search-empty">Recently viewed records will show here.</div>}
+                {globalSearch.trim() ? (
+                  <>
+                    {renderGlobalSearchSection("Customers", groupedGlobalSearchMatches.customer, "customer")}
+                    {renderGlobalSearchSection("Jobs", groupedGlobalSearchMatches.job, "job")}
+                    {renderGlobalSearchSection("Estimates", groupedGlobalSearchMatches.estimate, "estimate")}
+                    {renderGlobalSearchSection("Invoices", groupedGlobalSearchMatches.invoice, "invoice")}
+                    {globalSearchMatches.length === 0 && <div className="global-search-empty">No records match that search.</div>}
+                  </>
+                ) : (
+                  globalSearchMatches.map((result) => (
+                    <button key={result.id} className="global-search-result" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => openGlobalSearchResult(result)}>
+                      <span className="global-search-icon">
+                        {result.type === "customer" ? <Users size={20} /> : result.type === "job" ? <Wrench size={20} /> : result.type === "estimate" ? <FileText size={20} /> : <ReceiptText size={20} />}
+                      </span>
+                      <span>
+                        <strong>{result.title} {result.status && <em>{result.status}</em>}</strong>
+                        <small>{result.detail}</small>
+                      </span>
+                    </button>
+                  ))
+                )}
+                <footer>Help us improve Search. <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setError("Search feedback is noted. Tell me what result should have appeared and I can tune it.")}>Give feedback</button></footer>
+              </div>
+            )}
           </div>
           <div className="add-menu-wrap">
             <button className="primary add-button" onClick={() => setAddMenuOpen((open) => !open)}><Plus size={18} /> Add New</button>
