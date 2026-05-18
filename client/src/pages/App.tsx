@@ -1183,6 +1183,13 @@ function splitTags(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function formatPhoneInput(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 10);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
 function blankCustomerForm(): CustomerForm {
   return {
     firstName: "",
@@ -1726,6 +1733,15 @@ export function App() {
       setActiveEstimateOptionId(selectedEstimate.options[0].id);
     }
   }, [selectedEstimate?.id, selectedEstimate?.options, activeEstimateOptionId]);
+  useEffect(() => {
+    if (!schedulePicker) return;
+    function closePicker(event: MouseEvent) {
+      if (event.target instanceof Element && event.target.closest(".schedule-picker-pair")) return;
+      setSchedulePicker(null);
+    }
+    document.addEventListener("mousedown", closePicker);
+    return () => document.removeEventListener("mousedown", closePicker);
+  }, [schedulePicker]);
   const weekStart = useMemo(() => startOfWeek(scheduleDate), [scheduleDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_item, index) => addDays(weekStart, index)), [weekStart]);
   const monthDays = useMemo(() => {
@@ -2742,7 +2758,8 @@ export function App() {
     reader.readAsDataURL(file);
   }
 
-  async function saveInlineJobClient() {
+  async function saveInlineJobClient(event?: FormEvent) {
+    event?.preventDefault();
     setError("");
     const customerResult = await api<{ customer: Customer }>("/api/customers", {
       method: "POST",
@@ -5632,6 +5649,66 @@ export function App() {
           </div>
         )}
 
+        {createClientInline && (activeView === "jobs" || activeView === "estimates") && (
+          <div className="modal-backdrop customer-create-backdrop" onClick={() => setCreateClientInline(false)}>
+            <form className="job-customer-create-modal" onSubmit={saveInlineJobClient} onClick={(event) => event.stopPropagation()}>
+              <header>
+                <button className="icon-button" type="button" onClick={() => setCreateClientInline(false)} aria-label="Close customer creator"><X size={20} /></button>
+                <div>
+                  <h2>Add new customer</h2>
+                  <p>Create the customer, then return to the {activeView === "estimates" ? "estimate" : "job"} with them selected.</p>
+                </div>
+              </header>
+              <section>
+                <h3><Users size={18} /> Contact info</h3>
+                <div className="job-customer-modal-grid">
+                  <input placeholder="First name" value={jobClientForm.firstName} onChange={(event) => setJobClientForm({ ...jobClientForm, firstName: event.target.value })} required autoFocus />
+                  <input placeholder="Last name" value={jobClientForm.lastName} onChange={(event) => setJobClientForm({ ...jobClientForm, lastName: event.target.value })} required />
+                  <input placeholder="Mobile phone" value={jobClientForm.phone} onChange={(event) => setJobClientForm({ ...jobClientForm, phone: formatPhoneInput(event.target.value) })} required />
+                  <input placeholder="Email" value={jobClientForm.email} onChange={(event) => setJobClientForm({ ...jobClientForm, email: event.target.value })} />
+                  <input placeholder="Work phone" value={jobClientForm.workPhone} onChange={(event) => setJobClientForm({ ...jobClientForm, workPhone: formatPhoneInput(event.target.value) })} />
+                  <input placeholder="Home phone" value={jobClientForm.homePhone} onChange={(event) => setJobClientForm({ ...jobClientForm, homePhone: formatPhoneInput(event.target.value) })} />
+                </div>
+              </section>
+              <section>
+                <h3><MapPin size={18} /> Address</h3>
+                <div className="job-customer-modal-grid address-grid">
+                  {renderAddressAutocomplete({
+                    lookupKey: "job-customer-modal-address",
+                    value: jobClientForm.street1,
+                    placeholder: "Street",
+                    className: "span-2",
+                    onChange: (value) => setJobClientForm((current) => ({ ...current, street1: value, latitude: "", longitude: "" })),
+                    onSelect: (place) => setJobClientForm((current) => ({ ...current, ...placeToAddressPatch(place) }))
+                  })}
+                  <input placeholder="Unit" value={jobClientForm.street2} onChange={(event) => setJobClientForm({ ...jobClientForm, street2: event.target.value })} />
+                  <input placeholder="City" value={jobClientForm.city} onChange={(event) => setJobClientForm({ ...jobClientForm, city: event.target.value })} />
+                  <input placeholder="State" value={jobClientForm.state} onChange={(event) => setJobClientForm({ ...jobClientForm, state: event.target.value })} />
+                  <input placeholder="Zip" value={jobClientForm.postalCode} onChange={(event) => setJobClientForm({ ...jobClientForm, postalCode: event.target.value })} />
+                </div>
+              </section>
+              <section>
+                <h3><StickyNote size={18} /> Notes</h3>
+                <div className="job-customer-modal-grid notes-grid">
+                  <textarea placeholder="Customer notes" value={jobClientForm.notes} onChange={(event) => setJobClientForm({ ...jobClientForm, notes: event.target.value })} />
+                  <input placeholder="Customer tags (comma separated)" value={jobClientForm.tags} onChange={(event) => setJobClientForm({ ...jobClientForm, tags: event.target.value })} />
+                  <input placeholder="Lead source" value={jobClientForm.source} onChange={(event) => setJobClientForm({ ...jobClientForm, source: event.target.value })} list="customer-modal-lead-sources" />
+                  <datalist id="customer-modal-lead-sources">
+                    {crmOptions.leadSources.map((source) => <option key={source} value={source} />)}
+                  </datalist>
+                </div>
+              </section>
+              <footer>
+                <label><input type="checkbox" checked={jobClientForm.communicationSms && jobClientForm.communicationEmail} onChange={(event) => setJobClientForm((current) => ({ ...current, communicationSms: event.target.checked, communicationEmail: event.target.checked }))} /> Send notifications</label>
+                <div>
+                  <button className="outline-button" type="button" onClick={() => setCreateClientInline(false)}>Cancel</button>
+                  <button className="primary" type="submit" disabled={!jobClientForm.firstName.trim() || !jobClientForm.lastName.trim() || !jobClientForm.phone.trim()}>Create customer</button>
+                </div>
+              </footer>
+            </form>
+          </div>
+        )}
+
         {selectedScheduleJob && (
           <div className="modal-backdrop" onClick={() => setSelectedScheduleJob(null)}>
             <div className="schedule-job-modal" onClick={(event) => event.stopPropagation()}>
@@ -6073,11 +6150,11 @@ export function App() {
                   <form className="record-form customer-create-form" onSubmit={createCustomer}>
                     <input placeholder="First name" value={customerForm.firstName} onChange={(event) => setCustomerForm({ ...customerForm, firstName: event.target.value })} required />
                     <input placeholder="Last name" value={customerForm.lastName} onChange={(event) => setCustomerForm({ ...customerForm, lastName: event.target.value })} required />
-                    <input placeholder="Mobile phone" value={customerForm.phone} onChange={(event) => setCustomerForm({ ...customerForm, phone: event.target.value })} required />
+                    <input placeholder="Mobile phone" value={customerForm.phone} onChange={(event) => setCustomerForm({ ...customerForm, phone: formatPhoneInput(event.target.value) })} required />
                     <input placeholder="Email" value={customerForm.email} onChange={(event) => setCustomerForm({ ...customerForm, email: event.target.value })} />
                     <input placeholder="Additional emails, comma separated" value={customerForm.additionalEmails} onChange={(event) => setCustomerForm({ ...customerForm, additionalEmails: event.target.value })} />
-                    <input placeholder="Work phone" value={customerForm.workPhone} onChange={(event) => setCustomerForm({ ...customerForm, workPhone: event.target.value })} />
-                    <input placeholder="Home phone" value={customerForm.homePhone} onChange={(event) => setCustomerForm({ ...customerForm, homePhone: event.target.value })} />
+                    <input placeholder="Work phone" value={customerForm.workPhone} onChange={(event) => setCustomerForm({ ...customerForm, workPhone: formatPhoneInput(event.target.value) })} />
+                    <input placeholder="Home phone" value={customerForm.homePhone} onChange={(event) => setCustomerForm({ ...customerForm, homePhone: formatPhoneInput(event.target.value) })} />
                     <select value={customerForm.source} onChange={(event) => setCustomerForm({ ...customerForm, source: event.target.value })}>
                       <option value="">Lead source</option>
                       {crmOptions.leadSources.map((source) => <option key={source} value={source}>{source}</option>)}
@@ -6752,7 +6829,7 @@ export function App() {
 
                   <section className="panel job-side-card">
                     <div className="panel-header"><h2><Users size={18} /> Customer</h2>{selectedJobCustomer && <button className="text-button" type="button" onClick={clearJobCustomer}>Clear</button>}</div>
-                    {!createClientInline && !selectedJobCustomer && (
+                    {!selectedJobCustomer && (
                       <div className="record-form">
                         <div className="typeahead">
                           <input
@@ -6780,7 +6857,7 @@ export function App() {
                       </div>
                     )}
 
-                    {!createClientInline && selectedJobCustomer && (
+                    {selectedJobCustomer && (
                       <div className="job-customer-card">
                         <StreetViewPreview
                           className="job-customer-map"
@@ -6829,35 +6906,13 @@ export function App() {
                       </div>
                     )}
 
-                    {createClientInline && (
-                      <div className="new-client-grid">
-                        <input placeholder="First name" value={jobClientForm.firstName} onChange={(event) => setJobClientForm({ ...jobClientForm, firstName: event.target.value })} required />
-                        <input placeholder="Last name" value={jobClientForm.lastName} onChange={(event) => setJobClientForm({ ...jobClientForm, lastName: event.target.value })} required />
-                        <input placeholder="Phone" value={jobClientForm.phone} onChange={(event) => setJobClientForm({ ...jobClientForm, phone: event.target.value })} required />
-                        <input placeholder="Email" value={jobClientForm.email} onChange={(event) => setJobClientForm({ ...jobClientForm, email: event.target.value })} />
-                        {renderAddressAutocomplete({
-                          lookupKey: "job-inline-address",
-                          value: jobClientForm.street1,
-                          placeholder: "Street address",
-                          className: "span-2",
-                          required: true,
-                          onChange: (value) => setJobClientForm((current) => ({ ...current, street1: value, latitude: "", longitude: "" })),
-                          onSelect: (place) => setJobClientForm((current) => ({ ...current, ...placeToAddressPatch(place) }))
-                        })}
-                        <input placeholder="City" value={jobClientForm.city} onChange={(event) => setJobClientForm({ ...jobClientForm, city: event.target.value })} required />
-                        <input placeholder="State" value={jobClientForm.state} onChange={(event) => setJobClientForm({ ...jobClientForm, state: event.target.value })} required />
-                        <input placeholder="Postal code" value={jobClientForm.postalCode} onChange={(event) => setJobClientForm({ ...jobClientForm, postalCode: event.target.value })} required />
-                      </div>
-                    )}
-                    <div className="or-divider">OR</div>
-                    {createClientInline && <button className="outline-button centered-action" type="button" onClick={saveInlineJobClient}>Save Client</button>}
                     <button className="primary centered-action" type="button" onClick={() => {
-                      setCreateClientInline((current) => !current);
+                      setCreateClientInline(true);
                       setJobForm((current) => ({ ...current, customerId: "", addressId: "" }));
                       setJobClientSearch("");
                       setJobAddressSearch("");
                     }}>
-                      <Plus size={18} /> {createClientInline ? "Select Existing Client" : "Create New Client"}
+                      <Plus size={18} /> Create New Client
                     </button>
                   </section>
 
@@ -7080,7 +7135,7 @@ export function App() {
                 <div className="job-create-column">
                   <section className="panel job-side-card">
                     <div className="panel-header"><h2><Users size={18} /> Customer</h2>{selectedJobCustomer && <button className="text-button" type="button" onClick={clearJobCustomer}>Clear</button>}</div>
-                    {!createClientInline && !selectedJobCustomer && (
+                    {!selectedJobCustomer && (
                       <div className="record-form">
                         <div className="typeahead">
                           <input placeholder="Name, email, phone or address" value={jobClientSearch} onChange={(event) => {
@@ -7103,7 +7158,7 @@ export function App() {
                         </div>
                       </div>
                     )}
-                    {!createClientInline && selectedJobCustomer && (
+                    {selectedJobCustomer && (
                       <div className="job-customer-card">
                         <StreetViewPreview
                           className="job-customer-map"
@@ -7119,33 +7174,12 @@ export function App() {
                         </div>
                       </div>
                     )}
-                    {createClientInline && (
-                      <div className="new-client-grid">
-                        <input placeholder="First name" value={jobClientForm.firstName} onChange={(event) => setJobClientForm({ ...jobClientForm, firstName: event.target.value })} required />
-                        <input placeholder="Last name" value={jobClientForm.lastName} onChange={(event) => setJobClientForm({ ...jobClientForm, lastName: event.target.value })} required />
-                        <input placeholder="Phone" value={jobClientForm.phone} onChange={(event) => setJobClientForm({ ...jobClientForm, phone: event.target.value })} required />
-                        <input placeholder="Email" value={jobClientForm.email} onChange={(event) => setJobClientForm({ ...jobClientForm, email: event.target.value })} />
-                        {renderAddressAutocomplete({
-                          lookupKey: "estimate-inline-address",
-                          value: jobClientForm.street1,
-                          placeholder: "Street address",
-                          className: "span-2",
-                          onChange: (value) => setJobClientForm((current) => ({ ...current, street1: value, latitude: "", longitude: "" })),
-                          onSelect: (place) => setJobClientForm((current) => ({ ...current, ...placeToAddressPatch(place) }))
-                        })}
-                        <input placeholder="City" value={jobClientForm.city} onChange={(event) => setJobClientForm({ ...jobClientForm, city: event.target.value })} />
-                        <input placeholder="State" value={jobClientForm.state} onChange={(event) => setJobClientForm({ ...jobClientForm, state: event.target.value })} />
-                        <input placeholder="Postal code" value={jobClientForm.postalCode} onChange={(event) => setJobClientForm({ ...jobClientForm, postalCode: event.target.value })} />
-                      </div>
-                    )}
-                    <div className="or-divider">OR</div>
-                    {createClientInline && <button className="outline-button centered-action" type="button" onClick={saveInlineJobClient}>Save Client</button>}
                     <button className="primary centered-action" type="button" onClick={() => {
-                      setCreateClientInline((current) => !current);
+                      setCreateClientInline(true);
                       setJobForm((current) => ({ ...current, customerId: "", addressId: "" }));
                       setJobClientSearch("");
                       setJobAddressSearch("");
-                    }}><Plus size={18} /> {createClientInline ? "Select Existing Client" : "Create New Client"}</button>
+                    }}><Plus size={18} /> Create New Client</button>
                   </section>
 
                   <section className="panel schedule-card">

@@ -5703,6 +5703,116 @@ button:disabled {
   color: #7e8aac;
 }
 
+.customer-create-backdrop {
+  place-items: stretch center;
+  align-items: start;
+  overflow-y: auto;
+}
+
+.job-customer-create-modal {
+  width: min(1320px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  margin: 16px 0;
+  display: grid;
+  gap: 22px;
+  overflow-y: auto;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 22px 24px 0;
+  box-shadow: 0 24px 70px rgba(16, 20, 33, 0.28);
+}
+
+.job-customer-create-modal header {
+  display: flex;
+  align-items: start;
+  gap: 12px;
+}
+
+.job-customer-create-modal h2,
+.job-customer-create-modal h3,
+.job-customer-create-modal p {
+  margin: 0;
+}
+
+.job-customer-create-modal header p {
+  margin-top: 4px;
+  color: #68728a;
+  font-weight: 700;
+}
+
+.job-customer-create-modal section {
+  display: grid;
+  gap: 16px;
+  border-top: 1px solid #e6e9f1;
+  padding-top: 20px;
+}
+
+.job-customer-create-modal section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.job-customer-create-modal h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #202638;
+  font-size: 16px;
+}
+
+.job-customer-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px 20px;
+}
+
+.job-customer-modal-grid input,
+.job-customer-modal-grid textarea {
+  width: 100%;
+  border: 1px solid #d8deea;
+  border-radius: 8px;
+  padding: 14px 13px;
+  color: #101421;
+  font: inherit;
+  font-weight: 700;
+}
+
+.job-customer-modal-grid textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+
+.job-customer-modal-grid .span-2,
+.notes-grid textarea,
+.notes-grid input:first-of-type {
+  grid-column: span 2;
+}
+
+.job-customer-create-modal footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid #e6e9f1;
+  background: #ffffff;
+  padding: 14px 0 18px;
+}
+
+.job-customer-create-modal footer label,
+.job-customer-create-modal footer div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.job-customer-create-modal footer input {
+  width: 18px;
+  height: 18px;
+  accent-color: #0b76d1;
+}
+
 .create-options {
   display: grid;
   gap: 10px;
