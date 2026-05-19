@@ -2478,6 +2478,26 @@ button.stat-card {
   display: block;
 }
 
+.job-media-file {
+  width: 100%;
+  min-height: 112px;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 12px;
+  color: #334155;
+  text-align: center;
+}
+
+.job-media-file span {
+  width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .job-media-grid article > button {
   position: absolute;
   top: 7px;

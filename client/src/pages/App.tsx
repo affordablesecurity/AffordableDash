@@ -1230,8 +1230,18 @@ function jobTotalCents(job: Pick<Job, "lineItems" | "invoices">) {
 }
 
 function attachmentImageUrl(attachments?: string[]) {
-  const image = (attachments ?? []).find((attachment) => /\.(png|jpe?g|gif|webp)$/i.test(attachment) || attachment.startsWith("data:image/") || attachment.startsWith("http"));
+  const image = (attachments ?? []).find((attachment) => attachment.startsWith("data:image/") || /^https?:\/\//i.test(attachment));
   return image || "";
+}
+
+function attachmentDisplayName(attachment: string, fallback = "Attachment") {
+  if (attachment.startsWith("data:")) return fallback;
+  try {
+    const parsed = new URL(attachment);
+    return parsed.pathname.split("/").filter(Boolean).pop() || fallback;
+  } catch {
+    return attachment || fallback;
+  }
 }
 
 function staticMapUrl(points: Array<{ latitude?: number | null; longitude?: number | null }>, focus?: { latitude?: number | null; longitude?: number | null }, size = "900x520") {
@@ -4242,16 +4252,28 @@ export function App() {
 
   async function loadJobAttachmentFiles(fileList: FileList | null) {
     const files = Array.from(fileList ?? []);
-    return Promise.all(files.map((file) => new Promise<string>((resolve) => {
-      if (!file.type.startsWith("image/") || file.size > 4_000_000) {
+    const skipped: string[] = [];
+    const loaded = await Promise.all(files.map((file) => new Promise<string | null>((resolve) => {
+      const isMedia = file.type.startsWith("image/") || file.type.startsWith("video/");
+      if (!isMedia) {
         resolve(file.name);
+        return;
+      }
+      if (file.size > 8_000_000) {
+        skipped.push(file.name);
+        resolve(null);
         return;
       }
       const reader = new FileReader();
       reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : file.name);
-      reader.onerror = () => resolve(file.name);
+      reader.onerror = () => {
+        skipped.push(file.name);
+        resolve(null);
+      };
       reader.readAsDataURL(file);
     })));
+    if (skipped.length) setError(`Skipped ${skipped.length} media file${skipped.length === 1 ? "" : "s"} over 8MB or unreadable: ${skipped.join(", ")}`);
+    return loaded.filter(Boolean) as string[];
   }
 
   async function readJobAttachmentFiles(fileList: FileList | null) {
@@ -6765,7 +6787,7 @@ export function App() {
     const clampPublicMapPan = (x: number, y: number) => ({ x: Math.max(-840, Math.min(840, x)), y: Math.max(-520, Math.min(520, y)) });
     const publicJobImages = (job: (typeof jobsForMap)[number]) => {
       const images = job.imageUrls?.length ? job.imageUrls : job.imageUrl ? [job.imageUrl] : [];
-      return images.filter(Boolean) as string[];
+      return images.filter((image) => image?.startsWith("data:image/") || /^https?:\/\//i.test(image ?? "")) as string[];
     };
     const publicJobImage = (job: (typeof jobsForMap)[number], offset = 0) => {
       const images = publicJobImages(job);
@@ -9161,11 +9183,11 @@ export function App() {
                         {(selectedJob.attachments ?? []).length ? (
                           <div className="job-media-grid">
                             {(selectedJob.attachments ?? []).map((attachment, index) => {
-                              const isImage = attachment.startsWith("data:image/") || /^https?:\/\//i.test(attachment) || /\.(png|jpe?g|gif|webp)$/i.test(attachment);
-                              const isVideo = attachment.startsWith("data:video/") || /\.(mp4|mov|m4v|webm)$/i.test(attachment);
+                              const isImage = attachment.startsWith("data:image/") || /^https?:\/\/.*\.(png|jpe?g|gif|webp)(?:[?#].*)?$/i.test(attachment);
+                              const isVideo = attachment.startsWith("data:video/") || /^https?:\/\/.*\.(mp4|mov|m4v|webm)(?:[?#].*)?$/i.test(attachment);
                               return (
                                 <article key={`${attachment}-${index}`}>
-                                  {isImage ? <img src={attachment} alt={`Job media ${index + 1}`} /> : isVideo ? <video src={attachment} controls /> : <Paperclip size={22} />}
+                                  {isImage ? <img src={attachment} alt={`Job media ${index + 1}`} /> : isVideo ? <video src={attachment} controls /> : <div className="job-media-file"><Paperclip size={22} /><span>{attachmentDisplayName(attachment, `Job media ${index + 1}`)}</span></div>}
                                   <button type="button" onClick={() => removeJobMedia(selectedJob, attachment)} aria-label="Remove job media"><X size={14} /></button>
                                 </article>
                               );
