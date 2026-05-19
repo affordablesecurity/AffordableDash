@@ -582,6 +582,7 @@ type PublicServiceMapPayload = {
     city?: string | null;
     state?: string | null;
     postalCode?: string | null;
+    neighborhood?: string | null;
     latitude?: number | null;
     longitude?: number | null;
     description?: string | null;
@@ -6880,7 +6881,7 @@ export function App() {
                 </div>
                 <h2>{job.jobType}</h2>
                 <p>{job.description || job.title}</p>
-                <small>{[job.city, job.state, job.postalCode].filter(Boolean).join(", ")}</small>
+                <small>{job.neighborhood || [job.city, job.state, job.postalCode].filter(Boolean).join(", ")}</small>
               </button>
             );
           })}
@@ -6900,7 +6901,7 @@ export function App() {
                 <div className="public-map-modal-meta">
                   <span>{publicLocationName}</span>
                   <strong>{selectedPublicJob.jobType}</strong>
-                  <em>{[selectedPublicJob.city, selectedPublicJob.state].filter(Boolean).join(", ")}</em>
+                  <em>{selectedPublicJob.neighborhood || [selectedPublicJob.city, selectedPublicJob.state].filter(Boolean).join(", ")}</em>
                 </div>
               </aside>
             </article>
