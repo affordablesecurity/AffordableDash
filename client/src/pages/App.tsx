@@ -2082,6 +2082,7 @@ export function App() {
   const [publicMapZoom, setPublicMapZoom] = useState(10);
   const [publicMapPan, setPublicMapPan] = useState({ x: 0, y: 0 });
   const [publicMapPhotoIndex, setPublicMapPhotoIndex] = useState(0);
+  const [dismissedJobMediaTips, setDismissedJobMediaTips] = useState<string[]>([]);
   const publicMapDragRef = useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null);
   const [bookingStep, setBookingStep] = useState<"zip" | "service" | "time" | "contact" | "done">("zip");
   const [bookingForm, setBookingForm] = useState({
@@ -3939,6 +3940,9 @@ export function App() {
 
   function updateCustomerInState(customer: Customer) {
     setCustomers((current) => [customer, ...current.filter((item) => item.id !== customer.id)]);
+    setJobs((current) => current.map((job) => job.customer.id === customer.id ? { ...job, customer: { ...job.customer, ...customer } } : job));
+    setEstimates((current) => current.map((estimate) => estimate.customer.id === customer.id ? { ...estimate, customer: { ...estimate.customer, ...customer } } : estimate));
+    setInvoices((current) => current.map((invoice) => invoice.customer.id === customer.id ? { ...invoice, customer: { ...invoice.customer, ...customer } } : invoice));
     setSelectedCustomerId(customer.id);
   }
 
@@ -4236,9 +4240,9 @@ export function App() {
     reader.readAsDataURL(file);
   }
 
-  async function readJobAttachmentFiles(fileList: FileList | null) {
+  async function loadJobAttachmentFiles(fileList: FileList | null) {
     const files = Array.from(fileList ?? []);
-    const attachments = await Promise.all(files.map((file) => new Promise<string>((resolve) => {
+    return Promise.all(files.map((file) => new Promise<string>((resolve) => {
       if (!file.type.startsWith("image/") || file.size > 4_000_000) {
         resolve(file.name);
         return;
@@ -4248,6 +4252,10 @@ export function App() {
       reader.onerror = () => resolve(file.name);
       reader.readAsDataURL(file);
     })));
+  }
+
+  async function readJobAttachmentFiles(fileList: FileList | null) {
+    const attachments = await loadJobAttachmentFiles(fileList);
     setJobAttachments(attachments);
   }
 
@@ -5180,7 +5188,7 @@ export function App() {
 
   async function updateJobDetails(
     job: Job,
-    payload: Partial<Pick<Job, "tags" | "leadSource" | "description" | "internalNotes" | "scheduledStart" | "scheduledEnd">> & { technicianId?: string | null }
+    payload: Partial<Pick<Job, "tags" | "leadSource" | "description" | "internalNotes" | "scheduledStart" | "scheduledEnd" | "attachments">> & { technicianId?: string | null }
   ) {
     setError("");
     const result = await api<{ job: Job }>(`/api/jobs/${job.id}`, {
@@ -5191,6 +5199,31 @@ export function App() {
     setSelectedJobId(job.id);
     await loadDashboard();
     return result.job;
+  }
+
+  async function addJobMedia(job: Job, fileList: FileList | null) {
+    const attachments = await loadJobAttachmentFiles(fileList);
+    if (!attachments.length) return;
+    await updateJobDetails(job, { attachments: [...(job.attachments ?? []), ...attachments] });
+    setDetailSavedMessage(`${attachments.length} job media file${attachments.length === 1 ? "" : "s"} added`);
+  }
+
+  async function removeJobMedia(job: Job, attachment: string) {
+    await updateJobDetails(job, { attachments: (job.attachments ?? []).filter((item) => item !== attachment) });
+    setDetailSavedMessage("Job media removed");
+  }
+
+  async function addCustomerPrivateAttachment(customer: Customer, fileList: FileList | null) {
+    const files = Array.from(fileList ?? []);
+    if (!files.length) return;
+    const addedCustomers = await Promise.all(files.map((file) => api<{ customer: Customer }>(`/api/customers/${customer.id}/attachments`, {
+      method: "POST",
+      body: JSON.stringify({ name: file.name })
+    })));
+    const latest = addedCustomers.at(-1)?.customer;
+    if (latest) updateCustomerInState(latest);
+    setSelectedCustomerId("");
+    setDetailSavedMessage(`${files.length} private customer attachment${files.length === 1 ? "" : "s"} added`);
   }
 
   function resetCreateJobFlow(mode: "jobs" | "estimates" = "jobs") {
@@ -9115,6 +9148,51 @@ export function App() {
                           <strong>Request card</strong>
                         </div>
                         <button className="customer-profile-link" type="button" onClick={() => openCustomerProfile(selectedJob.customer)}>Customer profile</button>
+                      </section>
+
+                      <section className="panel job-media-panel">
+                        <div className="panel-header">
+                          <h2><Upload size={18} /> Job photos & videos</h2>
+                          <label className="icon-button file-icon-button" aria-label="Add job media">
+                            <Plus size={18} />
+                            <input type="file" multiple accept="image/*,video/*" onChange={(event) => void addJobMedia(selectedJob, event.currentTarget.files)} />
+                          </label>
+                        </div>
+                        {(selectedJob.attachments ?? []).length ? (
+                          <div className="job-media-grid">
+                            {(selectedJob.attachments ?? []).map((attachment, index) => {
+                              const isImage = attachment.startsWith("data:image/") || /^https?:\/\//i.test(attachment) || /\.(png|jpe?g|gif|webp)$/i.test(attachment);
+                              const isVideo = attachment.startsWith("data:video/") || /\.(mp4|mov|m4v|webm)$/i.test(attachment);
+                              return (
+                                <article key={`${attachment}-${index}`}>
+                                  {isImage ? <img src={attachment} alt={`Job media ${index + 1}`} /> : isVideo ? <video src={attachment} controls /> : <Paperclip size={22} />}
+                                  <button type="button" onClick={() => removeJobMedia(selectedJob, attachment)} aria-label="Remove job media"><X size={14} /></button>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        ) : !dismissedJobMediaTips.includes(selectedJob.id) ? (
+                          <div className="job-media-empty">
+                            <button type="button" aria-label="Close job media tip" onClick={() => setDismissedJobMediaTips((current) => [...new Set([...current, selectedJob.id])])}><X size={16} /></button>
+                            <strong>Take photos or videos and upload them directly in the app.</strong>
+                            <span>These belong to this job and can be shown on the completed service map.</span>
+                          </div>
+                        ) : <p className="empty">No job photos or videos yet.</p>}
+                      </section>
+
+                      <section className="panel job-media-panel private-attachments-panel">
+                        <div className="panel-header">
+                          <h2><Paperclip size={18} /> Customer attachments</h2>
+                          <label className="icon-button file-icon-button" aria-label="Add private customer attachment">
+                            <Plus size={18} />
+                            <input type="file" multiple onChange={(event) => void addCustomerPrivateAttachment(selectedJob.customer, event.currentTarget.files)} />
+                          </label>
+                        </div>
+                        {(selectedJob.customer.attachments ?? []).length ? (
+                          <div className="private-attachment-list">
+                            {(selectedJob.customer.attachments ?? []).map((attachment, index) => <span key={`${attachment}-${index}`}><Paperclip size={14} /> {attachment}</span>)}
+                          </div>
+                        ) : <p className="empty">No private customer attachments yet.</p>}
                       </section>
 
                       <section className="panel job-detail-meta">

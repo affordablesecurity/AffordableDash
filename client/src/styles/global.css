@@ -2387,6 +2387,133 @@ button.stat-card {
   color: #2b3142;
 }
 
+.job-media-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.job-media-panel .panel-header {
+  padding: 14px 16px;
+  margin: 0;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.file-icon-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.file-icon-button input {
+  display: none;
+}
+
+.job-media-empty {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  margin: 16px;
+  border-radius: 8px;
+  background: #dff0ff;
+  color: #22314a;
+  padding: 18px 44px 18px 18px;
+}
+
+.job-media-empty::before {
+  content: "i";
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #1876bd;
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.job-media-empty > button {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  border: 0;
+  background: transparent;
+  color: #22314a;
+  padding: 0;
+}
+
+.job-media-empty strong,
+.job-media-empty span {
+  margin-left: 34px;
+}
+
+.job-media-empty span {
+  color: #526174;
+  font-size: 13px;
+}
+
+.job-media-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.job-media-grid article {
+  position: relative;
+  min-height: 96px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: #f6f9fd;
+  overflow: hidden;
+}
+
+.job-media-grid img,
+.job-media-grid video {
+  width: 100%;
+  height: 112px;
+  object-fit: cover;
+  display: block;
+}
+
+.job-media-grid article > button {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #ffffff;
+}
+
+.private-attachment-list {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.private-attachment-list span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e3e9f3;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 9px 10px;
+  color: #334155;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .street-preview {
   min-height: 110px;
   border-radius: 8px;
