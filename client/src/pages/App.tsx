@@ -6807,7 +6807,7 @@ export function App() {
     const centerTileX = Math.floor(centerWorld.x / 256);
     const centerTileY = Math.floor(centerWorld.y / 256);
     const tileOffsets = Array.from({ length: 13 }, (_item, xIndex) => xIndex - 6).flatMap((xOffset) => Array.from({ length: 9 }, (_item, yIndex) => ({ xOffset, yOffset: yIndex - 4 })));
-    const publicLocationName = "Affordable Security";
+    const publicLocationName = payload?.location.name || "Affordable Security Locksmith and Alarm LLC";
     const clampPublicMapPan = (x: number, y: number) => ({ x: Math.max(-840, Math.min(840, x)), y: Math.max(-520, Math.min(520, y)) });
     const publicJobImages = (job: (typeof jobsForMap)[number]) => {
       const images = job.imageUrls?.length ? job.imageUrls : job.imageUrl ? [job.imageUrl] : [];
@@ -6837,7 +6837,7 @@ export function App() {
       <main className="public-service-map-shell" style={{ "--booking-color": color } as CSSProperties}>
         <section className="public-service-map-top">
           <div>
-            <span>Affordable Security service map</span>
+            <span>{publicLocationName} service map</span>
             <h1>Completed service map</h1>
           </div>
           <div className="public-map-logo-badge">{publicLogo ? <img src={publicLogo} alt="" /> : <span>A</span>}</div>
@@ -6874,12 +6874,13 @@ export function App() {
             return (
               <button key={job.id} className="public-map-job-card" type="button" onClick={() => setSelectedPublicMapJobId(job.id)}>
                 <div className="public-map-image-wrap">
-                  {image ? <img src={image} alt={job.imageName || `${job.jobType} completed by Affordable Security`} title={job.imageName || undefined} /> : <div className="public-map-image-placeholder"><Lock size={28} /></div>}
+                  {image ? <img src={image} alt={job.imageName || `${job.jobType} completed by ${publicLocationName}`} title={job.imageName || undefined} /> : <div className="public-map-image-placeholder"><Lock size={28} /></div>}
                   {image && <div className="public-map-card-watermark">{publicLogo ? <img src={publicLogo} alt="" /> : "A"}</div>}
                   {(job.imageUrls?.length ?? 0) > 1 && <span className="public-map-photo-count">{(job.imageUrls ?? []).length} photos</span>}
                   <strong>{[job.customerFirstName, job.customerLastInitial ? `${job.customerLastInitial}.` : ""].filter(Boolean).join(" ") || "Customer"}</strong>
                 </div>
                 <h2>{job.jobType}</h2>
+                <span className="public-map-card-company">{publicLocationName}</span>
                 <p>{job.description || job.title}</p>
                 <small>{job.neighborhood || [job.city, job.state, job.postalCode].filter(Boolean).join(", ")}</small>
               </button>
@@ -6892,7 +6893,7 @@ export function App() {
             <article className="public-map-modal" onClick={(event) => event.stopPropagation()}>
               <button className="public-map-modal-close" type="button" onClick={() => setSelectedPublicMapJobId("")}>Close <X size={18} /></button>
               <div className="public-map-modal-image">
-                {publicJobImage(selectedPublicJob) ? <img src={publicJobImage(selectedPublicJob)} alt={selectedPublicJob.imageName || `${selectedPublicJob.jobType} completed by Affordable Security`} title={selectedPublicJob.imageName || undefined} /> : <div className="public-map-image-placeholder"><Lock size={34} /></div>}
+                {publicJobImage(selectedPublicJob) ? <img src={publicJobImage(selectedPublicJob)} alt={selectedPublicJob.imageName || `${selectedPublicJob.jobType} completed by ${publicLocationName}`} title={selectedPublicJob.imageName || undefined} /> : <div className="public-map-image-placeholder"><Lock size={34} /></div>}
                 <div className="public-map-logo-watermark">{publicLogo ? <img src={publicLogo} alt="" /> : "A"}</div>
               </div>
               <aside>

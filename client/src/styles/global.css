@@ -7868,6 +7868,7 @@ button:disabled {
 }
 
 .public-map-job-card h2,
+.public-map-job-card .public-map-card-company,
 .public-map-job-card p,
 .public-map-job-card small {
   margin: 0;
@@ -7877,6 +7878,13 @@ button:disabled {
 .public-map-job-card h2 {
   color: #0f172a;
   font-size: 17px;
+}
+
+.public-map-card-company {
+  color: #0f4c81;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .public-map-job-card p {
