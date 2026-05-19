@@ -1,5 +1,5 @@
 import { InvoiceStatus, JobStatus } from "@prisma/client";
-import { Router } from "express";
+import { raw, Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { activeLocationId } from "../../middleware/auth.js";
@@ -105,6 +105,17 @@ async function getJobResponse(jobId: string, locationId: string) {
   });
 }
 
+const jobMediaUpload = raw({ type: "*/*", limit: "12mb" });
+
+function jobMediaMimeType(value: unknown, fallback: unknown) {
+  const mimeType = typeof value === "string" && value.trim() ? value.trim() : String(fallback ?? "");
+  return mimeType || "application/octet-stream";
+}
+
+function isAllowedJobMedia(mimeType: string) {
+  return mimeType.startsWith("image/") || mimeType.startsWith("video/");
+}
+
 jobsRouter.get("/", asyncHandler(async (req, res) => {
   const status = typeof req.query.status === "string" ? req.query.status as JobStatus : undefined;
   const locationId = activeLocationId(req);
@@ -167,6 +178,29 @@ jobsRouter.get("/:id", asyncHandler(async (req, res) => {
   });
   if (!job) return res.status(404).json({ error: "Job not found" });
   res.json({ job });
+}));
+
+jobsRouter.post("/:id/media", jobMediaUpload, asyncHandler(async (req, res) => {
+  const jobId = String(req.params.id);
+  const locationId = activeLocationId(req);
+  const existing = await findLocationJob(jobId, locationId);
+  if (!existing) return res.status(404).json({ error: "Job not found" });
+
+  const mimeType = jobMediaMimeType(req.query.type, req.headers["content-type"]);
+  if (!isAllowedJobMedia(mimeType)) {
+    return res.status(422).json({ error: "Job media must be an image or video file." });
+  }
+
+  const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from([]);
+  if (!buffer.length) return res.status(400).json({ error: "No media file was received." });
+
+  const attachment = `data:${mimeType};base64,${buffer.toString("base64")}`;
+  const job = await prisma.job.update({
+    where: { id: jobId },
+    data: { attachments: [...(existing.attachments ?? []), attachment] },
+    include: jobInclude
+  });
+  res.status(201).json({ job });
 }));
 
 jobsRouter.patch("/:id", asyncHandler(async (req, res) => {

@@ -1230,7 +1230,7 @@ function jobTotalCents(job: Pick<Job, "lineItems" | "invoices">) {
 }
 
 function attachmentImageUrl(attachments?: string[]) {
-  const image = (attachments ?? []).find((attachment) => attachment.startsWith("data:image/") || /^https?:\/\//i.test(attachment));
+  const image = (attachments ?? []).find((attachment) => attachment.startsWith("data:image/") || /^https?:\/\/.*\.(png|jpe?g|gif|webp)(?:[?#].*)?$/i.test(attachment));
   return image || "";
 }
 
@@ -5224,10 +5224,33 @@ export function App() {
   }
 
   async function addJobMedia(job: Job, fileList: FileList | null) {
-    const attachments = await loadJobAttachmentFiles(fileList);
-    if (!attachments.length) return;
-    await updateJobDetails(job, { attachments: [...(job.attachments ?? []), ...attachments] });
-    setDetailSavedMessage(`${attachments.length} job media file${attachments.length === 1 ? "" : "s"} added`);
+    setError("");
+    const files = Array.from(fileList ?? []);
+    if (!files.length) return;
+    const mediaFiles = files.filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
+    if (!mediaFiles.length) {
+      setError("Choose an image or video file to upload.");
+      return;
+    }
+    if (mediaFiles.some((file) => file.size > 12 * 1024 * 1024)) {
+      setError("Job photos and videos must be 12MB or smaller.");
+      return;
+    }
+
+    let latestJob = job;
+    for (const file of mediaFiles) {
+      const params = new URLSearchParams({ name: file.name, type: file.type || "application/octet-stream" });
+      const result = await api<{ job: Job }>(`/api/jobs/${job.id}/media?${params.toString()}`, {
+        method: "POST",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file
+      });
+      latestJob = result.job;
+    }
+    mergeJob(latestJob);
+    setSelectedJobId(job.id);
+    await loadDashboard();
+    setDetailSavedMessage(`${mediaFiles.length} job media file${mediaFiles.length === 1 ? "" : "s"} added`);
   }
 
   async function removeJobMedia(job: Job, attachment: string) {
@@ -9177,7 +9200,15 @@ export function App() {
                           <h2><Upload size={18} /> Job photos & videos</h2>
                           <label className="icon-button file-icon-button" aria-label="Add job media">
                             <Plus size={18} />
-                            <input type="file" multiple accept="image/*,video/*" onChange={(event) => void addJobMedia(selectedJob, event.currentTarget.files)} />
+                            <input
+                              type="file"
+                              multiple
+                              accept="image/*,video/*"
+                              onChange={(event) => {
+                                const input = event.currentTarget;
+                                void addJobMedia(selectedJob, input.files).finally(() => { input.value = ""; });
+                              }}
+                            />
                           </label>
                         </div>
                         {(selectedJob.attachments ?? []).length ? (

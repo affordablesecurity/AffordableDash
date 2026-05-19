@@ -13,7 +13,7 @@ function decimalNumber(value: unknown) {
 function publicImageUrls(attachments: string[]) {
   return attachments
     .map((attachment) => attachment.trim())
-    .filter((attachment) => attachment.startsWith("https://") || attachment.startsWith("data:image/"))
+    .filter((attachment) => attachment.startsWith("data:image/") || /^https?:\/\/.*\.(png|jpe?g|gif|webp)(?:[?#].*)?$/i.test(attachment))
     .slice(0, 8);
 }
 
